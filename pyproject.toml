@@ -6,11 +6,27 @@ build-backend = "setuptools.build_meta"
 name = "dari-cli"
 version = "0.1.0"
 description = "Dari CLI."
+readme = "README.md"
 requires-python = ">=3.12"
+license = "LicenseRef-Proprietary"
+keywords = ["agent", "cli", "dari", "deploy"]
+classifiers = [
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Build Tools",
+]
 dependencies = [
   "pyyaml>=6.0,<7",
   "supabase>=2.24,<3",
 ]
+
+[project.urls]
+Homepage = "https://github.com/mupt-ai/dari-cli"
+Repository = "https://github.com/mupt-ai/dari-cli"
+Issues = "https://github.com/mupt-ai/dari-cli/issues"
 
 [project.scripts]
 dari = "dari_cli.__main__:main"

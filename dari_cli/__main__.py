@@ -46,7 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
     deploy_parser.add_argument(
         "--api-url",
         default=os.environ.get("DARI_API_URL", DEFAULT_API_URL),
-        help="Base URL for the Dari control-plane API.",
+        help=argparse.SUPPRESS,
     )
     deploy_parser.add_argument(
         "--api-key",
@@ -195,7 +195,7 @@ def _add_api_url_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--api-url",
         default=os.environ.get("DARI_API_URL", DEFAULT_API_URL),
-        help="Base URL for the Dari control-plane API.",
+        help=argparse.SUPPRESS,
     )
 
 
