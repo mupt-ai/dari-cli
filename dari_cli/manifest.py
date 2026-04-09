@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any, Literal, Mapping
 
 import yaml
@@ -25,6 +26,7 @@ TOP_LEVEL_FIELDS = {
 }
 RUNTIME_FIELDS = {"language", "version", "timeout_seconds"}
 RETRIES_FIELDS = {"max_attempts"}
+ENVIRONMENT_VARIABLE_NAME_PATTERN = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 
 
 @dataclass(frozen=True)
@@ -156,6 +158,7 @@ def parse_manifest_text(raw_text: str, manifest_path: str | Path = "dari.yml") -
     retries = _parse_retries(data.get("retries"), issues)
     secrets = _parse_secrets(data.get("secrets"), issues)
     env = _parse_env(data.get("env"), issues)
+    _report_secret_env_overlap(secrets, env, issues)
 
     if issues:
         raise ManifestValidationError(resolved_path, issues)
@@ -295,12 +298,26 @@ def _parse_secrets(value: Any, issues: list[ManifestIssue]) -> list[str]:
         return []
 
     parsed: list[str] = []
+    seen: set[str] = set()
     for index, item in enumerate(value):
         path = f"secrets[{index}]"
         if not isinstance(item, str) or not item.strip():
             issues.append(ManifestIssue(path, "expected a non-empty secret name"))
             continue
-        parsed.append(item.strip())
+        name = item.strip()
+        if not ENVIRONMENT_VARIABLE_NAME_PATTERN.fullmatch(name):
+            issues.append(
+                ManifestIssue(
+                    path,
+                    "expected a secret name matching ^[A-Z_][A-Z0-9_]*$",
+                )
+            )
+            continue
+        if name in seen:
+            issues.append(ManifestIssue(path, f"duplicate secret name {name!r}"))
+            continue
+        seen.add(name)
+        parsed.append(name)
     return parsed
 
 
@@ -317,11 +334,36 @@ def _parse_env(value: Any, issues: list[ManifestIssue]) -> dict[str, str] | None
         if not isinstance(key, str) or not key.strip():
             issues.append(ManifestIssue(path, "expected a non-empty environment variable name"))
             continue
+        if not ENVIRONMENT_VARIABLE_NAME_PATTERN.fullmatch(key.strip()):
+            issues.append(
+                ManifestIssue(
+                    path,
+                    "expected an environment variable name matching ^[A-Z_][A-Z0-9_]*$",
+                )
+            )
+            continue
         if not isinstance(item, str):
             issues.append(ManifestIssue(path, "expected a string value"))
             continue
-        parsed[key] = item
+        parsed[key.strip()] = item
     return parsed
+
+
+def _report_secret_env_overlap(
+    secrets: list[str],
+    env: Mapping[str, str] | None,
+    issues: list[ManifestIssue],
+) -> None:
+    if env is None:
+        return
+    overlap = sorted(set(secrets) & set(env))
+    if overlap:
+        issues.append(
+            ManifestIssue(
+                "secrets",
+                "secret names must not overlap env keys: " + ", ".join(overlap),
+            )
+        )
 
 
 def _optional_non_empty_string(

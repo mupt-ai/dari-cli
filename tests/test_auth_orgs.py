@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import io
 import json
 from types import SimpleNamespace
 
@@ -249,3 +250,91 @@ def test_org_switch_command_reports_new_current_org(monkeypatch, capsys) -> None
     payload = json.loads(capsys.readouterr().out)
     assert payload["current_org_id"] == "org_456"
     assert payload["organization"]["slug"] == "team-blue"
+
+
+def test_credentials_add_command_prompts_for_value(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "dari_cli.__main__.getpass.getpass",
+        lambda prompt: "sk-hidden" if prompt == "OPENAI_API_KEY: " else pytest.fail(),
+    )
+    monkeypatch.setattr(
+        "dari_cli.__main__.upsert_credential",
+        lambda **kwargs: {  # noqa: ARG005
+            "id": "cred_123",
+            "name": "OPENAI_API_KEY",
+            "created": True,
+        },
+    )
+
+    exit_code = main(
+        [
+            "credentials",
+            "add",
+            "OPENAI_API_KEY",
+            "--api-url",
+            "https://api.example.test",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["name"] == "OPENAI_API_KEY"
+    assert payload["created"] is True
+
+
+def test_credentials_add_command_reads_value_from_stdin(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("sys.stdin", io.StringIO("sk-from-stdin\n"))
+    monkeypatch.setattr(
+        "dari_cli.__main__.upsert_credential",
+        lambda **kwargs: {  # noqa: ARG005
+            "id": "cred_123",
+            "name": kwargs["name"],
+            "created": False,
+        },
+    )
+
+    exit_code = main(
+        [
+            "credentials",
+            "add",
+            "OPENAI_API_KEY",
+            "--value-stdin",
+            "--api-url",
+            "https://api.example.test",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["name"] == "OPENAI_API_KEY"
+    assert payload["created"] is False
+
+
+def test_credentials_add_command_warns_for_positional_value(
+    monkeypatch, capsys
+) -> None:
+    captured: dict[str, str] = {}
+
+    def fake_upsert_credential(**kwargs):  # noqa: ANN003
+        captured["value"] = kwargs["value"]
+        return {"id": "cred_123", "name": kwargs["name"], "created": True}
+
+    monkeypatch.setattr(
+        "dari_cli.__main__.upsert_credential",
+        fake_upsert_credential,
+    )
+
+    exit_code = main(
+        [
+            "credentials",
+            "add",
+            "OPENAI_API_KEY",
+            "sk-inline",
+            "--api-url",
+            "https://api.example.test",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["value"] == "sk-inline"
+    assert "shell history and process arguments" in capsys.readouterr().err

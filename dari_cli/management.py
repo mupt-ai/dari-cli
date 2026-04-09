@@ -10,7 +10,7 @@ import socket
 import threading
 from typing import Any, Callable, Iterator
 from urllib.error import HTTPError
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 from urllib.request import Request, urlopen
 import webbrowser
 
@@ -331,6 +331,68 @@ def resolve_default_api_key(
     if organization is None:
         return None
     return organization.api_key
+
+
+def list_credentials(
+    *,
+    api_url: str,
+    environ: dict[str, str] | None = None,
+    opener: Callable[..., Any] = urlopen,
+) -> list[dict[str, Any]]:
+    """List credentials for the current organization."""
+    state = _load_authenticated_state(api_url=api_url, environ=environ, opener=opener)
+    organization = _require_current_org(state)
+    payload = _management_request(
+        api_url=api_url,
+        path=f"/v1/organizations/{organization.id}/credentials",
+        bearer_token=state.supabase_session.access_token,
+        opener=opener,
+    )
+    return list(payload["credentials"])
+
+
+def upsert_credential(
+    *,
+    api_url: str,
+    name: str,
+    value: str,
+    environ: dict[str, str] | None = None,
+    opener: Callable[..., Any] = urlopen,
+) -> dict[str, Any]:
+    """Create or update a credential for the current organization."""
+    state = _load_authenticated_state(api_url=api_url, environ=environ, opener=opener)
+    organization = _require_current_org(state)
+    return _management_request(
+        api_url=api_url,
+        path=(
+            f"/v1/organizations/{organization.id}/credentials/{quote(name, safe='')}"
+        ),
+        bearer_token=state.supabase_session.access_token,
+        method="PUT",
+        payload={"value": value},
+        opener=opener,
+    )
+
+
+def delete_credential(
+    *,
+    api_url: str,
+    name: str,
+    environ: dict[str, str] | None = None,
+    opener: Callable[..., Any] = urlopen,
+) -> dict[str, Any]:
+    """Delete a credential from the current organization."""
+    state = _load_authenticated_state(api_url=api_url, environ=environ, opener=opener)
+    organization = _require_current_org(state)
+    return _management_request(
+        api_url=api_url,
+        path=(
+            f"/v1/organizations/{organization.id}/credentials/{quote(name, safe='')}"
+        ),
+        bearer_token=state.supabase_session.access_token,
+        method="DELETE",
+        opener=opener,
+    )
 
 
 def _load_authenticated_state(

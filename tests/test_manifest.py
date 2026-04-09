@@ -129,6 +129,41 @@ def test_invalid_secret_shape_is_rejected_as_value_storage() -> None:
     )
 
 
+def test_invalid_secret_name_is_rejected() -> None:
+    with pytest.raises(ManifestValidationError) as exc_info:
+        parse_manifest_text(
+            build_manifest(
+                extra_lines=[
+                    "secrets:",
+                    "  - openai_api_key",
+                ]
+            )
+        )
+
+    assert "secrets[0]: expected a secret name matching ^[A-Z_][A-Z0-9_]*$" in str(
+        exc_info.value
+    )
+
+
+def test_secret_names_must_not_overlap_env_keys() -> None:
+    with pytest.raises(ManifestValidationError) as exc_info:
+        parse_manifest_text(
+            build_manifest(
+                extra_lines=[
+                    "secrets:",
+                    "  - OPENAI_API_KEY",
+                    "env:",
+                    "  OPENAI_API_KEY: from-manifest",
+                ]
+            )
+        )
+
+    assert (
+        "secrets: secret names must not overlap env keys: OPENAI_API_KEY"
+        in str(exc_info.value)
+    )
+
+
 def test_unknown_fields_and_invalid_entrypoint_are_reported() -> None:
     with pytest.raises(ManifestValidationError) as exc_info:
         parse_manifest_text(

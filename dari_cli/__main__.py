@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import sys
@@ -14,9 +15,11 @@ from .management import (
     DEFAULT_API_URL,
     create_api_key,
     create_organization,
+    delete_credential,
     get_auth_status,
     invite_member,
     list_api_keys,
+    list_credentials,
     list_members,
     list_organizations,
     login,
@@ -24,6 +27,7 @@ from .management import (
     resolve_default_api_key,
     revoke_api_key,
     switch_organization,
+    upsert_credential,
 )
 from .manifest import ManifestValidationError, load_manifest
 
@@ -161,6 +165,48 @@ def build_parser() -> argparse.ArgumentParser:
     _add_api_url_argument(api_keys_revoke_parser)
     api_keys_revoke_parser.add_argument("key_id", help="Organization API key ID")
     api_keys_revoke_parser.set_defaults(handler=_handle_api_keys_revoke)
+
+    credentials_parser = subparsers.add_parser(
+        "credentials",
+        help="Manage runtime credentials for the current org",
+    )
+    credentials_subparsers = credentials_parser.add_subparsers(
+        dest="credentials_command",
+        required=True,
+    )
+
+    credentials_list_parser = credentials_subparsers.add_parser(
+        "list",
+        help="List stored credential names for the current org",
+    )
+    _add_api_url_argument(credentials_list_parser)
+    credentials_list_parser.set_defaults(handler=_handle_credentials_list)
+
+    credentials_add_parser = credentials_subparsers.add_parser(
+        "add",
+        help="Create or update a runtime credential for the current org",
+    )
+    _add_api_url_argument(credentials_add_parser)
+    credentials_add_parser.add_argument("name", help="Credential/env var name")
+    credentials_add_parser.add_argument(
+        "value",
+        nargs="?",
+        help="Credential value. Omit to prompt securely.",
+    )
+    credentials_add_parser.add_argument(
+        "--value-stdin",
+        action="store_true",
+        help="Read the credential value from standard input.",
+    )
+    credentials_add_parser.set_defaults(handler=_handle_credentials_add)
+
+    credentials_remove_parser = credentials_subparsers.add_parser(
+        "remove",
+        help="Delete a runtime credential from the current org",
+    )
+    _add_api_url_argument(credentials_remove_parser)
+    credentials_remove_parser.add_argument("name", help="Credential/env var name")
+    credentials_remove_parser.set_defaults(handler=_handle_credentials_remove)
 
     manifest_parser = subparsers.add_parser(
         "manifest",
@@ -416,6 +462,55 @@ def _handle_api_keys_revoke(args: argparse.Namespace) -> int:
     )
     print(json.dumps(revoked, indent=2, sort_keys=True))
     return 0
+
+
+def _handle_credentials_list(args: argparse.Namespace) -> int:
+    credentials = list_credentials(api_url=args.api_url, environ=os.environ)
+    print(json.dumps({"credentials": credentials}, indent=2, sort_keys=True))
+    return 0
+
+
+def _handle_credentials_add(args: argparse.Namespace) -> int:
+    value = _resolve_credential_value(args)
+    stored = upsert_credential(
+        api_url=args.api_url,
+        name=args.name,
+        value=value,
+        environ=os.environ,
+    )
+    print(json.dumps(stored, indent=2, sort_keys=True))
+    return 0
+
+
+def _handle_credentials_remove(args: argparse.Namespace) -> int:
+    deleted = delete_credential(
+        api_url=args.api_url,
+        name=args.name,
+        environ=os.environ,
+    )
+    print(json.dumps(deleted, indent=2, sort_keys=True))
+    return 0
+
+
+def _resolve_credential_value(args: argparse.Namespace) -> str:
+    if args.value is not None and args.value_stdin:
+        raise SystemExit("Pass either VALUE or --value-stdin, not both.")
+    if args.value_stdin:
+        value = sys.stdin.read().removesuffix("\n").removesuffix("\r")
+    elif args.value is not None:
+        print(
+            (
+                "Warning: passing credential values on the command line can expose "
+                "them via shell history and process arguments."
+            ),
+            file=sys.stderr,
+        )
+        value = args.value
+    else:
+        value = getpass.getpass(f"{args.name}: ")
+    if value == "":
+        raise SystemExit("Credential value must be non-empty.")
+    return value
 
 
 if __name__ == "__main__":

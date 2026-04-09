@@ -45,6 +45,13 @@ Log in through the browser:
 dari auth login
 ```
 
+Manage runtime credentials for the current org:
+
+```bash
+dari credentials add OPENAI_API_KEY
+dari credentials list
+```
+
 Deploy the current checkout:
 
 ```bash
