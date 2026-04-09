@@ -3,6 +3,8 @@
 `dari` is the CLI for packaging an agent checkout, validating `dari.yml`, and
 publishing agent versions to Agent Host.
 
+Full platform docs live at `https://docs.dari.dev`.
+
 ## Install
 
 After the package is published to PyPI:
