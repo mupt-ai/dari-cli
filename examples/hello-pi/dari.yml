@@ -1,0 +1,18 @@
+name: hello-pi
+sdk: pi
+entrypoint: src/agent.js:agent
+
+runtime:
+  language: typescript
+  version: "22"
+  timeout_seconds: 1800
+
+retries:
+  max_attempts: 2
+
+secrets:
+  - ANTHROPIC_API_KEY
+  - OPENAI_API_KEY
+
+env:
+  APP_ENV: example

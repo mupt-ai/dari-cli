@@ -1,0 +1,17 @@
+name: hello-openai-agents-js
+sdk: openai-agents
+entrypoint: src/agent.js:agent
+
+runtime:
+  language: typescript
+  version: "22"
+  timeout_seconds: 1800
+
+retries:
+  max_attempts: 2
+
+secrets:
+  - OPENAI_API_KEY
+
+env:
+  APP_ENV: example

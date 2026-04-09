@@ -1,0 +1,14 @@
+name: hello-opencode
+sdk: opencode
+entrypoint: src/agent.ts:agent
+
+runtime:
+  language: typescript
+  version: "20"
+  timeout_seconds: 1800
+
+retries:
+  max_attempts: 2
+
+env:
+  APP_ENV: example

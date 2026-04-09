@@ -1,0 +1,17 @@
+name: hello-claude-agent-sdk-python
+sdk: claude-agent-sdk
+entrypoint: agent.py:agent
+
+runtime:
+  language: python
+  version: "3.11"
+  timeout_seconds: 1800
+
+retries:
+  max_attempts: 2
+
+secrets:
+  - ANTHROPIC_API_KEY
+
+env:
+  APP_ENV: example

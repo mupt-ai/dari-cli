@@ -1,0 +1,17 @@
+name: hello-openai-agents-python
+sdk: openai-agents
+entrypoint: agent.py:agent
+
+runtime:
+  language: python
+  version: "3.11"
+  timeout_seconds: 1800
+
+retries:
+  max_attempts: 2
+
+secrets:
+  - OPENAI_API_KEY
+
+env:
+  APP_ENV: example

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dari-cli"
+version = "0.1.0"
+description = "Dari CLI."
+requires-python = ">=3.12"
+dependencies = [
+  "pyyaml>=6.0,<7",
+  "supabase>=2.24,<3",
+]
+
+[project.scripts]
+dari = "dari_cli.__main__:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3,<9",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
