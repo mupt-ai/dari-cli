@@ -265,7 +265,7 @@ def _run_manifest_validate(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(manifest.to_dict(), indent=2, sort_keys=True))
     else:
-        print(f"Validated {manifest_path}: {manifest.name} ({manifest.sdk})")
+        print(f"Validated {manifest_path}: {manifest.name} ({manifest.harness})")
     return 0
 
 
@@ -285,15 +285,7 @@ def _handle_deploy(args: argparse.Namespace) -> int:
     )
 
     if args.dry_run:
-        print(
-            json.dumps(
-                {
-                    "steps": prepared.to_dict()["steps"],
-                },
-                indent=2,
-                sort_keys=True,
-            )
-        )
+        print(json.dumps(prepared.to_dict(), indent=2, sort_keys=True))
         return 0
 
     api_key = args.api_key or resolve_default_api_key(
