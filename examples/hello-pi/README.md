@@ -4,8 +4,9 @@ This example exists to exercise `dari manifest validate`, `dari deploy`, and a
 local import smoke test for the Pi SDK example.
 
 Pi deploys require an execution backend ID.
-Create one with `uv run dari execution-backends create --name "Primary E2B"` and
-pass the returned `execb_*` value to deploys.
+Create one with
+`uv run dari execution-backends create --name "Primary E2B" --provider e2b`
+and pass the returned `execb_*` value to deploys.
 
 Run:
 

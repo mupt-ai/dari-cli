@@ -302,7 +302,9 @@ def test_list_execution_backends_uses_current_org_and_user_session(monkeypatch) 
     assert captured["bearer_token"] == "access-token"
 
 
-def test_create_execution_backend_uses_current_org_and_e2b_payload(monkeypatch) -> None:
+def test_create_execution_backend_uses_current_org_and_provider_payload(
+    monkeypatch,
+) -> None:
     state = CliState(
         api_url="https://api.example.test",
         supabase_session=StoredSupabaseSession(
@@ -343,7 +345,8 @@ def test_create_execution_backend_uses_current_org_and_e2b_payload(monkeypatch) 
     created = create_execution_backend(
         api_url="https://api.example.test",
         name="Primary E2B",
-        e2b_api_key="e2b_api_123",
+        provider="daytona",
+        config={"api_token": "daytona_123"},
     )
 
     assert created["id"] == "execb_123"
@@ -351,8 +354,8 @@ def test_create_execution_backend_uses_current_org_and_e2b_payload(monkeypatch) 
     assert captured["bearer_token"] == "access-token"
     assert captured["payload"] == {
         "name": "Primary E2B",
-        "provider": "e2b",
-        "config": {"api_key": "e2b_api_123"},
+        "provider": "daytona",
+        "config": {"api_token": "daytona_123"},
     }
 
 
@@ -394,7 +397,7 @@ def test_execution_backends_create_command_prompts_for_api_key(
         lambda **kwargs: {  # noqa: ARG005
             "id": "execb_123",
             "name": kwargs["name"],
-            "provider": "e2b",
+            "provider": kwargs["provider"],
         },
     )
 
@@ -404,6 +407,8 @@ def test_execution_backends_create_command_prompts_for_api_key(
             "create",
             "--name",
             "Primary E2B",
+            "--provider",
+            "e2b",
             "--api-url",
             "https://api.example.test",
         ]
@@ -418,10 +423,11 @@ def test_execution_backends_create_command_prompts_for_api_key(
 def test_execution_backends_create_command_warns_for_inline_api_key(
     monkeypatch, capsys
 ) -> None:
-    captured: dict[str, str] = {}
+    captured: dict[str, object] = {}
 
     def fake_create_execution_backend(**kwargs):  # noqa: ANN003
-        captured["e2b_api_key"] = kwargs["e2b_api_key"]
+        captured["provider"] = kwargs["provider"]
+        captured["config"] = kwargs["config"]
         return {"id": "execb_123", "name": kwargs["name"], "provider": "e2b"}
 
     monkeypatch.setattr(
@@ -435,6 +441,8 @@ def test_execution_backends_create_command_warns_for_inline_api_key(
             "create",
             "--name",
             "Primary E2B",
+            "--provider",
+            "e2b",
             "--e2b-api-key",
             "e2b_api_inline",
             "--api-url",
@@ -443,7 +451,43 @@ def test_execution_backends_create_command_warns_for_inline_api_key(
     )
 
     assert exit_code == 0
-    assert captured["e2b_api_key"] == "e2b_api_inline"
+    assert captured["provider"] == "e2b"
+    assert captured["config"] == {"api_key": "e2b_api_inline"}
+    assert "shell history and process arguments" in capsys.readouterr().err
+
+
+def test_execution_backends_create_command_accepts_generic_provider_config_json(
+    monkeypatch, capsys
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_create_execution_backend(**kwargs):  # noqa: ANN003
+        captured.update(kwargs)
+        return {"id": "execb_123", "name": kwargs["name"], "provider": kwargs["provider"]}
+
+    monkeypatch.setattr(
+        "dari_cli.__main__.create_execution_backend",
+        fake_create_execution_backend,
+    )
+
+    exit_code = main(
+        [
+            "execution-backends",
+            "create",
+            "--name",
+            "Sandbox Backend",
+            "--provider",
+            "modal",
+            "--config-json",
+            '{"api_key":"modal_123"}',
+            "--api-url",
+            "https://api.example.test",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["provider"] == "modal"
+    assert captured["config"] == {"api_key": "modal_123"}
     assert "shell history and process arguments" in capsys.readouterr().err
 
 

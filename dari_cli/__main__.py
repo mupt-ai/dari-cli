@@ -242,13 +242,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Execution backend label",
     )
     execution_backends_create_parser.add_argument(
+        "--provider",
+        required=True,
+        help="Execution backend provider, for example e2b.",
+    )
+    execution_backends_create_parser.add_argument(
+        "--config-json",
+        help="Provider config as a JSON object. Omit for --provider e2b to prompt for its API key.",
+    )
+    execution_backends_create_parser.add_argument(
+        "--config-json-stdin",
+        action="store_true",
+        help="Read provider config JSON from standard input.",
+    )
+    execution_backends_create_parser.add_argument(
         "--e2b-api-key",
-        help="E2B API key. Omit to prompt securely.",
+        help="E2B API key convenience input for --provider e2b. Omit to prompt securely.",
     )
     execution_backends_create_parser.add_argument(
         "--e2b-api-key-stdin",
         action="store_true",
-        help="Read the E2B API key from standard input.",
+        help="Read the E2B API key from standard input for --provider e2b.",
     )
     execution_backends_create_parser.set_defaults(
         handler=_handle_execution_backends_create
@@ -556,7 +570,8 @@ def _handle_execution_backends_create(args: argparse.Namespace) -> int:
     created = create_execution_backend(
         api_url=args.api_url,
         name=args.name,
-        e2b_api_key=_resolve_execution_backend_api_key(args),
+        provider=args.provider,
+        config=_resolve_execution_backend_config(args),
         environ=os.environ,
     )
     print(json.dumps(created, indent=2, sort_keys=True))
@@ -605,6 +620,61 @@ def _resolve_execution_backend_api_key(args: argparse.Namespace) -> str:
     if value == "":
         raise SystemExit("Execution backend API key must be non-empty.")
     return value
+
+
+def _resolve_execution_backend_config(args: argparse.Namespace) -> dict[str, object]:
+    if args.provider == "e2b":
+        raw_config = _resolve_optional_execution_backend_config_json(args)
+        if raw_config is not None:
+            if args.e2b_api_key is not None or args.e2b_api_key_stdin:
+                raise SystemExit(
+                    "Pass either provider config JSON or E2B API key input, not both."
+                )
+            return raw_config
+        return {"api_key": _resolve_execution_backend_api_key(args)}
+
+    if args.e2b_api_key is not None or args.e2b_api_key_stdin:
+        raise SystemExit(
+            "--e2b-api-key options are only supported with --provider e2b."
+        )
+    raw_config = _resolve_optional_execution_backend_config_json(args)
+    if raw_config is None:
+        raise SystemExit(
+            f"Pass --config-json or --config-json-stdin for provider {args.provider!r}."
+        )
+    return raw_config
+
+
+def _resolve_optional_execution_backend_config_json(
+    args: argparse.Namespace,
+) -> dict[str, object] | None:
+    if args.config_json is not None and args.config_json_stdin:
+        raise SystemExit("Pass either --config-json or --config-json-stdin, not both.")
+    if args.config_json_stdin:
+        raw_json = sys.stdin.read().removesuffix("\n").removesuffix("\r")
+    elif args.config_json is not None:
+        print(
+            (
+                "Warning: passing execution backend config on the command line can expose "
+                "it via shell history and process arguments."
+            ),
+            file=sys.stderr,
+        )
+        raw_json = args.config_json
+    else:
+        return None
+
+    if raw_json == "":
+        raise SystemExit("Execution backend config JSON must be non-empty.")
+    try:
+        parsed = json.loads(raw_json)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(
+            f"Execution backend config must be valid JSON: {exc.msg}."
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise SystemExit("Execution backend config must decode to a JSON object.")
+    return parsed
 
 
 if __name__ == "__main__":

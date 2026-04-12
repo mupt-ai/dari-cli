@@ -373,11 +373,12 @@ def create_execution_backend(
     *,
     api_url: str,
     name: str,
-    e2b_api_key: str,
+    provider: str,
+    config: dict[str, Any],
     environ: dict[str, str] | None = None,
     opener: Callable[..., Any] = urlopen,
 ) -> dict[str, Any]:
-    """Create an E2B execution backend for the current organization."""
+    """Create an execution backend for the current organization."""
     state = _load_authenticated_state(api_url=api_url, environ=environ, opener=opener)
     organization = _require_current_org(state)
     return _management_request(
@@ -386,8 +387,8 @@ def create_execution_backend(
         bearer_token=state.supabase_session.access_token,
         payload={
             "name": name,
-            "provider": "e2b",
-            "config": {"api_key": e2b_api_key},
+            "provider": provider,
+            "config": dict(config),
         },
         opener=opener,
     )
