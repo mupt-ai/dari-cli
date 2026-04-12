@@ -351,6 +351,48 @@ def list_credentials(
     return list(payload["credentials"])
 
 
+def list_execution_backends(
+    *,
+    api_url: str,
+    environ: dict[str, str] | None = None,
+    opener: Callable[..., Any] = urlopen,
+) -> list[dict[str, Any]]:
+    """List execution backends for the current organization."""
+    state = _load_authenticated_state(api_url=api_url, environ=environ, opener=opener)
+    organization = _require_current_org(state)
+    payload = _management_request(
+        api_url=api_url,
+        path=f"/v1/organizations/{organization.id}/execution-backends",
+        bearer_token=state.supabase_session.access_token,
+        opener=opener,
+    )
+    return list(payload["execution_backends"])
+
+
+def create_execution_backend(
+    *,
+    api_url: str,
+    name: str,
+    e2b_api_key: str,
+    environ: dict[str, str] | None = None,
+    opener: Callable[..., Any] = urlopen,
+) -> dict[str, Any]:
+    """Create an E2B execution backend for the current organization."""
+    state = _load_authenticated_state(api_url=api_url, environ=environ, opener=opener)
+    organization = _require_current_org(state)
+    return _management_request(
+        api_url=api_url,
+        path=f"/v1/organizations/{organization.id}/execution-backends",
+        bearer_token=state.supabase_session.access_token,
+        payload={
+            "name": name,
+            "provider": "e2b",
+            "config": {"api_key": e2b_api_key},
+        },
+        opener=opener,
+    )
+
+
 def upsert_credential(
     *,
     api_url: str,

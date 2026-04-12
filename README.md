@@ -52,13 +52,61 @@ dari credentials add OPENAI_API_KEY
 dari credentials list
 ```
 
+Create or inspect execution backends for Pi deploys:
+
+```bash
+dari execution-backends create --name "Primary E2B"
+dari execution-backends list
+```
+
 Deploy the current checkout:
 
 ```bash
 dari deploy .
 ```
 
+For `sdk: pi`, you must also provide the execution backend to pin for that
+publish:
+
+```bash
+dari deploy . --execution-backend-id execb_123
+```
+
+Or set it through the environment:
+
+```bash
+DARI_EXECUTION_BACKEND_ID=execb_123 dari deploy .
+```
+
+This management flow uses the browser login session from `dari auth login` and
+the currently selected org.
+
 The CLI talks to `https://api.dari.dev`.
+
+## Pi Deploys
+
+Pi deploys require an execution backend ID pinned at publish time.
+
+Create an E2B-backed execution backend for the current org:
+
+```bash
+dari execution-backends create --name "Primary E2B"
+```
+
+The command prompts for the E2B API key securely. Use
+`--e2b-api-key-stdin` when you want to provide it from another command.
+
+List existing execution backends and copy the returned `execb_*` ID:
+
+```bash
+dari execution-backends list
+```
+
+Deploy the Pi repo with that backend pinned:
+
+```bash
+dari deploy . --execution-backend-id execb_123
+```
 
 ## Local Development
 
