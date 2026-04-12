@@ -389,7 +389,7 @@ def test_execution_backends_create_command_prompts_for_api_key(
     monkeypatch.setattr(
         "dari_cli.__main__.getpass.getpass",
         lambda prompt: "e2b_api_123"
-        if prompt == "E2B API key: "
+        if prompt == "API key: "
         else pytest.fail(),
     )
     monkeypatch.setattr(
@@ -443,7 +443,7 @@ def test_execution_backends_create_command_warns_for_inline_api_key(
             "Primary E2B",
             "--provider",
             "e2b",
-            "--e2b-api-key",
+            "--api-key",
             "e2b_api_inline",
             "--api-url",
             "https://api.example.test",
@@ -480,6 +480,41 @@ def test_execution_backends_create_command_accepts_generic_provider_config_json(
             "modal",
             "--config-json",
             '{"api_key":"modal_123"}',
+            "--api-url",
+            "https://api.example.test",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["provider"] == "modal"
+    assert captured["config"] == {"api_key": "modal_123"}
+    assert "shell history and process arguments" in capsys.readouterr().err
+
+
+def test_execution_backends_create_command_uses_generic_api_key_for_non_e2b_provider(
+    monkeypatch, capsys
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_create_execution_backend(**kwargs):  # noqa: ANN003
+        captured.update(kwargs)
+        return {"id": "execb_123", "name": kwargs["name"], "provider": kwargs["provider"]}
+
+    monkeypatch.setattr(
+        "dari_cli.__main__.create_execution_backend",
+        fake_create_execution_backend,
+    )
+
+    exit_code = main(
+        [
+            "execution-backends",
+            "create",
+            "--name",
+            "Modal Backend",
+            "--provider",
+            "modal",
+            "--api-key",
+            "modal_123",
             "--api-url",
             "https://api.example.test",
         ]

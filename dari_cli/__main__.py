@@ -248,7 +248,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     execution_backends_create_parser.add_argument(
         "--config-json",
-        help="Provider config as a JSON object. Omit for --provider e2b to prompt for its API key.",
+        help="Provider config as a JSON object. Omit to use the generic API-key convenience path.",
     )
     execution_backends_create_parser.add_argument(
         "--config-json-stdin",
@@ -256,13 +256,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Read provider config JSON from standard input.",
     )
     execution_backends_create_parser.add_argument(
-        "--e2b-api-key",
-        help="E2B API key convenience input for --provider e2b. Omit to prompt securely.",
+        "--api-key",
+        help="Provider API key convenience input. Omit to prompt securely.",
     )
     execution_backends_create_parser.add_argument(
-        "--e2b-api-key-stdin",
+        "--api-key-stdin",
         action="store_true",
-        help="Read the E2B API key from standard input for --provider e2b.",
+        help="Read the provider API key from standard input.",
     )
     execution_backends_create_parser.set_defaults(
         handler=_handle_execution_backends_create
@@ -600,13 +600,11 @@ def _resolve_credential_value(args: argparse.Namespace) -> str:
 
 
 def _resolve_execution_backend_api_key(args: argparse.Namespace) -> str:
-    if args.e2b_api_key is not None and args.e2b_api_key_stdin:
-        raise SystemExit(
-            "Pass either --e2b-api-key or --e2b-api-key-stdin, not both."
-        )
-    if args.e2b_api_key_stdin:
+    if args.api_key is not None and args.api_key_stdin:
+        raise SystemExit("Pass either --api-key or --api-key-stdin, not both.")
+    if args.api_key_stdin:
         value = sys.stdin.read().removesuffix("\n").removesuffix("\r")
-    elif args.e2b_api_key is not None:
+    elif args.api_key is not None:
         print(
             (
                 "Warning: passing execution backend API keys on the command line can expose "
@@ -614,35 +612,23 @@ def _resolve_execution_backend_api_key(args: argparse.Namespace) -> str:
             ),
             file=sys.stderr,
         )
-        value = args.e2b_api_key
+        value = args.api_key
     else:
-        value = getpass.getpass("E2B API key: ")
+        value = getpass.getpass("API key: ")
     if value == "":
         raise SystemExit("Execution backend API key must be non-empty.")
     return value
 
 
 def _resolve_execution_backend_config(args: argparse.Namespace) -> dict[str, object]:
-    if args.provider == "e2b":
-        raw_config = _resolve_optional_execution_backend_config_json(args)
-        if raw_config is not None:
-            if args.e2b_api_key is not None or args.e2b_api_key_stdin:
-                raise SystemExit(
-                    "Pass either provider config JSON or E2B API key input, not both."
-                )
-            return raw_config
-        return {"api_key": _resolve_execution_backend_api_key(args)}
-
-    if args.e2b_api_key is not None or args.e2b_api_key_stdin:
-        raise SystemExit(
-            "--e2b-api-key options are only supported with --provider e2b."
-        )
     raw_config = _resolve_optional_execution_backend_config_json(args)
-    if raw_config is None:
-        raise SystemExit(
-            f"Pass --config-json or --config-json-stdin for provider {args.provider!r}."
-        )
-    return raw_config
+    if raw_config is not None:
+        if args.api_key is not None or args.api_key_stdin:
+            raise SystemExit(
+                "Pass either provider config JSON or API key input, not both."
+            )
+        return raw_config
+    return {"api_key": _resolve_execution_backend_api_key(args)}
 
 
 def _resolve_optional_execution_backend_config_json(

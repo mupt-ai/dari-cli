@@ -55,7 +55,7 @@ dari credentials list
 Create or inspect execution backends for Pi deploys:
 
 ```bash
-dari execution-backends create --name "Primary E2B" --provider e2b
+dari execution-backends create --name "Primary E2B" --provider e2b --api-key e2b_api_123
 dari execution-backends list
 ```
 
@@ -93,9 +93,8 @@ Create an E2B-backed execution backend for the current org:
 dari execution-backends create --name "Primary E2B" --provider e2b
 ```
 
-For `--provider e2b`, the command prompts for the E2B API key securely by
-default. Use `--e2b-api-key-stdin` when you want to provide it from another
-command.
+The command prompts for a provider API key securely by default. Use
+`--api-key` or `--api-key-stdin` when the backend config is just an API key.
 
 For any provider, you can also pass config through `--config-json` or
 `--config-json-stdin`:
