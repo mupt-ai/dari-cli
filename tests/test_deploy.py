@@ -12,6 +12,7 @@ import pytest
 from dari_cli.__main__ import main
 from dari_cli.deploy import (
     DariApiError,
+    DeployConfigurationError,
     build_source_bundle,
     collect_source_metadata,
     deploy_checkout,
@@ -212,6 +213,83 @@ def test_prepare_deploy_flow_includes_snapshot_reserve_and_publish_steps(
     assert dry_run["steps"][3]["payload"]["manifest"]["sdk"] == "opencode"
 
 
+def test_prepare_deploy_flow_includes_execution_backend_id_for_pi_sdk(tmp_path) -> None:
+    (tmp_path / "dari.yml").write_text(
+        "\n".join(
+            [
+                "name: support-agent",
+                "sdk: pi",
+                "entrypoint: src/agent.ts:agent",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "agent.ts").write_text(
+        "export const agent = {};\n",
+        encoding="utf-8",
+    )
+
+    prepared = prepare_deploy_flow(
+        tmp_path,
+        execution_backend_id=" execb_123 ",
+    )
+
+    assert prepared.execution_backend_id == "execb_123"
+    assert prepared.to_dict()["steps"][3]["payload"]["execution_backend_id"] == (
+        "execb_123"
+    )
+
+
+def test_prepare_deploy_flow_requires_execution_backend_id_for_pi_sdk(tmp_path) -> None:
+    (tmp_path / "dari.yml").write_text(
+        "\n".join(
+            [
+                "name: support-agent",
+                "sdk: pi",
+                "entrypoint: src/agent.ts:agent",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "agent.ts").write_text(
+        "export const agent = {};\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        DeployConfigurationError,
+        match="execution_backend_id is required for sdk 'pi'",
+    ):
+        prepare_deploy_flow(tmp_path)
+
+
+def test_prepare_deploy_flow_rejects_execution_backend_id_for_non_pi_sdk(
+    tmp_path,
+) -> None:
+    (tmp_path / "dari.yml").write_text(
+        "\n".join(
+            [
+                "name: support-agent",
+                "sdk: openai-agents",
+                "entrypoint: agent.py:agent",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "agent.py").write_text("agent = object()\n", encoding="utf-8")
+
+    with pytest.raises(
+        DeployConfigurationError,
+        match="execution_backend_id is only supported for sdk 'pi'",
+    ):
+        prepare_deploy_flow(
+            tmp_path,
+            execution_backend_id="execb_123",
+        )
+
+
 def test_deploy_checkout_reserves_uploads_finalizes_and_publishes(tmp_path) -> None:
     (tmp_path / "dari.yml").write_text(
         "\n".join(
@@ -307,6 +385,82 @@ def test_deploy_checkout_reserves_uploads_finalizes_and_publishes(tmp_path) -> N
     assert publish_payload["source_snapshot_id"] == "src_123"
     assert captured_requests[3]["headers"]["Authorization"] == "Bearer test-api-key"
     assert response == {"id": "agt_123", "active_version_id": "ver_1"}
+
+
+def test_deploy_checkout_sends_execution_backend_id_for_pi_sdk(tmp_path) -> None:
+    (tmp_path / "dari.yml").write_text(
+        "\n".join(
+            [
+                "name: support-agent",
+                "sdk: pi",
+                "entrypoint: src/agent.ts:agent",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "agent.ts").write_text(
+        "export const agent = {};\n",
+        encoding="utf-8",
+    )
+    captured_requests: list[dict[str, object]] = []
+
+    class _FakeResponse:
+        def __init__(self, payload: bytes = b"") -> None:
+            self._payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return self._payload
+
+    def fake_opener(request):
+        captured_requests.append(
+            {
+                "url": request.full_url,
+                "method": request.get_method(),
+                "headers": dict(request.header_items()),
+                "payload": (
+                    None
+                    if request.data is None
+                    else (
+                        request.data
+                        if request.get_method() == "PUT"
+                        else json.loads(request.data.decode("utf-8"))
+                    )
+                ),
+            }
+        )
+        if request.full_url == "https://api.example.test/v1/source-snapshots":
+            return _FakeResponse(
+                b'{"source_snapshot_id":"src_123","upload_url":"https://uploads.example.test/signed","upload_headers":{"Content-Type":"application/gzip"},"expires_at":"2026-04-04T00:00:00+00:00","status":"pending_upload"}'
+            )
+        if request.full_url == "https://uploads.example.test/signed":
+            return _FakeResponse()
+        if (
+            request.full_url
+            == "https://api.example.test/v1/source-snapshots/src_123/finalize"
+        ):
+            return _FakeResponse(b'{"source_snapshot_id":"src_123","status":"ready"}')
+        if request.full_url == "https://api.example.test/v1/agents":
+            return _FakeResponse(b'{"id":"agt_123","active_version_id":"ver_1"}')
+        raise AssertionError(f"Unexpected request URL: {request.full_url}")
+
+    deploy_checkout(
+        tmp_path,
+        api_url="https://api.example.test",
+        api_key="test-api-key",
+        execution_backend_id="execb_123",
+        opener=fake_opener,
+    )
+
+    publish_payload = captured_requests[3]["payload"]
+    assert publish_payload["manifest"]["sdk"] == "pi"
+    assert publish_payload["execution_backend_id"] == "execb_123"
 
 
 def test_deploy_checkout_persists_agent_id_for_later_publishes(tmp_path) -> None:
@@ -584,3 +738,62 @@ def test_main_supports_dry_run_output(tmp_path, capsys) -> None:
     assert exit_code == 0
     assert output["steps"][0]["endpoint"] == "/v1/source-snapshots"
     assert output["steps"][3]["endpoint"] == "/v1/agents"
+
+
+def test_main_supports_execution_backend_id_in_dry_run_output(
+    tmp_path,
+    capsys,
+) -> None:
+    (tmp_path / "dari.yml").write_text(
+        "\n".join(
+            [
+                "name: support-agent",
+                "sdk: pi",
+                "entrypoint: src/agent.ts:agent",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "agent.ts").write_text(
+        "export const agent = {};\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "deploy",
+            str(tmp_path),
+            "--dry-run",
+            "--execution-backend-id",
+            "execb_123",
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["steps"][3]["payload"]["execution_backend_id"] == "execb_123"
+
+
+def test_main_requires_execution_backend_id_for_pi_sdk(tmp_path) -> None:
+    (tmp_path / "dari.yml").write_text(
+        "\n".join(
+            [
+                "name: support-agent",
+                "sdk: pi",
+                "entrypoint: src/agent.ts:agent",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "agent.ts").write_text(
+        "export const agent = {};\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        SystemExit,
+        match="execution_backend_id is required for sdk 'pi'",
+    ):
+        main(["deploy", str(tmp_path), "--dry-run"])

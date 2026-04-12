@@ -52,13 +52,71 @@ dari credentials add OPENAI_API_KEY
 dari credentials list
 ```
 
+Create or inspect execution backends for Pi deploys:
+
+```bash
+dari execution-backends create --name "Primary E2B" --provider e2b --api-key e2b_api_123
+dari execution-backends list
+```
+
 Deploy the current checkout:
 
 ```bash
 dari deploy .
 ```
 
+For `sdk: pi`, you must also provide the execution backend to pin for that
+publish:
+
+```bash
+dari deploy . --execution-backend-id execb_123
+```
+
+Or set it through the environment:
+
+```bash
+DARI_EXECUTION_BACKEND_ID=execb_123 dari deploy .
+```
+
+This management flow uses the browser login session from `dari auth login` and
+the currently selected org.
+
 The CLI talks to `https://api.dari.dev`.
+
+## Pi Deploys
+
+Pi deploys require an execution backend ID pinned at publish time.
+
+Create an E2B-backed execution backend for the current org:
+
+```bash
+dari execution-backends create --name "Primary E2B" --provider e2b
+```
+
+The command prompts for a provider API key securely by default. Use
+`--api-key` or `--api-key-stdin` when the backend config is just an API key.
+
+For any provider, you can also pass config through `--config-json` or
+`--config-json-stdin`:
+
+```bash
+dari execution-backends create \
+  --name "Sandbox Backend" \
+  --provider modal \
+  --config-json '{"api_key":"modal_123"}'
+```
+
+List existing execution backends and copy the returned `execb_*` ID:
+
+```bash
+dari execution-backends list
+```
+
+Deploy the Pi repo with that backend pinned:
+
+```bash
+dari deploy . --execution-backend-id execb_123
+```
 
 ## Local Development
 
