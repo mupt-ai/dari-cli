@@ -184,15 +184,48 @@ def test_deploy_uses_cached_current_org_api_key(monkeypatch, tmp_path) -> None:
         "\n".join(
             [
                 "name: support-agent",
-                "sdk: opencode",
-                "entrypoint: src/agent.ts:agent",
+                "harness: opencode",
+                "instructions:",
+                "  system: prompts/system.md",
+                "runtime:",
+                "  dockerfile: Dockerfile",
+                "tools:",
+                "  - name: repo_search",
+                "    path: tools/repo_search",
+                "    kind: main",
             ]
         ),
         encoding="utf-8",
     )
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "agent.ts").write_text(
-        "export const agent = {};\n",
+    (tmp_path / "Dockerfile").write_text(
+        "FROM node:20-bookworm\nWORKDIR /bundle\nCOPY . /bundle\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "prompts").mkdir()
+    (tmp_path / "prompts" / "system.md").write_text(
+        "You are a cached-org deploy test bundle.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tools" / "repo_search").mkdir(parents=True)
+    (tmp_path / "tools" / "repo_search" / "tool.yml").write_text(
+        "\n".join(
+            [
+                "name: repo_search",
+                "description: Search the repository for matching content.",
+                "input_schema: input.schema.json",
+                "runtime: typescript",
+                "handler: handler.ts:main",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tools" / "repo_search" / "input.schema.json").write_text(
+        '{"type":"object","properties":{"query":{"type":"string"}}}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "tools" / "repo_search" / "handler.ts").write_text(
+        "export async function main() { return { matches: [] }; }\n",
         encoding="utf-8",
     )
 

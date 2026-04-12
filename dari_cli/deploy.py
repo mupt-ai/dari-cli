@@ -70,6 +70,15 @@ class PreparedDeployFlow:
     def to_dict(self) -> dict[str, Any]:
         """Render the deploy flow for `--dry-run` output."""
         return {
+            "bundle": {
+                "file_count": self.bundle.file_count,
+                "sha256": self.bundle.sha256,
+                "size_bytes": self.bundle.size_bytes,
+                "metadata": (
+                    None if self.bundle.metadata is None else dict(self.bundle.metadata)
+                ),
+            },
+            "manifest": dict(self.manifest_payload),
             "steps": [
                 {
                     "action": "reserve_source_snapshot",

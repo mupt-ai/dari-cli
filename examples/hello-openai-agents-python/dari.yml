@@ -1,14 +1,18 @@
 name: hello-openai-agents-python
-sdk: openai-agents
-entrypoint: agent.py:agent
+harness: openai-agents
+
+instructions:
+  system: prompts/system.md
 
 runtime:
-  language: python
-  version: "3.11"
-  timeout_seconds: 1800
+  dockerfile: Dockerfile
 
-retries:
-  max_attempts: 2
+tools:
+  - name: repo_search
+    path: tools/repo_search
+    kind: main
+  - name: sandbox.exec
+    kind: ephemeral
 
 secrets:
   - OPENAI_API_KEY

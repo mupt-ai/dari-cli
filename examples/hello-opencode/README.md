@@ -1,6 +1,7 @@
 # Hello OpenCode Example
 
-This example exists to exercise `dari manifest validate` and `dari deploy`.
+This example exists to exercise `dari manifest validate` and
+`dari deploy --dry-run` against a managed bundle targeting `opencode`.
 
 Run:
 

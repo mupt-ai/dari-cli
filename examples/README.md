@@ -1,13 +1,14 @@
-# Example Repos
+# Example Bundles
 
-Minimal example agent repos live in this directory.
+Minimal managed deployment bundles live in this directory.
 
-- `hello-opencode`: existing manifest-only OpenCode example
-- `hello-pi`: Pi SDK example for Node-based repos
-- `hello-claude-agent-sdk-js`: Claude Agent SDK JavaScript example
-- `hello-claude-agent-sdk-python`: Claude Agent SDK Python example
-- `hello-openai-agents-js`: OpenAI Agents SDK JavaScript example
-- `hello-openai-agents-python`: OpenAI Agents SDK Python example
+- `hello-opencode`: OpenCode-flavored TypeScript bundle
+- `hello-pi`: Pi-flavored TypeScript bundle
+- `hello-claude-agent-sdk-js`: Claude Agent SDK JavaScript bundle
+- `hello-claude-agent-sdk-python`: Claude Agent SDK Python bundle
+- `hello-openai-agents-js`: OpenAI Agents SDK JavaScript bundle
+- `hello-openai-agents-python`: OpenAI Agents SDK Python bundle
 
-Each example includes a `dari.yml` entrypoint manifest. The SDK-backed examples
-also include a small local smoke test used during repo verification.
+Each example includes a repo-root `dari.yml`, a repo-root `Dockerfile`, a
+prompt file referenced from `instructions.system`, and a discovered custom tool
+under `tools/repo_search/`.
