@@ -1,7 +1,7 @@
 # Dari CLI
 
-`dari` is the CLI for packaging an agent checkout, validating `dari.yml`, and
-publishing agent versions to Agent Host.
+`dari` is the CLI for validating a managed deployment bundle, packaging the
+current checkout, and publishing agent versions to Agent Host.
 
 Full platform docs live at `https://docs.dari.dev`.
 
@@ -33,7 +33,7 @@ pipx install git+https://github.com/mupt-ai/dari-cli.git
 
 ## Commands
 
-Validate a manifest:
+Validate a managed bundle:
 
 ```bash
 dari manifest validate .
@@ -65,7 +65,7 @@ Deploy the current checkout:
 dari deploy .
 ```
 
-For `sdk: pi`, you must also provide the execution backend to pin for that
+For `harness: pi`, you must also provide the execution backend to pin for that
 publish:
 
 ```bash
@@ -82,6 +82,50 @@ This management flow uses the browser login session from `dari auth login` and
 the currently selected org.
 
 The CLI talks to `https://api.dari.dev`.
+
+## Managed Bundle Shape
+
+`dari` expects a repo-root bundle with:
+
+- `dari.yml`
+- `Dockerfile`
+- any prompt files referenced by `instructions`
+- discovered custom tools under `tools/<name>/tool.yml`
+
+Minimal example:
+
+```yaml
+name: support-agent
+harness: opencode
+
+instructions:
+  system: prompts/system.md
+
+runtime:
+  dockerfile: Dockerfile
+
+tools:
+  - name: repo_search
+    path: tools/repo_search
+    kind: main
+  - name: sandbox.exec
+    kind: ephemeral
+
+env:
+  APP_ENV: production
+```
+
+Example custom tool definition:
+
+```yaml
+name: repo_search
+description: Search the checked-out repository for matching content.
+input_schema: input.schema.json
+runtime: typescript
+handler: handler.ts:main
+retries: 2
+timeout_seconds: 20
+```
 
 ## Pi Deploys
 

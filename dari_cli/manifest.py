@@ -1,32 +1,46 @@
-"""Manifest parsing and validation for repo-root ``dari.yml`` files."""
+"""Managed bundle parsing and validation for repo-root ``dari.yml`` files."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 from typing import Any, Literal, Mapping
 
 import yaml
 
-SUPPORTED_SDKS = (
+SUPPORTED_HARNESSES = (
     "openai-agents",
     "claude-agent-sdk",
     "opencode",
     "pi",
 )
+SUPPORTED_TOOL_RUNTIMES = ("typescript", "python")
 TOP_LEVEL_FIELDS = {
     "name",
-    "sdk",
-    "entrypoint",
+    "harness",
+    "instructions",
     "runtime",
-    "retries",
+    "tools",
     "secrets",
     "env",
 }
-RUNTIME_FIELDS = {"language", "version", "timeout_seconds"}
-RETRIES_FIELDS = {"max_attempts"}
+INSTRUCTIONS_FIELDS = {"system"}
+RUNTIME_FIELDS = {"dockerfile"}
+ROOT_TOOL_FIELDS = {"name", "path", "kind"}
+TOOL_FIELDS = {
+    "name",
+    "description",
+    "input_schema",
+    "output_schema",
+    "runtime",
+    "handler",
+    "retries",
+    "timeout_seconds",
+}
 ENVIRONMENT_VARIABLE_NAME_PATTERN = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+EXECUTION_MODES = ("client", "main", "ephemeral")
+ROOT_TOOL_KINDS = ("main", "ephemeral")
 
 
 @dataclass(frozen=True)
@@ -38,71 +52,126 @@ class ManifestIssue:
 
 
 @dataclass(frozen=True)
-class ManifestRuntime:
-    """Optional runtime settings from the manifest."""
+class BundleInstructions:
+    """Normalized prompt/instruction references for one bundle."""
 
-    language: str | None = None
-    version: str | None = None
+    system: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {"system": self.system}
+
+
+@dataclass(frozen=True)
+class BundleRuntime:
+    """Normalized runtime build metadata for one bundle."""
+
+    dockerfile: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {"dockerfile": self.dockerfile}
+
+
+@dataclass(frozen=True)
+class BuiltInTool:
+    """One built-in/default tool exposed by the root manifest."""
+
+    name: str
+    execution_mode: Literal["main", "ephemeral"]
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "name": self.name,
+            "execution_mode": self.execution_mode,
+        }
+
+
+@dataclass(frozen=True)
+class CustomTool:
+    """One discovered custom tool in the normalized bundle payload."""
+
+    name: str
+    source_name: str
+    source_path: str
+    description: str
+    input_schema: str
+    runtime: Literal["typescript", "python"]
+    handler: str
+    execution_mode: Literal["client", "main", "ephemeral"] = "client"
+    output_schema: str | None = None
+    retries: int | None = None
     timeout_seconds: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the runtime payload without unset fields."""
-        payload: dict[str, Any] = {}
-        if self.language is not None:
-            payload["language"] = self.language
-        if self.version is not None:
-            payload["version"] = self.version
+        payload: dict[str, Any] = {
+            "name": self.name,
+            "source_name": self.source_name,
+            "source_path": self.source_path,
+            "description": self.description,
+            "input_schema": self.input_schema,
+            "runtime": self.runtime,
+            "handler": self.handler,
+            "execution_mode": self.execution_mode,
+        }
+        if self.output_schema is not None:
+            payload["output_schema"] = self.output_schema
+        if self.retries is not None:
+            payload["retries"] = self.retries
         if self.timeout_seconds is not None:
             payload["timeout_seconds"] = self.timeout_seconds
         return payload
 
 
 @dataclass(frozen=True)
-class RetryPolicy:
-    """Optional retry configuration from the manifest."""
-
-    max_attempts: int | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """Return the retry payload without unset fields."""
-        payload: dict[str, Any] = {}
-        if self.max_attempts is not None:
-            payload["max_attempts"] = self.max_attempts
-        return payload
-
-
-@dataclass(frozen=True)
 class AgentManifest:
-    """Validated manifest values."""
+    """Normalized managed bundle payload emitted by the CLI."""
 
     name: str
-    sdk: Literal["openai-agents", "claude-agent-sdk", "opencode", "pi"]
-    entrypoint: str
-    runtime: ManifestRuntime | None = None
-    retries: RetryPolicy | None = None
+    harness: Literal["openai-agents", "claude-agent-sdk", "opencode", "pi"]
+    instructions: BundleInstructions
+    runtime: BundleRuntime
+    built_in_tools: tuple[BuiltInTool, ...] = ()
+    custom_tools: tuple[CustomTool, ...] = ()
     secrets: tuple[str, ...] = ()
     env: Mapping[str, str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the manifest as a JSON-serializable payload."""
         payload: dict[str, Any] = {
             "name": self.name,
-            "sdk": self.sdk,
-            "entrypoint": self.entrypoint,
+            "harness": self.harness,
+            "instructions": self.instructions.to_dict(),
+            "runtime": self.runtime.to_dict(),
+            "built_in_tools": [tool.to_dict() for tool in self.built_in_tools],
+            "custom_tools": [tool.to_dict() for tool in self.custom_tools],
         }
-        if self.runtime is not None:
-            runtime_payload = self.runtime.to_dict()
-            if runtime_payload:
-                payload["runtime"] = runtime_payload
-        if self.retries is not None:
-            retry_payload = self.retries.to_dict()
-            if retry_payload:
-                payload["retries"] = retry_payload
         if self.secrets:
             payload["secrets"] = list(self.secrets)
         if self.env:
             payload["env"] = dict(self.env)
         return payload
+
+
+@dataclass(frozen=True)
+class RootToolOverride:
+    """One root-manifest tool entry before normalization."""
+
+    name: str
+    kind: Literal["main", "ephemeral"]
+    path: str | None = None
+
+
+@dataclass(frozen=True)
+class DiscoveredTool:
+    """One validated tool discovered from ``tools/<name>/tool.yml``."""
+
+    source_name: str
+    source_path: str
+    description: str
+    input_schema: str
+    runtime: Literal["typescript", "python"]
+    handler: str
+    output_schema: str | None = None
+    retries: int | None = None
+    timeout_seconds: int | None = None
 
 
 class ManifestValidationError(ValueError):
@@ -120,21 +189,75 @@ class ManifestValidationError(ValueError):
 
 
 def load_manifest(repo_root: str | Path) -> AgentManifest:
-    """Load and validate the repo-root ``dari.yml`` manifest."""
-    manifest_path = Path(repo_root) / "dari.yml"
+    """Load and validate the repo-root managed bundle."""
+    resolved_root = Path(repo_root).resolve()
+    manifest_path = resolved_root / "dari.yml"
     raw_text = manifest_path.read_text(encoding="utf-8")
     return parse_manifest_text(raw_text, manifest_path)
 
 
-def parse_manifest_text(raw_text: str, manifest_path: str | Path = "dari.yml") -> AgentManifest:
-    """Parse and validate manifest text."""
-    resolved_path = Path(manifest_path)
+def parse_manifest_text(
+    raw_text: str,
+    manifest_path: str | Path = "dari.yml",
+) -> AgentManifest:
+    """Parse and validate manifest text against the managed bundle contract."""
+    resolved_path = Path(manifest_path).resolve()
+    repo_root = resolved_path.parent
+    data = _load_yaml_mapping(raw_text, resolved_path)
+    issues: list[ManifestIssue] = []
 
+    entrypoint_present = "entrypoint" in data
+    _report_unknown_keys(
+        data,
+        TOP_LEVEL_FIELDS | {"entrypoint"},
+        issues,
+    )
+    if entrypoint_present:
+        issues.append(
+            ManifestIssue(
+                "entrypoint",
+                "agent-level entrypoints are no longer supported; remove the root entrypoint and define per-tool handlers in tools/<name>/tool.yml",
+            )
+        )
+
+    name = _require_non_empty_string(data, "name", issues)
+    harness = _require_harness(data, issues)
+    instructions = _parse_instructions(data.get("instructions"), repo_root, issues)
+    runtime = _parse_runtime(data.get("runtime"), repo_root, issues)
+    env = _parse_env(data.get("env"), issues)
+    secrets = _parse_secrets(data.get("secrets"), issues)
+    _report_secret_env_overlap(secrets, env, issues)
+    root_tools = _parse_root_tools(data.get("tools"), issues)
+    discovered_tools = _discover_custom_tools(repo_root, issues)
+    built_in_tools, custom_tools = _build_effective_tools(
+        root_tools=root_tools,
+        discovered_tools=discovered_tools,
+        issues=issues,
+    )
+
+    if issues:
+        raise ManifestValidationError(resolved_path, issues)
+
+    assert instructions is not None
+    assert runtime is not None
+    return AgentManifest(
+        name=name,
+        harness=harness,
+        instructions=instructions,
+        runtime=runtime,
+        built_in_tools=tuple(built_in_tools),
+        custom_tools=tuple(custom_tools),
+        secrets=tuple(secrets),
+        env=env,
+    )
+
+
+def _load_yaml_mapping(raw_text: str, manifest_path: Path) -> dict[str, Any]:
     try:
         loaded = yaml.safe_load(raw_text)
     except yaml.YAMLError as exc:
         raise ManifestValidationError(
-            resolved_path,
+            manifest_path,
             [ManifestIssue("manifest", f"invalid YAML: {exc}")],
         ) from exc
 
@@ -143,146 +266,572 @@ def parse_manifest_text(raw_text: str, manifest_path: str | Path = "dari.yml") -
 
     if not isinstance(loaded, dict):
         raise ManifestValidationError(
-            resolved_path,
+            manifest_path,
             [ManifestIssue("manifest", "expected a top-level mapping")],
         )
-
-    issues: list[ManifestIssue] = []
-    data = dict(loaded)
-    _report_unknown_keys(data, TOP_LEVEL_FIELDS, issues)
-
-    name = _require_non_empty_string(data, "name", issues)
-    sdk = _require_sdk(data, issues)
-    entrypoint = _require_entrypoint(data, issues)
-    runtime = _parse_runtime(data.get("runtime"), issues)
-    retries = _parse_retries(data.get("retries"), issues)
-    secrets = _parse_secrets(data.get("secrets"), issues)
-    env = _parse_env(data.get("env"), issues)
-    _report_secret_env_overlap(secrets, env, issues)
-
-    if issues:
-        raise ManifestValidationError(resolved_path, issues)
-
-    return AgentManifest(
-        name=name,
-        sdk=sdk,
-        entrypoint=entrypoint,
-        runtime=runtime,
-        retries=retries,
-        secrets=tuple(secrets),
-        env=env,
-    )
+    return dict(loaded)
 
 
 def _report_unknown_keys(
-    mapping: Mapping[str, Any], allowed: set[str], issues: list[ManifestIssue], prefix: str = ""
+    mapping: Mapping[str, Any],
+    allowed: set[str],
+    issues: list[ManifestIssue],
+    *,
+    prefix: str = "",
 ) -> None:
     for key in sorted(mapping, key=str):
         if key not in allowed:
-            key_text = str(key)
-            path = f"{prefix}.{key_text}" if prefix else key_text
+            path = f"{prefix}.{key}" if prefix else str(key)
             issues.append(ManifestIssue(path, "unsupported field"))
 
 
 def _require_non_empty_string(
-    data: Mapping[str, Any], field_name: str, issues: list[ManifestIssue]
+    data: Mapping[str, Any],
+    field_name: str,
+    issues: list[ManifestIssue],
 ) -> str:
     value = data.get(field_name)
     if value is None:
         issues.append(ManifestIssue(field_name, "field is required"))
         return ""
+    return _coerce_non_empty_string(value, field_name, issues)
+
+
+def _coerce_non_empty_string(
+    value: object,
+    field_name: str,
+    issues: list[ManifestIssue],
+) -> str:
     if not isinstance(value, str) or not value.strip():
         issues.append(ManifestIssue(field_name, "expected a non-empty string"))
         return ""
     return value.strip()
 
 
-def _require_sdk(
-    data: Mapping[str, Any], issues: list[ManifestIssue]
+def _require_harness(
+    data: Mapping[str, Any],
+    issues: list[ManifestIssue],
 ) -> Literal["openai-agents", "claude-agent-sdk", "opencode", "pi"]:
-    raw_sdk = _require_non_empty_string(data, "sdk", issues)
-    if not raw_sdk:
+    raw_harness = _require_non_empty_string(data, "harness", issues)
+    if not raw_harness:
         return "openai-agents"
-    if raw_sdk not in SUPPORTED_SDKS:
+    if raw_harness not in SUPPORTED_HARNESSES:
         issues.append(
             ManifestIssue(
-                "sdk",
+                "harness",
                 "expected one of "
-                + ", ".join(repr(value) for value in SUPPORTED_SDKS),
+                + ", ".join(repr(value) for value in SUPPORTED_HARNESSES),
             )
         )
         return "openai-agents"
-    return raw_sdk  # type: ignore[return-value]
+    return raw_harness  # type: ignore[return-value]
 
 
-def _require_entrypoint(data: Mapping[str, Any], issues: list[ManifestIssue]) -> str:
-    entrypoint = _require_non_empty_string(data, "entrypoint", issues)
-    if entrypoint and not _is_valid_entrypoint_reference(entrypoint):
-        issues.append(
-            ManifestIssue(
-                "entrypoint",
-                "expected a '<module-or-path>:<export>' reference",
-            )
-        )
-    return entrypoint
-
-
-def _is_valid_entrypoint_reference(entrypoint: str) -> bool:
-    module_or_path, separator, export_name = entrypoint.partition(":")
-    return (
-        separator == ":"
-        and bool(module_or_path.strip())
-        and bool(export_name.strip())
-        and ":" not in export_name
-    )
-
-
-def _parse_runtime(value: Any, issues: list[ManifestIssue]) -> ManifestRuntime | None:
+def _parse_instructions(
+    value: object,
+    repo_root: Path,
+    issues: list[ManifestIssue],
+) -> BundleInstructions | None:
     if value is None:
+        issues.append(ManifestIssue("instructions", "field is required"))
         return None
-    if not isinstance(value, dict):
+    if not isinstance(value, Mapping):
+        issues.append(ManifestIssue("instructions", "expected a mapping"))
+        return None
+
+    _report_unknown_keys(value, INSTRUCTIONS_FIELDS, issues, prefix="instructions")
+    system_ref = _coerce_non_empty_string(
+        value.get("system"),
+        "instructions.system",
+        issues,
+    )
+    if not system_ref:
+        return None
+    system_path = _validate_repo_file_reference(
+        "instructions.system",
+        system_ref,
+        repo_root,
+        issues,
+    )
+    if system_path is None:
+        return None
+    return BundleInstructions(system=system_path)
+
+
+def _parse_runtime(
+    value: object,
+    repo_root: Path,
+    issues: list[ManifestIssue],
+) -> BundleRuntime | None:
+    if value is None:
+        issues.append(ManifestIssue("runtime", "field is required"))
+        return None
+    if not isinstance(value, Mapping):
         issues.append(ManifestIssue("runtime", "expected a mapping"))
         return None
 
     _report_unknown_keys(value, RUNTIME_FIELDS, issues, prefix="runtime")
-    language = _optional_non_empty_string(
-        "runtime.language",
-        value.get("language"),
+    dockerfile = _coerce_non_empty_string(
+        value.get("dockerfile"),
+        "runtime.dockerfile",
         issues,
     )
-    version = _optional_non_empty_string(
-        "runtime.version",
-        value.get("version"),
+    if not dockerfile:
+        return None
+    if dockerfile != "Dockerfile":
+        issues.append(
+            ManifestIssue(
+                "runtime.dockerfile",
+                "expected exactly 'Dockerfile'",
+            )
+        )
+    dockerfile_path = repo_root / "Dockerfile"
+    if not dockerfile_path.is_file():
+        issues.append(
+            ManifestIssue(
+                "runtime.dockerfile",
+                "file does not exist at repo root",
+            )
+        )
+        return None
+    return BundleRuntime(dockerfile="Dockerfile")
+
+
+def _parse_root_tools(
+    value: object,
+    issues: list[ManifestIssue],
+) -> tuple[RootToolOverride, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        issues.append(ManifestIssue("tools", "expected a list"))
+        return ()
+
+    parsed: list[RootToolOverride] = []
+    for index, item in enumerate(value):
+        label = f"tools[{index}]"
+        if not isinstance(item, Mapping):
+            issues.append(ManifestIssue(label, "expected an object"))
+            continue
+        _report_unknown_keys(item, ROOT_TOOL_FIELDS, issues, prefix=label)
+        name = _coerce_non_empty_string(item.get("name"), f"{label}.name", issues)
+        kind = _coerce_non_empty_string(item.get("kind"), f"{label}.kind", issues)
+        if kind and kind not in ROOT_TOOL_KINDS:
+            issues.append(
+                ManifestIssue(
+                    f"{label}.kind",
+                    "expected one of 'main' or 'ephemeral'",
+                )
+            )
+        raw_path = item.get("path")
+        normalized_path: str | None = None
+        if raw_path is not None:
+            normalized_path = _normalize_relative_path(
+                raw_path,
+                label=f"{label}.path",
+                issues=issues,
+            )
+            if normalized_path and not PurePosixPath(normalized_path).is_relative_to(
+                PurePosixPath("tools")
+            ):
+                issues.append(
+                    ManifestIssue(
+                        f"{label}.path",
+                        "expected a path under tools/",
+                    )
+                )
+        parsed.append(
+            RootToolOverride(
+                name=name,
+                kind=(kind if kind in ROOT_TOOL_KINDS else "main"),  # type: ignore[arg-type]
+                path=normalized_path,
+            )
+        )
+    return tuple(parsed)
+
+
+def _discover_custom_tools(
+    repo_root: Path,
+    issues: list[ManifestIssue],
+) -> dict[str, DiscoveredTool]:
+    tools_root = repo_root / "tools"
+    if not tools_root.exists():
+        return {}
+    if not tools_root.is_dir():
+        issues.append(ManifestIssue("tools", "expected tools/ to be a directory"))
+        return {}
+
+    discovered: dict[str, DiscoveredTool] = {}
+    for child in sorted(tools_root.iterdir(), key=lambda path: path.name):
+        relative_dir = PurePosixPath("tools") / child.name
+        label = relative_dir.as_posix()
+        if not child.is_dir():
+            issues.append(
+                ManifestIssue(label, "every immediate tools/ entry must be a directory")
+            )
+            continue
+        tool = _load_discovered_tool(
+            tool_dir=child,
+            repo_root=repo_root,
+            issues=issues,
+        )
+        if tool is None:
+            continue
+        discovered[tool.source_path] = tool
+    return discovered
+
+
+def _load_discovered_tool(
+    *,
+    tool_dir: Path,
+    repo_root: Path,
+    issues: list[ManifestIssue],
+) -> DiscoveredTool | None:
+    relative_dir = tool_dir.relative_to(repo_root).as_posix()
+    tool_manifest_path = tool_dir / "tool.yml"
+    if not tool_manifest_path.is_file():
+        issues.append(
+            ManifestIssue(f"{relative_dir}.tool.yml", "tool.yml file is required")
+        )
+        return None
+
+    raw_text = tool_manifest_path.read_text(encoding="utf-8")
+    tool_data = _load_yaml_mapping(raw_text, tool_manifest_path)
+    _report_unknown_keys(tool_data, TOOL_FIELDS, issues, prefix=f"{relative_dir}.tool")
+
+    source_name = _coerce_non_empty_string(
+        tool_data.get("name"),
+        f"{relative_dir}.tool.name",
         issues,
     )
-    parsed_timeout = _optional_positive_int(
-        "runtime.timeout_seconds",
-        value.get("timeout_seconds"),
+    description = _coerce_non_empty_string(
+        tool_data.get("description"),
+        f"{relative_dir}.tool.description",
+        issues,
+    )
+    runtime_value = _coerce_non_empty_string(
+        tool_data.get("runtime"),
+        f"{relative_dir}.tool.runtime",
+        issues,
+    )
+    input_schema = _coerce_non_empty_string(
+        tool_data.get("input_schema"),
+        f"{relative_dir}.tool.input_schema",
+        issues,
+    )
+    handler = _coerce_non_empty_string(
+        tool_data.get("handler"),
+        f"{relative_dir}.tool.handler",
+        issues,
+    )
+    output_schema_value = tool_data.get("output_schema")
+    retries_value = tool_data.get("retries")
+    timeout_value = tool_data.get("timeout_seconds")
+
+    if runtime_value and runtime_value not in SUPPORTED_TOOL_RUNTIMES:
+        issues.append(
+            ManifestIssue(
+                f"{relative_dir}.tool.runtime",
+                "expected one of "
+                + ", ".join(repr(value) for value in SUPPORTED_TOOL_RUNTIMES),
+            )
+        )
+
+    resolved_input_schema = _validate_tool_file_reference(
+        field_name=f"{relative_dir}.tool.input_schema",
+        raw_value=input_schema,
+        tool_dir=tool_dir,
+        repo_root=repo_root,
+        issues=issues,
+    )
+    resolved_output_schema = None
+    if output_schema_value is not None:
+        output_schema = _coerce_non_empty_string(
+            output_schema_value,
+            f"{relative_dir}.tool.output_schema",
+            issues,
+        )
+        if output_schema:
+            resolved_output_schema = _validate_tool_file_reference(
+                field_name=f"{relative_dir}.tool.output_schema",
+                raw_value=output_schema,
+                tool_dir=tool_dir,
+                repo_root=repo_root,
+                issues=issues,
+            )
+
+    resolved_handler = _validate_handler_reference(
+        field_name=f"{relative_dir}.tool.handler",
+        raw_value=handler,
+        tool_dir=tool_dir,
+        repo_root=repo_root,
+        issues=issues,
+    )
+    retries = _optional_positive_int(
+        f"{relative_dir}.tool.retries",
+        retries_value,
+        issues,
+    )
+    timeout_seconds = _optional_positive_int(
+        f"{relative_dir}.tool.timeout_seconds",
+        timeout_value,
         issues,
     )
 
-    return ManifestRuntime(
-        language=language,
-        version=version,
-        timeout_seconds=parsed_timeout,
+    if not (
+        source_name
+        and description
+        and runtime_value in SUPPORTED_TOOL_RUNTIMES
+        and resolved_input_schema
+        and resolved_handler
+    ):
+        return None
+
+    return DiscoveredTool(
+        source_name=source_name,
+        source_path=relative_dir,
+        description=description,
+        input_schema=resolved_input_schema,
+        output_schema=resolved_output_schema,
+        runtime=runtime_value,  # type: ignore[arg-type]
+        handler=resolved_handler,
+        retries=retries,
+        timeout_seconds=timeout_seconds,
     )
 
 
-def _parse_retries(value: Any, issues: list[ManifestIssue]) -> RetryPolicy | None:
+def _build_effective_tools(
+    *,
+    root_tools: tuple[RootToolOverride, ...],
+    discovered_tools: Mapping[str, DiscoveredTool],
+    issues: list[ManifestIssue],
+) -> tuple[list[BuiltInTool], list[CustomTool]]:
+    built_in_tools: list[BuiltInTool] = []
+    overrides_by_path: dict[str, RootToolOverride] = {}
+    for index, entry in enumerate(root_tools):
+        label = f"tools[{index}]"
+        if entry.path is None:
+            built_in_tools.append(
+                BuiltInTool(
+                    name=entry.name,
+                    execution_mode=entry.kind,
+                )
+            )
+            continue
+        if entry.path not in discovered_tools:
+            issues.append(
+                ManifestIssue(
+                    f"{label}.path",
+                    "did not match a discovered tools/<name>/ directory",
+                )
+            )
+            continue
+        if entry.path in overrides_by_path:
+            issues.append(
+                ManifestIssue(
+                    f"{label}.path",
+                    "multiple root tool entries cannot target the same tool path",
+                )
+            )
+            continue
+        overrides_by_path[entry.path] = entry
+
+    custom_tools: list[CustomTool] = []
+    for source_path, tool in sorted(discovered_tools.items()):
+        override = overrides_by_path.get(source_path)
+        custom_tools.append(
+            CustomTool(
+                name=tool.source_name if override is None else override.name,
+                source_name=tool.source_name,
+                source_path=tool.source_path,
+                description=tool.description,
+                input_schema=tool.input_schema,
+                output_schema=tool.output_schema,
+                runtime=tool.runtime,
+                handler=tool.handler,
+                retries=tool.retries,
+                timeout_seconds=tool.timeout_seconds,
+                execution_mode="client" if override is None else override.kind,
+            )
+        )
+
+    _report_duplicate_tool_names(built_in_tools, custom_tools, issues)
+    return built_in_tools, custom_tools
+
+
+def _report_duplicate_tool_names(
+    built_in_tools: list[BuiltInTool],
+    custom_tools: list[CustomTool],
+    issues: list[ManifestIssue],
+) -> None:
+    seen: dict[str, str] = {}
+    for index, tool in enumerate(built_in_tools):
+        previous = seen.setdefault(tool.name, f"built_in_tools[{index}]")
+        if previous != f"built_in_tools[{index}]":
+            issues.append(
+                ManifestIssue(
+                    f"built_in_tools[{index}].name",
+                    f"duplicate tool name {tool.name!r}",
+                )
+            )
+    for index, tool in enumerate(custom_tools):
+        previous = seen.setdefault(tool.name, f"custom_tools[{index}]")
+        if previous != f"custom_tools[{index}]":
+            issues.append(
+                ManifestIssue(
+                    f"custom_tools[{index}].name",
+                    f"duplicate tool name {tool.name!r}",
+                )
+            )
+
+
+def _validate_repo_file_reference(
+    field_name: str,
+    raw_value: str,
+    repo_root: Path,
+    issues: list[ManifestIssue],
+) -> str | None:
+    normalized_path = _normalize_relative_path(
+        raw_value,
+        label=field_name,
+        issues=issues,
+    )
+    if normalized_path is None:
+        return None
+    target_path = repo_root / normalized_path
+    if not target_path.is_file():
+        issues.append(ManifestIssue(field_name, "file does not exist"))
+        return None
+    return normalized_path
+
+
+def _validate_tool_file_reference(
+    *,
+    field_name: str,
+    raw_value: str,
+    tool_dir: Path,
+    repo_root: Path,
+    issues: list[ManifestIssue],
+) -> str | None:
+    normalized_local = _normalize_relative_path(
+        raw_value,
+        label=field_name,
+        issues=issues,
+    )
+    if normalized_local is None:
+        return None
+    target_path = tool_dir / normalized_local
+    if not target_path.is_file():
+        issues.append(ManifestIssue(field_name, "file does not exist"))
+        return None
+    return target_path.relative_to(repo_root).as_posix()
+
+
+def _validate_handler_reference(
+    *,
+    field_name: str,
+    raw_value: str,
+    tool_dir: Path,
+    repo_root: Path,
+    issues: list[ManifestIssue],
+) -> str | None:
+    module_path, separator, export_name = raw_value.partition(":")
+    if (
+        separator != ":"
+        or not module_path.strip()
+        or not export_name.strip()
+        or ":" in export_name
+    ):
+        issues.append(
+            ManifestIssue(
+                field_name,
+                "expected a '<module-or-path>:<export>' reference",
+            )
+        )
+        return None
+    normalized_module = _normalize_relative_path(
+        module_path,
+        label=field_name,
+        issues=issues,
+    )
+    if normalized_module is None:
+        return None
+    target_path = tool_dir / normalized_module
+    if not target_path.is_file():
+        issues.append(ManifestIssue(field_name, "handler target file does not exist"))
+        return None
+    repo_relative = target_path.relative_to(repo_root).as_posix()
+    return f"{repo_relative}:{export_name.strip()}"
+
+
+def _normalize_relative_path(
+    value: object,
+    *,
+    label: str,
+    issues: list[ManifestIssue],
+) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        issues.append(ManifestIssue(label, "expected a non-empty relative path"))
+        return None
+    candidate = PurePosixPath(value.strip())
+    if candidate.is_absolute():
+        issues.append(ManifestIssue(label, "expected a relative path"))
+        return None
+    if not candidate.parts or any(part in {"", ".", ".."} for part in candidate.parts):
+        issues.append(
+            ManifestIssue(
+                label,
+                "path must not contain '.', '..', or empty segments",
+            )
+        )
+        return None
+    return candidate.as_posix()
+
+
+def _optional_positive_int(
+    field_name: str,
+    value: object,
+    issues: list[ManifestIssue],
+) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        issues.append(ManifestIssue(field_name, "expected a positive integer"))
+        return None
+    return value
+
+
+def _parse_env(value: Any, issues: list[ManifestIssue]) -> dict[str, str] | None:
     if value is None:
         return None
     if not isinstance(value, dict):
-        issues.append(ManifestIssue("retries", "expected a mapping"))
+        issues.append(ManifestIssue("env", "expected a mapping"))
         return None
 
-    _report_unknown_keys(value, RETRIES_FIELDS, issues, prefix="retries")
-    parsed_attempts = _optional_positive_int(
-        "retries.max_attempts",
-        value.get("max_attempts"),
-        issues,
-    )
-
-    return RetryPolicy(max_attempts=parsed_attempts)
+    env: dict[str, str] = {}
+    for raw_name, raw_value in value.items():
+        if not isinstance(raw_name, str):
+            issues.append(ManifestIssue("env", "expected string keys"))
+            continue
+        name = raw_name.strip()
+        if not ENVIRONMENT_VARIABLE_NAME_PATTERN.fullmatch(name):
+            issues.append(
+                ManifestIssue(
+                    f"env.{raw_name}",
+                    "expected a name matching ^[A-Z_][A-Z0-9_]*$",
+                )
+            )
+            continue
+        if not isinstance(raw_value, str):
+            issues.append(
+                ManifestIssue(
+                    f"env.{raw_name}",
+                    "expected a string value",
+                )
+            )
+            continue
+        env[name] = raw_value
+    return env
 
 
 def _parse_secrets(value: Any, issues: list[ManifestIssue]) -> list[str]:
@@ -297,56 +846,31 @@ def _parse_secrets(value: Any, issues: list[ManifestIssue]) -> list[str]:
         )
         return []
 
-    parsed: list[str] = []
+    secrets: list[str] = []
     seen: set[str] = set()
     for index, item in enumerate(value):
-        path = f"secrets[{index}]"
-        if not isinstance(item, str) or not item.strip():
-            issues.append(ManifestIssue(path, "expected a non-empty secret name"))
-            continue
-        name = item.strip()
-        if not ENVIRONMENT_VARIABLE_NAME_PATTERN.fullmatch(name):
+        if not isinstance(item, str) or not ENVIRONMENT_VARIABLE_NAME_PATTERN.fullmatch(
+            item.strip()
+        ):
             issues.append(
                 ManifestIssue(
-                    path,
+                    f"secrets[{index}]",
                     "expected a secret name matching ^[A-Z_][A-Z0-9_]*$",
                 )
             )
             continue
+        name = item.strip()
         if name in seen:
-            issues.append(ManifestIssue(path, f"duplicate secret name {name!r}"))
-            continue
-        seen.add(name)
-        parsed.append(name)
-    return parsed
-
-
-def _parse_env(value: Any, issues: list[ManifestIssue]) -> dict[str, str] | None:
-    if value is None:
-        return None
-    if not isinstance(value, dict):
-        issues.append(ManifestIssue("env", "expected a mapping of string values"))
-        return None
-
-    parsed: dict[str, str] = {}
-    for key, item in value.items():
-        path = f"env.{key}"
-        if not isinstance(key, str) or not key.strip():
-            issues.append(ManifestIssue(path, "expected a non-empty environment variable name"))
-            continue
-        if not ENVIRONMENT_VARIABLE_NAME_PATTERN.fullmatch(key.strip()):
             issues.append(
                 ManifestIssue(
-                    path,
-                    "expected an environment variable name matching ^[A-Z_][A-Z0-9_]*$",
+                    f"secrets[{index}]",
+                    f"duplicate secret name {name!r}",
                 )
             )
             continue
-        if not isinstance(item, str):
-            issues.append(ManifestIssue(path, "expected a string value"))
-            continue
-        parsed[key.strip()] = item
-    return parsed
+        seen.add(name)
+        secrets.append(name)
+    return secrets
 
 
 def _report_secret_env_overlap(
@@ -354,7 +878,7 @@ def _report_secret_env_overlap(
     env: Mapping[str, str] | None,
     issues: list[ManifestIssue],
 ) -> None:
-    if env is None:
+    if not env:
         return
     overlap = sorted(set(secrets) & set(env))
     if overlap:
@@ -364,29 +888,3 @@ def _report_secret_env_overlap(
                 "secret names must not overlap env keys: " + ", ".join(overlap),
             )
         )
-
-
-def _optional_non_empty_string(
-    path: str,
-    value: Any,
-    issues: list[ManifestIssue],
-) -> str | None:
-    if value is None:
-        return None
-    if not isinstance(value, str) or not value.strip():
-        issues.append(ManifestIssue(path, "expected a non-empty string"))
-        return None
-    return value.strip()
-
-
-def _optional_positive_int(
-    path: str,
-    value: Any,
-    issues: list[ManifestIssue],
-) -> int | None:
-    if value is None:
-        return None
-    if type(value) is not int or value <= 0:
-        issues.append(ManifestIssue(path, "expected a positive integer"))
-        return None
-    return value

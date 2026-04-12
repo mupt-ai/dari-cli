@@ -1,7 +1,8 @@
 # Hello Pi Example
 
-This example exists to exercise `dari manifest validate`, `dari deploy`, and a
-local import smoke test for the Pi SDK example.
+This example exists to exercise `dari manifest validate`,
+`dari deploy --dry-run`, and a local smoke test against a managed bundle
+targeting `pi`.
 
 Pi deploys require an execution backend ID.
 Create one with

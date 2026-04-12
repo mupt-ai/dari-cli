@@ -1,14 +1,18 @@
 name: hello-claude-agent-sdk-python
-sdk: claude-agent-sdk
-entrypoint: agent.py:agent
+harness: claude-agent-sdk
+
+instructions:
+  system: prompts/system.md
 
 runtime:
-  language: python
-  version: "3.11"
-  timeout_seconds: 1800
+  dockerfile: Dockerfile
 
-retries:
-  max_attempts: 2
+tools:
+  - name: repo_search
+    path: tools/repo_search
+    kind: main
+  - name: sandbox.exec
+    kind: ephemeral
 
 secrets:
   - ANTHROPIC_API_KEY

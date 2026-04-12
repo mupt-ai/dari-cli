@@ -73,6 +73,15 @@ class PreparedDeployFlow:
     def to_dict(self) -> dict[str, Any]:
         """Render the deploy flow for `--dry-run` output."""
         return {
+            "bundle": {
+                "file_count": self.bundle.file_count,
+                "sha256": self.bundle.sha256,
+                "size_bytes": self.bundle.size_bytes,
+                "metadata": (
+                    None if self.bundle.metadata is None else dict(self.bundle.metadata)
+                ),
+            },
+            "manifest": dict(self.manifest_payload),
             "steps": [
                 {
                     "action": "reserve_source_snapshot",
@@ -204,7 +213,7 @@ def prepare_deploy_flow(
     manifest = load_manifest(repo_root)
     resolved_execution_backend_id = _normalize_optional_string(execution_backend_id)
     _validate_execution_backend_selection(
-        sdk=manifest.sdk,
+        harness=manifest.harness,
         execution_backend_id=resolved_execution_backend_id,
     )
     source_metadata = collect_source_metadata(repo_root, environ=environ)
@@ -459,19 +468,19 @@ def _normalize_optional_string(value: str | None) -> str | None:
 
 def _validate_execution_backend_selection(
     *,
-    sdk: str,
+    harness: str,
     execution_backend_id: str | None,
 ) -> None:
-    if sdk == "pi":
+    if harness == "pi":
         if execution_backend_id is None:
             raise DeployConfigurationError(
-                "execution_backend_id is required for sdk 'pi'. "
+                "execution_backend_id is required for harness 'pi'. "
                 "Pass --execution-backend-id or set DARI_EXECUTION_BACKEND_ID."
             )
         return
     if execution_backend_id is not None:
         raise DeployConfigurationError(
-            "execution_backend_id is only supported for sdk 'pi'. "
+            "execution_backend_id is only supported for harness 'pi'. "
             "Remove --execution-backend-id or unset DARI_EXECUTION_BACKEND_ID."
         )
 

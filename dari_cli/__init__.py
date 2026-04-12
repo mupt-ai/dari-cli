@@ -12,20 +12,24 @@ from .deploy import (
 )
 from .manifest import (
     AgentManifest,
-    ManifestRuntime,
+    BundleInstructions,
+    BundleRuntime,
+    BuiltInTool,
+    CustomTool,
     ManifestValidationError,
-    RetryPolicy,
     load_manifest,
     parse_manifest_text,
 )
 
 __all__ = [
     "AgentManifest",
+    "BundleInstructions",
+    "BundleRuntime",
+    "BuiltInTool",
     "DariApiClient",
-    "ManifestRuntime",
     "ManifestValidationError",
     "PreparedDeployFlow",
-    "RetryPolicy",
+    "CustomTool",
     "SourceBundle",
     "build_publish_endpoint",
     "build_source_bundle",

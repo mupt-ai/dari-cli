@@ -67,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
     deploy_parser.add_argument(
         "--execution-backend-id",
         default=os.environ.get("DARI_EXECUTION_BACKEND_ID"),
-        help="Execution backend ID to pin for sdk 'pi' publishes.",
+        help="Execution backend ID to pin for harness 'pi' publishes.",
     )
     deploy_parser.add_argument(
         "--dry-run",
@@ -325,7 +325,7 @@ def _run_manifest_validate(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(manifest.to_dict(), indent=2, sort_keys=True))
     else:
-        print(f"Validated {manifest_path}: {manifest.name} ({manifest.sdk})")
+        print(f"Validated {manifest_path}: {manifest.name} ({manifest.harness})")
     return 0
 
 
@@ -349,15 +349,7 @@ def _handle_deploy(args: argparse.Namespace) -> int:
         raise SystemExit(str(exc)) from exc
 
     if args.dry_run:
-        print(
-            json.dumps(
-                {
-                    "steps": prepared.to_dict()["steps"],
-                },
-                indent=2,
-                sort_keys=True,
-            )
-        )
+        print(json.dumps(prepared.to_dict(), indent=2, sort_keys=True))
         return 0
 
     api_key = args.api_key or resolve_default_api_key(

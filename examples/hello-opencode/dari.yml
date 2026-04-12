@@ -1,14 +1,18 @@
 name: hello-opencode
-sdk: opencode
-entrypoint: src/agent.ts:agent
+harness: opencode
+
+instructions:
+  system: prompts/system.md
 
 runtime:
-  language: typescript
-  version: "20"
-  timeout_seconds: 1800
+  dockerfile: Dockerfile
 
-retries:
-  max_attempts: 2
+tools:
+  - name: repo_search
+    path: tools/repo_search
+    kind: main
+  - name: sandbox.exec
+    kind: ephemeral
 
 env:
   APP_ENV: example
