@@ -10,14 +10,16 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from .deploy import deploy_checkout, prepare_deploy_flow
+from .deploy import DeployConfigurationError, deploy_checkout, prepare_deploy_flow
 from .management import (
     DEFAULT_API_URL,
+    create_execution_backend,
     create_api_key,
     create_organization,
     delete_credential,
     get_auth_status,
     invite_member,
+    list_execution_backends,
     list_api_keys,
     list_credentials,
     list_members,
@@ -61,6 +63,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--agent-id",
         default=os.environ.get("DARI_AGENT_ID"),
         help="Existing agent ID to publish a new version for.",
+    )
+    deploy_parser.add_argument(
+        "--execution-backend-id",
+        default=os.environ.get("DARI_EXECUTION_BACKEND_ID"),
+        help="Execution backend ID to pin for harness 'pi' publishes.",
     )
     deploy_parser.add_argument(
         "--dry-run",
@@ -208,6 +215,59 @@ def build_parser() -> argparse.ArgumentParser:
     credentials_remove_parser.add_argument("name", help="Credential/env var name")
     credentials_remove_parser.set_defaults(handler=_handle_credentials_remove)
 
+    execution_backends_parser = subparsers.add_parser(
+        "execution-backends",
+        help="Manage execution backends for the current org",
+    )
+    execution_backends_subparsers = execution_backends_parser.add_subparsers(
+        dest="execution_backends_command",
+        required=True,
+    )
+
+    execution_backends_list_parser = execution_backends_subparsers.add_parser(
+        "list",
+        help="List execution backends for the current org",
+    )
+    _add_api_url_argument(execution_backends_list_parser)
+    execution_backends_list_parser.set_defaults(handler=_handle_execution_backends_list)
+
+    execution_backends_create_parser = execution_backends_subparsers.add_parser(
+        "create",
+        help="Create an execution backend for the current org",
+    )
+    _add_api_url_argument(execution_backends_create_parser)
+    execution_backends_create_parser.add_argument(
+        "--name",
+        required=True,
+        help="Execution backend label",
+    )
+    execution_backends_create_parser.add_argument(
+        "--provider",
+        required=True,
+        help="Execution backend provider, for example e2b.",
+    )
+    execution_backends_create_parser.add_argument(
+        "--config-json",
+        help="Provider config as a JSON object. Omit to use the generic API-key convenience path.",
+    )
+    execution_backends_create_parser.add_argument(
+        "--config-json-stdin",
+        action="store_true",
+        help="Read provider config JSON from standard input.",
+    )
+    execution_backends_create_parser.add_argument(
+        "--api-key",
+        help="Provider API key convenience input. Omit to prompt securely.",
+    )
+    execution_backends_create_parser.add_argument(
+        "--api-key-stdin",
+        action="store_true",
+        help="Read the provider API key from standard input.",
+    )
+    execution_backends_create_parser.set_defaults(
+        handler=_handle_execution_backends_create
+    )
+
     manifest_parser = subparsers.add_parser(
         "manifest",
         help="Inspect and validate repo-root dari.yml files",
@@ -277,12 +337,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _handle_deploy(args: argparse.Namespace) -> int:
-    prepared = prepare_deploy_flow(
-        args.repo_root,
-        agent_id=args.agent_id,
-        api_url=args.api_url,
-        environ=os.environ,
-    )
+    try:
+        prepared = prepare_deploy_flow(
+            args.repo_root,
+            agent_id=args.agent_id,
+            execution_backend_id=args.execution_backend_id,
+            api_url=args.api_url,
+            environ=os.environ,
+        )
+    except DeployConfigurationError as exc:
+        raise SystemExit(str(exc)) from exc
 
     if args.dry_run:
         print(json.dumps(prepared.to_dict(), indent=2, sort_keys=True))
@@ -302,6 +366,7 @@ def _handle_deploy(args: argparse.Namespace) -> int:
         api_url=args.api_url,
         api_key=api_key,
         agent_id=args.agent_id,
+        execution_backend_id=args.execution_backend_id,
         environ=os.environ,
     )
     print(json.dumps(response, indent=2, sort_keys=True))
@@ -484,6 +549,27 @@ def _handle_credentials_remove(args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_execution_backends_list(args: argparse.Namespace) -> int:
+    execution_backends = list_execution_backends(
+        api_url=args.api_url,
+        environ=os.environ,
+    )
+    print(json.dumps({"execution_backends": execution_backends}, indent=2, sort_keys=True))
+    return 0
+
+
+def _handle_execution_backends_create(args: argparse.Namespace) -> int:
+    created = create_execution_backend(
+        api_url=args.api_url,
+        name=args.name,
+        provider=args.provider,
+        config=_resolve_execution_backend_config(args),
+        environ=os.environ,
+    )
+    print(json.dumps(created, indent=2, sort_keys=True))
+    return 0
+
+
 def _resolve_credential_value(args: argparse.Namespace) -> str:
     if args.value is not None and args.value_stdin:
         raise SystemExit("Pass either VALUE or --value-stdin, not both.")
@@ -503,6 +589,70 @@ def _resolve_credential_value(args: argparse.Namespace) -> str:
     if value == "":
         raise SystemExit("Credential value must be non-empty.")
     return value
+
+
+def _resolve_execution_backend_api_key(args: argparse.Namespace) -> str:
+    if args.api_key is not None and args.api_key_stdin:
+        raise SystemExit("Pass either --api-key or --api-key-stdin, not both.")
+    if args.api_key_stdin:
+        value = sys.stdin.read().removesuffix("\n").removesuffix("\r")
+    elif args.api_key is not None:
+        print(
+            (
+                "Warning: passing execution backend API keys on the command line can expose "
+                "them via shell history and process arguments."
+            ),
+            file=sys.stderr,
+        )
+        value = args.api_key
+    else:
+        value = getpass.getpass("API key: ")
+    if value == "":
+        raise SystemExit("Execution backend API key must be non-empty.")
+    return value
+
+
+def _resolve_execution_backend_config(args: argparse.Namespace) -> dict[str, object]:
+    raw_config = _resolve_optional_execution_backend_config_json(args)
+    if raw_config is not None:
+        if args.api_key is not None or args.api_key_stdin:
+            raise SystemExit(
+                "Pass either provider config JSON or API key input, not both."
+            )
+        return raw_config
+    return {"api_key": _resolve_execution_backend_api_key(args)}
+
+
+def _resolve_optional_execution_backend_config_json(
+    args: argparse.Namespace,
+) -> dict[str, object] | None:
+    if args.config_json is not None and args.config_json_stdin:
+        raise SystemExit("Pass either --config-json or --config-json-stdin, not both.")
+    if args.config_json_stdin:
+        raw_json = sys.stdin.read().removesuffix("\n").removesuffix("\r")
+    elif args.config_json is not None:
+        print(
+            (
+                "Warning: passing execution backend config on the command line can expose "
+                "it via shell history and process arguments."
+            ),
+            file=sys.stderr,
+        )
+        raw_json = args.config_json
+    else:
+        return None
+
+    if raw_json == "":
+        raise SystemExit("Execution backend config JSON must be non-empty.")
+    try:
+        parsed = json.loads(raw_json)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(
+            f"Execution backend config must be valid JSON: {exc.msg}."
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise SystemExit("Execution backend config must decode to a JSON object.")
+    return parsed
 
 
 if __name__ == "__main__":

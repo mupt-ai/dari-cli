@@ -13,6 +13,7 @@ import pytest
 from dari_cli.__main__ import main
 from dari_cli.deploy import (
     DariApiError,
+    DeployConfigurationError,
     build_source_bundle,
     collect_source_metadata,
     deploy_checkout,
@@ -58,6 +59,30 @@ def write_valid_bundle(repo_root: Path) -> None:
             [
                 "name: support-agent",
                 "harness: openai-agents",
+                "instructions:",
+                "  system: prompts/system.md",
+                "runtime:",
+                "  dockerfile: Dockerfile",
+                "tools:",
+                "  - name: repo_search",
+                "    path: tools/repo_search",
+                "    kind: main",
+                "  - name: sandbox.exec",
+                "    kind: ephemeral",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def write_pi_bundle(repo_root: Path) -> None:
+    write_valid_bundle(repo_root)
+    (repo_root / "dari.yml").write_text(
+        "\n".join(
+            [
+                "name: support-agent",
+                "harness: pi",
                 "instructions:",
                 "  system: prompts/system.md",
                 "runtime:",
@@ -132,6 +157,41 @@ def test_build_source_bundle_packages_managed_bundle_and_skips_git_metadata(
 
 
 @pytest.mark.skipif(not _git_available(), reason="git is required for this test")
+def test_build_source_bundle_respects_gitignore_for_git_checkouts(
+    tmp_path: Path,
+) -> None:
+    write_valid_bundle(tmp_path)
+    (tmp_path / ".gitignore").write_text(".env\n.dari/\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("SECRET=1\n", encoding="utf-8")
+    (tmp_path / ".dari").mkdir()
+    (tmp_path / ".dari" / "deploy-state.json").write_text("{}", encoding="utf-8")
+    _init_git_repo(tmp_path)
+
+    bundle = build_source_bundle(tmp_path)
+
+    with tarfile.open(fileobj=io.BytesIO(bundle.content), mode="r:gz") as archive:
+        names = sorted(archive.getnames())
+
+    assert names == [
+        ".gitignore",
+        "Dockerfile",
+        "dari.yml",
+        "prompts/system.md",
+        "tools/repo_search/handler.py",
+        "tools/repo_search/input.schema.json",
+        "tools/repo_search/tool.yml",
+    ]
+
+
+def test_build_source_bundle_rejects_symlinks(tmp_path: Path) -> None:
+    write_valid_bundle(tmp_path)
+    (tmp_path / "linked.md").symlink_to(tmp_path / "prompts" / "system.md")
+
+    with pytest.raises(ValueError, match="symlink"):
+        build_source_bundle(tmp_path)
+
+
+@pytest.mark.skipif(not _git_available(), reason="git is required for this test")
 def test_collect_source_metadata_includes_git_provenance(tmp_path: Path) -> None:
     write_valid_bundle(tmp_path)
     commit_sha = _init_git_repo(tmp_path)
@@ -144,6 +204,30 @@ def test_collect_source_metadata_includes_git_provenance(tmp_path: Path) -> None
         "git_dirty": True,
         "git_ref": "main",
         "origin": "local_cli",
+    }
+
+
+def test_collect_source_metadata_uses_ci_environment_fallbacks(tmp_path: Path) -> None:
+    metadata = collect_source_metadata(
+        tmp_path,
+        environ={
+            "CI": "true",
+            "GITHUB_ACTIONS": "true",
+            "GITHUB_SHA": "abc123",
+            "GITHUB_REF": "refs/heads/main",
+            "GITHUB_RUN_ID": "42",
+            "GITHUB_SERVER_URL": "https://github.com",
+            "GITHUB_REPOSITORY": "dari/agent-host",
+        },
+    )
+
+    assert metadata == {
+        "ci_provider": "github_actions",
+        "ci_run_url": "https://github.com/dari/agent-host/actions/runs/42",
+        "git_commit_sha": "abc123",
+        "git_ref": "refs/heads/main",
+        "github_run_id": "42",
+        "origin": "ci",
     }
 
 
@@ -168,10 +252,59 @@ def test_prepare_deploy_flow_outputs_normalized_manifest_and_steps(
     ]
     assert dry_run["manifest"]["custom_tools"][0]["execution_mode"] == "main"
     assert dry_run["steps"][0]["endpoint"] == "/v1/source-snapshots"
+    assert dry_run["steps"][2]["endpoint"] == (
+        "/v1/source-snapshots/<source_snapshot_id from reserve step>/finalize"
+    )
     assert dry_run["steps"][3]["endpoint"] == "/v1/agents"
+    assert dry_run["steps"][3]["payload"]["manifest"]["harness"] == "openai-agents"
 
 
-def test_deploy_checkout_reserves_uploads_finalizes_and_publishes(tmp_path: Path) -> None:
+def test_prepare_deploy_flow_includes_execution_backend_id_for_pi_harness(
+    tmp_path: Path,
+) -> None:
+    write_pi_bundle(tmp_path)
+
+    prepared = prepare_deploy_flow(
+        tmp_path,
+        execution_backend_id=" execb_123 ",
+    )
+
+    assert prepared.execution_backend_id == "execb_123"
+    assert prepared.to_dict()["steps"][3]["payload"]["execution_backend_id"] == (
+        "execb_123"
+    )
+
+
+def test_prepare_deploy_flow_requires_execution_backend_id_for_pi_harness(
+    tmp_path: Path,
+) -> None:
+    write_pi_bundle(tmp_path)
+
+    with pytest.raises(
+        DeployConfigurationError,
+        match="execution_backend_id is required for harness 'pi'",
+    ):
+        prepare_deploy_flow(tmp_path)
+
+
+def test_prepare_deploy_flow_rejects_execution_backend_id_for_non_pi_harness(
+    tmp_path: Path,
+) -> None:
+    write_valid_bundle(tmp_path)
+
+    with pytest.raises(
+        DeployConfigurationError,
+        match="execution_backend_id is only supported for harness 'pi'",
+    ):
+        prepare_deploy_flow(
+            tmp_path,
+            execution_backend_id="execb_123",
+        )
+
+
+def test_deploy_checkout_reserves_uploads_finalizes_and_publishes(
+    tmp_path: Path,
+) -> None:
     write_valid_bundle(tmp_path)
     captured_requests: list[dict[str, object]] = []
 
@@ -239,19 +372,204 @@ def test_deploy_checkout_reserves_uploads_finalizes_and_publishes(tmp_path: Path
         tmp_path,
         api_url="https://api.example.test",
         api_key="test-api-key",
-        environ={},
+        environ={"CI": "true", "GITHUB_SHA": "abc123"},
         opener=fake_opener,
     )
 
-    assert response == {"agent_id": "agt_123", "version_id": "ver_123"}
+    assert [request["method"] for request in captured_requests] == [
+        "POST",
+        "PUT",
+        "POST",
+        "POST",
+    ]
     assert captured_requests[0]["url"] == "https://api.example.test/v1/source-snapshots"
-    assert captured_requests[1]["method"] == "PUT"
+    assert captured_requests[0]["payload"]["metadata"] == {
+        "git_commit_sha": "abc123",
+        "origin": "ci",
+    }
     assert captured_requests[2]["url"].endswith("/v1/source-snapshots/src_123/finalize")
     assert captured_requests[3]["payload"]["manifest"]["custom_tools"][0]["name"] == (
         "repo_search"
     )
     assert captured_requests[3]["payload"]["manifest"]["built_in_tools"] == [
         {"execution_mode": "ephemeral", "name": "sandbox.exec"}
+    ]
+    assert response == {"agent_id": "agt_123", "version_id": "ver_123"}
+
+
+def test_deploy_checkout_sends_execution_backend_id_for_pi_harness(
+    tmp_path: Path,
+) -> None:
+    write_pi_bundle(tmp_path)
+    captured_requests: list[dict[str, object]] = []
+
+    class _FakeResponse:
+        def __init__(self, payload: bytes = b"") -> None:
+            self._payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return self._payload
+
+    def fake_opener(request):
+        captured_requests.append(
+            {
+                "url": request.full_url,
+                "method": request.get_method(),
+                "headers": dict(request.header_items()),
+                "payload": (
+                    None
+                    if request.data is None
+                    else (
+                        request.data
+                        if request.get_method() == "PUT"
+                        else json.loads(request.data.decode("utf-8"))
+                    )
+                ),
+            }
+        )
+        if request.full_url == "https://api.example.test/v1/source-snapshots":
+            return _FakeResponse(
+                json.dumps(
+                    {
+                        "source_snapshot_id": "src_123",
+                        "upload_url": "https://uploads.example.test/source-bundle",
+                        "upload_headers": {"Content-Type": "application/gzip"},
+                    }
+                ).encode("utf-8")
+            )
+        if request.full_url.endswith("/finalize"):
+            return _FakeResponse(
+                json.dumps({"source_snapshot_id": "src_123", "status": "ready"}).encode(
+                    "utf-8"
+                )
+            )
+        if request.full_url == "https://api.example.test/v1/agents":
+            return _FakeResponse(b'{"id":"agt_123","active_version_id":"ver_1"}')
+        return _FakeResponse()
+
+    deploy_checkout(
+        tmp_path,
+        api_url="https://api.example.test",
+        api_key="test-api-key",
+        execution_backend_id="execb_123",
+        opener=fake_opener,
+    )
+
+    publish_payload = captured_requests[3]["payload"]
+    assert publish_payload["manifest"]["harness"] == "pi"
+    assert publish_payload["execution_backend_id"] == "execb_123"
+
+
+def test_deploy_checkout_persists_agent_id_for_later_publishes(tmp_path: Path) -> None:
+    write_valid_bundle(tmp_path)
+    captured_publish_urls: list[str] = []
+    responses = iter(
+        [
+            b'{"source_snapshot_id":"src_1","upload_url":"https://uploads.example.test/1","upload_headers":{},"status":"pending_upload"}',
+            b"",
+            b'{"source_snapshot_id":"src_1","status":"ready"}',
+            b'{"id":"agt_123","agent_id":"agt_123","active_version_id":"ver_1"}',
+            b'{"source_snapshot_id":"src_2","upload_url":"https://uploads.example.test/2","upload_headers":{},"status":"pending_upload"}',
+            b"",
+            b'{"source_snapshot_id":"src_2","status":"ready"}',
+            b'{"agent_id":"agt_123","version_id":"ver_2"}',
+        ]
+    )
+
+    class _FakeResponse:
+        def __init__(self, payload: bytes) -> None:
+            self._payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return self._payload
+
+    def fake_opener(request):
+        if request.full_url.startswith("https://api.example.test/v1/agents"):
+            captured_publish_urls.append(request.full_url)
+        return _FakeResponse(next(responses))
+
+    deploy_checkout(
+        tmp_path,
+        api_url="https://api.example.test",
+        api_key="test-api-key",
+        opener=fake_opener,
+    )
+    prepared = prepare_deploy_flow(
+        tmp_path,
+        api_url="https://api.example.test",
+    )
+    deploy_checkout(
+        tmp_path,
+        api_url="https://api.example.test",
+        api_key="test-api-key",
+        opener=fake_opener,
+    )
+
+    assert captured_publish_urls == [
+        "https://api.example.test/v1/agents",
+        "https://api.example.test/v1/agents/agt_123/versions",
+    ]
+    assert prepared.publish_endpoint == "/v1/agents/agt_123/versions"
+    state_path = tmp_path / ".dari" / "deploy-state.json"
+    assert state_path.exists()
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {
+        "agents": {"https://api.example.test": "agt_123"},
+        "version": 1,
+    }
+
+
+def test_deploy_checkout_aborts_when_finalize_fails(tmp_path: Path) -> None:
+    write_valid_bundle(tmp_path)
+    requested_urls: list[str] = []
+    responses = iter(
+        [
+            b'{"source_snapshot_id":"src_123","upload_url":"https://uploads.example.test/signed","upload_headers":{},"status":"pending_upload"}',
+            b"",
+            b'{"source_snapshot_id":"src_123","status":"failed","failure_reason":"Uploaded archive checksum did not match."}',
+        ]
+    )
+
+    class _FakeResponse:
+        def __init__(self, payload: bytes) -> None:
+            self._payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return self._payload
+
+    def fake_opener(request):
+        requested_urls.append(request.full_url)
+        return _FakeResponse(next(responses))
+
+    with pytest.raises(DariApiError, match="did not become ready"):
+        deploy_checkout(
+            tmp_path,
+            api_url="https://api.example.test",
+            api_key="test-api-key",
+            opener=fake_opener,
+        )
+
+    assert requested_urls == [
+        "https://api.example.test/v1/source-snapshots",
+        "https://uploads.example.test/signed",
+        "https://api.example.test/v1/source-snapshots/src_123/finalize",
     ]
 
 
@@ -319,6 +637,119 @@ def test_deploy_checkout_cleans_up_reserved_snapshot_after_publish_failure(
     assert deleted == ["https://api.example.test/v1/source-snapshots/src_123"]
 
 
+def _http_error(url: str, *, code: int, body: bytes) -> HTTPError:
+    return HTTPError(url, code, "error", hdrs=None, fp=io.BytesIO(body))
+
+
+def test_deploy_checkout_deletes_ready_snapshot_when_publish_fails(
+    tmp_path: Path,
+) -> None:
+    write_valid_bundle(tmp_path)
+    requested_urls: list[str] = []
+    responses = iter(
+        [
+            b'{"source_snapshot_id":"src_123","upload_url":"https://uploads.example.test/signed","upload_headers":{},"status":"pending_upload"}',
+            b"",
+            b'{"source_snapshot_id":"src_123","status":"ready"}',
+            _http_error(
+                "https://api.example.test/v1/agents",
+                code=403,
+                body=b'{"detail":"forbidden"}',
+            ),
+            b"",
+        ]
+    )
+
+    class _FakeResponse:
+        def __init__(self, payload: bytes) -> None:
+            self._payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return self._payload
+
+    def fake_opener(request):
+        requested_urls.append(request.full_url)
+        response = next(responses)
+        if isinstance(response, HTTPError):
+            raise response
+        return _FakeResponse(response)
+
+    with pytest.raises(DariApiError, match="failed for /v1/agents with 403"):
+        deploy_checkout(
+            tmp_path,
+            api_url="https://api.example.test",
+            api_key="test-api-key",
+            opener=fake_opener,
+        )
+
+    assert requested_urls == [
+        "https://api.example.test/v1/source-snapshots",
+        "https://uploads.example.test/signed",
+        "https://api.example.test/v1/source-snapshots/src_123/finalize",
+        "https://api.example.test/v1/agents",
+        "https://api.example.test/v1/source-snapshots/src_123",
+    ]
+
+
+def test_deploy_checkout_surfaces_snapshot_id_when_cleanup_fails(
+    tmp_path: Path,
+) -> None:
+    write_valid_bundle(tmp_path)
+    responses = iter(
+        [
+            b'{"source_snapshot_id":"src_123","upload_url":"https://uploads.example.test/signed","upload_headers":{},"status":"pending_upload"}',
+            b"",
+            b'{"source_snapshot_id":"src_123","status":"ready"}',
+            _http_error(
+                "https://api.example.test/v1/agents",
+                code=500,
+                body=b'{"detail":"boom"}',
+            ),
+            _http_error(
+                "https://api.example.test/v1/source-snapshots/src_123",
+                code=409,
+                body=b'{"detail":"in use"}',
+            ),
+        ]
+    )
+
+    class _FakeResponse:
+        def __init__(self, payload: bytes) -> None:
+            self._payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return self._payload
+
+    def fake_opener(request):
+        response = next(responses)
+        if isinstance(response, HTTPError):
+            raise response
+        return _FakeResponse(response)
+
+    with pytest.raises(
+        DariApiError,
+        match="source snapshot src_123: .*cleanup error: Dari API request failed for /v1/source-snapshots/src_123 with 409",
+    ):
+        deploy_checkout(
+            tmp_path,
+            api_url="https://api.example.test",
+            api_key="test-api-key",
+            opener=fake_opener,
+        )
+
+
 def test_main_deploy_dry_run_prints_full_prepared_payload(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -330,4 +761,36 @@ def test_main_deploy_dry_run_prints_full_prepared_payload(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["manifest"]["name"] == "support-agent"
+    assert payload["steps"][0]["endpoint"] == "/v1/source-snapshots"
     assert payload["steps"][3]["payload"]["manifest"]["harness"] == "openai-agents"
+
+
+def test_main_supports_execution_backend_id_in_dry_run_output(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    write_pi_bundle(tmp_path)
+
+    exit_code = main(
+        [
+            "deploy",
+            str(tmp_path),
+            "--dry-run",
+            "--execution-backend-id",
+            "execb_123",
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["steps"][3]["payload"]["execution_backend_id"] == "execb_123"
+
+
+def test_main_requires_execution_backend_id_for_pi_harness(tmp_path: Path) -> None:
+    write_pi_bundle(tmp_path)
+
+    with pytest.raises(
+        SystemExit,
+        match="execution_backend_id is required for harness 'pi'",
+    ):
+        main(["deploy", str(tmp_path), "--dry-run"])
