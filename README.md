@@ -176,10 +176,13 @@ Examples live under [examples](./examples).
 ## Release
 
 1. Update `version` in `pyproject.toml`.
-2. Run `uv build` and `uv run pytest`.
-3. Configure PyPI trusted publishing for the `Publish CLI` GitHub Actions workflow.
-4. Push a tag like `v0.1.1`.
-5. GitHub Actions publishes the tagged build to PyPI.
+2. Update `uv.lock` so the editable package entry matches the new version.
+3. Commit the version bump before tagging.
+4. Run `uv build` and `uv run pytest`.
+5. Configure PyPI trusted publishing for the `Publish CLI` GitHub Actions workflow.
+6. Push a tag like `v0.1.1` from the commit that contains that exact version.
+   The release workflow rejects tags that do not match `pyproject.toml`.
+7. GitHub Actions publishes the tagged build to PyPI.
 
 ## Contributing
 

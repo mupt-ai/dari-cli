@@ -17,6 +17,28 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
 
+      - name: Validate tag matches package version
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import tomllib
+
+          version = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
+          expected_tag = f"v{version}"
+          actual_tag = os.environ["GITHUB_REF_NAME"]
+
+          if actual_tag != expected_tag:
+              raise SystemExit(
+                  f"Git tag {actual_tag!r} does not match pyproject.toml version {version!r}. "
+                  f"Tag the commit that contains {expected_tag!r} instead."
+              )
+
+          print(f"Validated release tag {actual_tag} for package version {version}.")
+          PY
+
       - name: Build distributions
         run: uv build
 
@@ -42,3 +64,5 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
