@@ -5,9 +5,11 @@ import io
 import json
 from types import SimpleNamespace
 
+import dari_cli.management as management
 from dari_cli.__main__ import main
 from dari_cli.management import (
     DariCliAuthError,
+    DariCliNetworkError,
     create_execution_backend,
     list_execution_backends,
     login,
@@ -16,9 +18,41 @@ from dari_cli.state import (
     CliState,
     StoredOrganization,
     StoredSupabaseSession,
+    load_cli_state,
     save_cli_state,
 )
+from supabase_auth.errors import AuthRetryableError
 import pytest
+
+
+def _build_cli_state(
+    *,
+    api_url: str = "https://api.example.test",
+    expires_at: int | None = 4102444800,
+    current_org_id: str | None = "org_123",
+) -> CliState:
+    organizations: dict[str, StoredOrganization] = {}
+    if current_org_id is not None:
+        organizations[current_org_id] = StoredOrganization(
+            id=current_org_id,
+            name="Team Blue",
+            slug="team-blue",
+            role="owner",
+            api_key="dari_blue_key",
+        )
+    return CliState(
+        api_url=api_url,
+        supabase_session=StoredSupabaseSession(
+            access_token="access-token",
+            refresh_token="refresh-token",
+            expires_at=expires_at,
+            user_id="sup_user_123",
+            email="user@example.test",
+            display_name="User Example",
+        ),
+        current_org_id=current_org_id,
+        organizations=organizations,
+    )
 
 
 def test_login_opens_browser_and_persists_state(monkeypatch, tmp_path) -> None:
@@ -118,7 +152,9 @@ def test_login_opens_browser_and_persists_state(monkeypatch, tmp_path) -> None:
     assert saved["supabase_session"]["email"] == "user@example.test"
 
 
-def test_login_reports_manual_url_when_browser_open_fails(monkeypatch, tmp_path) -> None:
+def test_login_reports_manual_url_when_browser_open_fails(
+    monkeypatch, tmp_path
+) -> None:
     config_dir = tmp_path / "config"
 
     class _FakeAuth:
@@ -316,7 +352,10 @@ def test_list_execution_backends_uses_current_org_and_user_session(monkeypatch) 
 
     monkeypatch.setattr(
         "dari_cli.management._load_authenticated_state",
-        lambda **kwargs: state,  # noqa: ARG005
+        lambda **kwargs: management._AuthenticatedState(  # noqa: ARG005
+            state=state,
+            used_cached_access_token=False,
+        ),
     )
 
     def fake_management_request(**kwargs):  # noqa: ANN003
@@ -363,7 +402,10 @@ def test_create_execution_backend_uses_current_org_and_provider_payload(
 
     monkeypatch.setattr(
         "dari_cli.management._load_authenticated_state",
-        lambda **kwargs: state,  # noqa: ARG005
+        lambda **kwargs: management._AuthenticatedState(  # noqa: ARG005
+            state=state,
+            used_cached_access_token=False,
+        ),
     )
 
     def fake_management_request(**kwargs):  # noqa: ANN003
@@ -421,9 +463,7 @@ def test_execution_backends_create_command_prompts_for_api_key(
 ) -> None:
     monkeypatch.setattr(
         "dari_cli.__main__.getpass.getpass",
-        lambda prompt: "e2b_api_123"
-        if prompt == "API key: "
-        else pytest.fail(),
+        lambda prompt: "e2b_api_123" if prompt == "API key: " else pytest.fail(),
     )
     monkeypatch.setattr(
         "dari_cli.__main__.create_execution_backend",
@@ -496,7 +536,11 @@ def test_execution_backends_create_command_accepts_generic_provider_config_json(
 
     def fake_create_execution_backend(**kwargs):  # noqa: ANN003
         captured.update(kwargs)
-        return {"id": "execb_123", "name": kwargs["name"], "provider": kwargs["provider"]}
+        return {
+            "id": "execb_123",
+            "name": kwargs["name"],
+            "provider": kwargs["provider"],
+        }
 
     monkeypatch.setattr(
         "dari_cli.__main__.create_execution_backend",
@@ -531,7 +575,11 @@ def test_execution_backends_create_command_uses_generic_api_key_for_non_e2b_prov
 
     def fake_create_execution_backend(**kwargs):  # noqa: ANN003
         captured.update(kwargs)
-        return {"id": "execb_123", "name": kwargs["name"], "provider": kwargs["provider"]}
+        return {
+            "id": "execb_123",
+            "name": kwargs["name"],
+            "provider": kwargs["provider"],
+        }
 
     monkeypatch.setattr(
         "dari_cli.__main__.create_execution_backend",
@@ -645,3 +693,234 @@ def test_credentials_add_command_warns_for_positional_value(
     assert exit_code == 0
     assert captured["value"] == "sk-inline"
     assert "shell history and process arguments" in capsys.readouterr().err
+
+
+def test_credentials_list_without_login_prints_clean_error(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    monkeypatch.setenv("DARI_CONFIG_DIR", str(tmp_path / "config"))
+
+    exit_code = main(
+        [
+            "credentials",
+            "list",
+            "--api-url",
+            "https://api.example.test",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert (
+        captured.err.strip()
+        == "No CLI login is available for this API URL. Run `dari auth login` first."
+    )
+    assert "Traceback" not in captured.err
+
+
+def test_credentials_list_without_current_org_prints_clean_error(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    config_dir = tmp_path / "config"
+    save_cli_state(
+        _build_cli_state(current_org_id=None),
+        environ={"DARI_CONFIG_DIR": str(config_dir)},
+    )
+    monkeypatch.setenv("DARI_CONFIG_DIR", str(config_dir))
+
+    exit_code = main(
+        [
+            "credentials",
+            "list",
+            "--api-url",
+            "https://api.example.test",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert (
+        captured.err.strip()
+        == "No current organization is selected. Run `dari org switch <org>`."
+    )
+    assert "Traceback" not in captured.err
+
+
+def test_main_prints_network_errors_without_traceback(monkeypatch, capsys) -> None:
+    def fake_list_credentials(**kwargs):  # noqa: ANN003
+        raise DariCliNetworkError("Agent Host management request failed. Try again.")
+
+    monkeypatch.setattr("dari_cli.__main__.list_credentials", fake_list_credentials)
+
+    exit_code = main(
+        [
+            "credentials",
+            "list",
+            "--api-url",
+            "https://api.example.test",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert captured.err.strip() == "Agent Host management request failed. Try again."
+    assert "Traceback" not in captured.err
+
+
+def test_load_authenticated_state_skips_refresh_for_fresh_session(
+    monkeypatch, tmp_path
+) -> None:
+    config_dir = tmp_path / "config"
+    save_cli_state(
+        _build_cli_state(),
+        environ={"DARI_CONFIG_DIR": str(config_dir)},
+    )
+
+    def fail_refresh(*args, **kwargs):  # noqa: ANN002, ANN003
+        pytest.fail("fresh sessions should not trigger a Supabase refresh")
+
+    monkeypatch.setattr(management, "_refresh_supabase_session", fail_refresh)
+
+    authenticated_state = management._load_authenticated_state(
+        api_url="https://api.example.test",
+        environ={"DARI_CONFIG_DIR": str(config_dir)},
+        opener=lambda *args, **kwargs: pytest.fail("no request should be issued"),  # noqa: ARG005
+    )
+
+    assert authenticated_state.used_cached_access_token is True
+    assert (
+        authenticated_state.state.supabase_session is not None
+        and authenticated_state.state.supabase_session.access_token == "access-token"
+    )
+
+
+def test_load_authenticated_state_refreshes_session_without_expiry(
+    monkeypatch, tmp_path
+) -> None:
+    config_dir = tmp_path / "config"
+    save_cli_state(
+        _build_cli_state(expires_at=None),
+        environ={"DARI_CONFIG_DIR": str(config_dir)},
+    )
+
+    def fake_refresh(state, **kwargs):  # noqa: ANN001, ANN003
+        state.supabase_session = StoredSupabaseSession(
+            access_token="refreshed-access-token",
+            refresh_token="refreshed-refresh-token",
+            expires_at=4102444800,
+            user_id="sup_user_123",
+            email="user@example.test",
+            display_name="User Example",
+        )
+        return state
+
+    monkeypatch.setattr(management, "_refresh_supabase_session", fake_refresh)
+
+    authenticated_state = management._load_authenticated_state(
+        api_url="https://api.example.test",
+        environ={"DARI_CONFIG_DIR": str(config_dir)},
+        opener=lambda *args, **kwargs: None,
+    )
+
+    assert authenticated_state.used_cached_access_token is False
+    persisted_state = load_cli_state(environ={"DARI_CONFIG_DIR": str(config_dir)})
+    assert (
+        persisted_state.supabase_session is not None
+        and persisted_state.supabase_session.access_token == "refreshed-access-token"
+    )
+
+
+def test_list_credentials_retries_once_after_auth_rejection(
+    monkeypatch, tmp_path
+) -> None:
+    config_dir = tmp_path / "config"
+    save_cli_state(
+        _build_cli_state(),
+        environ={"DARI_CONFIG_DIR": str(config_dir)},
+    )
+    tokens_seen: list[str] = []
+
+    def fake_management_request(**kwargs):  # noqa: ANN003
+        tokens_seen.append(kwargs["bearer_token"])
+        if len(tokens_seen) == 1:
+            raise management._JsonRequestHttpError(401, "Unauthorized")
+        return {"credentials": [{"name": "OPENAI_API_KEY"}]}
+
+    def fake_refresh(state, **kwargs):  # noqa: ANN001, ANN003
+        state.supabase_session = StoredSupabaseSession(
+            access_token="refreshed-access-token",
+            refresh_token="refreshed-refresh-token",
+            expires_at=4102444800,
+            user_id="sup_user_123",
+            email="user@example.test",
+            display_name="User Example",
+        )
+        return state
+
+    monkeypatch.setattr(management, "_management_request", fake_management_request)
+    monkeypatch.setattr(management, "_refresh_supabase_session", fake_refresh)
+
+    credentials = management.list_credentials(
+        api_url="https://api.example.test",
+        environ={"DARI_CONFIG_DIR": str(config_dir)},
+        opener=lambda *args, **kwargs: None,
+    )
+
+    assert credentials == [{"name": "OPENAI_API_KEY"}]
+    assert tokens_seen == ["access-token", "refreshed-access-token"]
+    persisted_state = load_cli_state(environ={"DARI_CONFIG_DIR": str(config_dir)})
+    assert (
+        persisted_state.supabase_session is not None
+        and persisted_state.supabase_session.access_token == "refreshed-access-token"
+    )
+
+
+def test_management_request_timeout_raises_network_error() -> None:
+    def fake_opener(request, timeout=None):  # noqa: ANN001
+        raise TimeoutError("timed out")
+
+    with pytest.raises(
+        DariCliNetworkError,
+        match="Agent Host management request failed\\. Try again\\.",
+    ):
+        management._management_request(
+            api_url="https://api.example.test",
+            path="/v1/organizations/org_123/credentials",
+            bearer_token="access-token",
+            opener=fake_opener,
+        )
+
+
+def test_refresh_supabase_session_retryable_error_is_network_error(
+    monkeypatch,
+) -> None:
+    class _FakeAuth:
+        def set_session(self, access_token, refresh_token):  # noqa: ANN001
+            raise AuthRetryableError("temporary failure", 0)
+
+    monkeypatch.setattr(
+        management,
+        "_fetch_auth_config",
+        lambda api_url, opener: {  # noqa: ARG005
+            "supabase_url": "https://supabase.example.test",
+            "supabase_publishable_key": "sb_test_key",
+        },
+    )
+    monkeypatch.setattr(
+        management,
+        "_build_supabase_client",
+        lambda auth_config: SimpleNamespace(auth=_FakeAuth()),  # noqa: ARG005
+    )
+
+    with pytest.raises(
+        DariCliNetworkError,
+        match="Supabase session refresh failed\\. Try again\\.",
+    ):
+        management._refresh_supabase_session(
+            _build_cli_state(),
+            api_url="https://api.example.test",
+            opener=lambda *args, **kwargs: None,
+        )
