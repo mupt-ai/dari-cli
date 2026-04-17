@@ -21,12 +21,16 @@ TOP_LEVEL_FIELDS = {
     "harness",
     "instructions",
     "runtime",
+    "sandbox",
+    "llm",
     "tools",
     "secrets",
     "env",
 }
 INSTRUCTIONS_FIELDS = {"system"}
 RUNTIME_FIELDS = {"dockerfile"}
+SANDBOX_FIELDS = {"provider", "provider_api_key_secret"}
+LLM_FIELDS = {"model", "base_url", "api_key_secret"}
 ROOT_TOOL_FIELDS = {"name", "path", "kind"}
 TOOL_FIELDS = {
     "name",
@@ -41,6 +45,8 @@ TOOL_FIELDS = {
 ENVIRONMENT_VARIABLE_NAME_PATTERN = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 EXECUTION_MODES = ("client", "main", "ephemeral")
 ROOT_TOOL_KINDS = ("main", "ephemeral")
+SUPPORTED_SANDBOX_PROVIDERS = ("e2b",)
+OPENAI_API_KEY_ENV_NAME = "OPENAI_API_KEY"
 
 
 @dataclass(frozen=True)
@@ -69,6 +75,36 @@ class BundleRuntime:
 
     def to_dict(self) -> dict[str, str]:
         return {"dockerfile": self.dockerfile}
+
+
+@dataclass(frozen=True)
+class BundleSandbox:
+    """Normalized sandbox provider settings for one bundle."""
+
+    provider: Literal["e2b"]
+    provider_api_key_secret: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "provider": self.provider,
+            "provider_api_key_secret": self.provider_api_key_secret,
+        }
+
+
+@dataclass(frozen=True)
+class BundleLlm:
+    """Normalized LLM provider settings for one bundle."""
+
+    model: str
+    base_url: str
+    api_key_secret: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "model": self.model,
+            "base_url": self.base_url,
+            "api_key_secret": self.api_key_secret,
+        }
 
 
 @dataclass(frozen=True)
@@ -129,6 +165,8 @@ class AgentManifest:
     harness: Literal["openai-agents", "claude-agent-sdk", "opencode", "pi"]
     instructions: BundleInstructions
     runtime: BundleRuntime
+    sandbox: BundleSandbox | None = None
+    llm: BundleLlm | None = None
     built_in_tools: tuple[BuiltInTool, ...] = ()
     custom_tools: tuple[CustomTool, ...] = ()
     secrets: tuple[str, ...] = ()
@@ -143,6 +181,10 @@ class AgentManifest:
             "built_in_tools": [tool.to_dict() for tool in self.built_in_tools],
             "custom_tools": [tool.to_dict() for tool in self.custom_tools],
         }
+        if self.sandbox is not None:
+            payload["sandbox"] = self.sandbox.to_dict()
+        if self.llm is not None:
+            payload["llm"] = self.llm.to_dict()
         if self.secrets:
             payload["secrets"] = list(self.secrets)
         if self.env:
@@ -224,9 +266,13 @@ def parse_manifest_text(
     harness = _require_harness(data, issues)
     instructions = _parse_instructions(data.get("instructions"), repo_root, issues)
     runtime = _parse_runtime(data.get("runtime"), repo_root, issues)
+    sandbox = _parse_sandbox(data.get("sandbox"), issues)
+    llm = _parse_llm(data.get("llm"), issues)
     env = _parse_env(data.get("env"), issues)
     secrets = _parse_secrets(data.get("secrets"), issues)
     _report_secret_env_overlap(secrets, env, issues)
+    _validate_llm_references(llm, secrets, env, issues)
+    _validate_sandbox_references(sandbox, secrets, issues)
     root_tools = _parse_root_tools(data.get("tools"), issues)
     discovered_tools = _discover_custom_tools(repo_root, issues)
     built_in_tools, custom_tools = _build_effective_tools(
@@ -245,6 +291,8 @@ def parse_manifest_text(
         harness=harness,
         instructions=instructions,
         runtime=runtime,
+        sandbox=sandbox,
+        llm=llm,
         built_in_tools=tuple(built_in_tools),
         custom_tools=tuple(custom_tools),
         secrets=tuple(secrets),
@@ -395,6 +443,137 @@ def _parse_runtime(
         )
         return None
     return BundleRuntime(dockerfile="Dockerfile")
+
+
+def _parse_sandbox(
+    value: object,
+    issues: list[ManifestIssue],
+) -> BundleSandbox | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        issues.append(ManifestIssue("sandbox", "expected a mapping"))
+        return None
+
+    _report_unknown_keys(value, SANDBOX_FIELDS, issues, prefix="sandbox")
+    provider = _coerce_non_empty_string(
+        value.get("provider"),
+        "sandbox.provider",
+        issues,
+    )
+    if provider and provider not in SUPPORTED_SANDBOX_PROVIDERS:
+        issues.append(
+            ManifestIssue(
+                "sandbox.provider",
+                "expected one of "
+                + ", ".join(repr(item) for item in SUPPORTED_SANDBOX_PROVIDERS),
+            )
+        )
+        provider = ""
+    provider_api_key_secret = _require_environment_variable_name(
+        value.get("provider_api_key_secret"),
+        "sandbox.provider_api_key_secret",
+        issues,
+    )
+    if not provider or not provider_api_key_secret:
+        return None
+    return BundleSandbox(
+        provider=provider,  # type: ignore[arg-type]
+        provider_api_key_secret=provider_api_key_secret,
+    )
+
+
+def _parse_llm(
+    value: object,
+    issues: list[ManifestIssue],
+) -> BundleLlm | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        issues.append(ManifestIssue("llm", "expected a mapping"))
+        return None
+
+    _report_unknown_keys(value, LLM_FIELDS, issues, prefix="llm")
+    model = _coerce_non_empty_string(value.get("model"), "llm.model", issues)
+    base_url = _coerce_non_empty_string(value.get("base_url"), "llm.base_url", issues)
+    api_key_secret = _require_environment_variable_name(
+        value.get("api_key_secret"),
+        "llm.api_key_secret",
+        issues,
+    )
+    if not model or not base_url or not api_key_secret:
+        return None
+    return BundleLlm(
+        model=model,
+        base_url=base_url,
+        api_key_secret=api_key_secret,
+    )
+
+
+def _require_environment_variable_name(
+    value: object,
+    field_name: str,
+    issues: list[ManifestIssue],
+) -> str:
+    raw = _coerce_non_empty_string(value, field_name, issues)
+    if not raw:
+        return ""
+    if not ENVIRONMENT_VARIABLE_NAME_PATTERN.fullmatch(raw):
+        issues.append(
+            ManifestIssue(
+                field_name,
+                "expected a name matching ^[A-Z_][A-Z0-9_]*$",
+            )
+        )
+        return ""
+    return raw
+
+
+def _validate_llm_references(
+    llm: BundleLlm | None,
+    secrets: list[str],
+    env: Mapping[str, str] | None,
+    issues: list[ManifestIssue],
+) -> None:
+    if llm is None:
+        return
+    if llm.api_key_secret in secrets:
+        issues.append(
+            ManifestIssue(
+                "llm.api_key_secret",
+                "must not also appear in secrets",
+            )
+        )
+    if OPENAI_API_KEY_ENV_NAME in secrets:
+        issues.append(
+            ManifestIssue(
+                "secrets",
+                f"must not include {OPENAI_API_KEY_ENV_NAME!r} when llm is configured",
+            )
+        )
+    if env and OPENAI_API_KEY_ENV_NAME in env:
+        issues.append(
+            ManifestIssue(
+                f"env.{OPENAI_API_KEY_ENV_NAME}",
+                "must not be set when llm is configured",
+            )
+        )
+
+
+def _validate_sandbox_references(
+    sandbox: BundleSandbox | None,
+    secrets: list[str],
+    issues: list[ManifestIssue],
+) -> None:
+    if sandbox is None:
+        return
+    if sandbox.provider_api_key_secret in secrets:
+        issues.append(
+            ManifestIssue(
+                "sandbox.provider_api_key_secret",
+                "must not also appear in secrets",
+            )
+        )
 
 
 def _parse_root_tools(
