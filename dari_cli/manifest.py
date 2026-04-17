@@ -24,6 +24,7 @@ TOP_LEVEL_FIELDS = {
     "sandbox",
     "llm",
     "tools",
+    "skills",
     "secrets",
     "env",
 }
@@ -32,6 +33,7 @@ RUNTIME_FIELDS = {"dockerfile"}
 SANDBOX_FIELDS = {"provider", "provider_api_key_secret"}
 LLM_FIELDS = {"model", "base_url", "api_key_secret"}
 ROOT_TOOL_FIELDS = {"name", "path", "kind"}
+ROOT_SKILL_FIELDS = {"name", "path"}
 TOOL_FIELDS = {
     "name",
     "description",
@@ -47,6 +49,14 @@ EXECUTION_MODES = ("client", "main", "ephemeral")
 ROOT_TOOL_KINDS = ("main", "ephemeral")
 SUPPORTED_SANDBOX_PROVIDERS = ("e2b",)
 OPENAI_API_KEY_ENV_NAME = "OPENAI_API_KEY"
+SKILL_FRONTMATTER_FIELDS = {
+    "name",
+    "description",
+    "disable-model-invocation",
+}
+SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+SKILL_NAME_MAX_LENGTH = 64
+SKILL_DESCRIPTION_MAX_LENGTH = 1024
 
 
 @dataclass(frozen=True)
@@ -158,6 +168,28 @@ class CustomTool:
 
 
 @dataclass(frozen=True)
+class BundleSkill:
+    """One discovered skill in the normalized bundle payload."""
+
+    name: str
+    source_path: str
+    skill_file: str
+    description: str
+    disable_model_invocation: bool | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "name": self.name,
+            "source_path": self.source_path,
+            "skill_file": self.skill_file,
+            "description": self.description,
+        }
+        if self.disable_model_invocation is not None:
+            payload["disable_model_invocation"] = self.disable_model_invocation
+        return payload
+
+
+@dataclass(frozen=True)
 class AgentManifest:
     """Normalized managed bundle payload emitted by the CLI."""
 
@@ -169,6 +201,7 @@ class AgentManifest:
     llm: BundleLlm | None = None
     built_in_tools: tuple[BuiltInTool, ...] = ()
     custom_tools: tuple[CustomTool, ...] = ()
+    skills: tuple[BundleSkill, ...] = ()
     secrets: tuple[str, ...] = ()
     env: Mapping[str, str] | None = None
 
@@ -185,6 +218,8 @@ class AgentManifest:
             payload["sandbox"] = self.sandbox.to_dict()
         if self.llm is not None:
             payload["llm"] = self.llm.to_dict()
+        if self.skills:
+            payload["skills"] = [skill.to_dict() for skill in self.skills]
         if self.secrets:
             payload["secrets"] = list(self.secrets)
         if self.env:
@@ -199,6 +234,14 @@ class RootToolOverride:
     name: str
     kind: Literal["main", "ephemeral"]
     path: str | None = None
+
+
+@dataclass(frozen=True)
+class RootSkillOverride:
+    """One declared root-manifest skill path before normalization."""
+
+    name: str
+    path: str
 
 
 @dataclass(frozen=True)
@@ -274,10 +317,16 @@ def parse_manifest_text(
     _validate_llm_references(llm, secrets, env, issues)
     _validate_sandbox_references(sandbox, secrets, issues)
     root_tools = _parse_root_tools(data.get("tools"), issues)
+    root_skills = _parse_root_skills(data.get("skills"), issues)
     discovered_tools = _discover_custom_tools(repo_root, issues)
     built_in_tools, custom_tools = _build_effective_tools(
         root_tools=root_tools,
         discovered_tools=discovered_tools,
+        issues=issues,
+    )
+    skills = _build_effective_skills(
+        root_skills=root_skills,
+        repo_root=repo_root,
         issues=issues,
     )
 
@@ -295,6 +344,7 @@ def parse_manifest_text(
         llm=llm,
         built_in_tools=tuple(built_in_tools),
         custom_tools=tuple(custom_tools),
+        skills=tuple(skills),
         secrets=tuple(secrets),
         env=env,
     )
@@ -629,6 +679,63 @@ def _parse_root_tools(
     return tuple(parsed)
 
 
+def _parse_root_skills(
+    value: object,
+    issues: list[ManifestIssue],
+) -> tuple[RootSkillOverride, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        issues.append(ManifestIssue("skills", "expected a list"))
+        return ()
+
+    parsed: list[RootSkillOverride] = []
+    seen_names: set[str] = set()
+    seen_paths: set[str] = set()
+    for index, item in enumerate(value):
+        label = f"skills[{index}]"
+        if not isinstance(item, Mapping):
+            issues.append(ManifestIssue(label, "expected an object"))
+            continue
+        _report_unknown_keys(item, ROOT_SKILL_FIELDS, issues, prefix=label)
+        name = _coerce_non_empty_string(item.get("name"), f"{label}.name", issues)
+        path = _normalize_relative_path(
+            item.get("path"),
+            label=f"{label}.path",
+            issues=issues,
+        )
+        if path and not PurePosixPath(path).is_relative_to(PurePosixPath("skills")):
+            issues.append(
+                ManifestIssue(
+                    f"{label}.path",
+                    "expected a path under skills/",
+                )
+            )
+            continue
+        if not name or path is None:
+            continue
+        if name in seen_names:
+            issues.append(
+                ManifestIssue(
+                    f"{label}.name",
+                    f"duplicate declared skill name {name!r}",
+                )
+            )
+            continue
+        if path in seen_paths:
+            issues.append(
+                ManifestIssue(
+                    f"{label}.path",
+                    f"duplicate declared skill path {path!r}",
+                )
+            )
+            continue
+        seen_names.add(name)
+        seen_paths.add(path)
+        parsed.append(RootSkillOverride(name=name, path=path))
+    return tuple(parsed)
+
+
 def _discover_custom_tools(
     repo_root: Path,
     issues: list[ManifestIssue],
@@ -838,6 +945,120 @@ def _build_effective_tools(
     return built_in_tools, custom_tools
 
 
+def _build_effective_skills(
+    *,
+    root_skills: tuple[RootSkillOverride, ...],
+    repo_root: Path,
+    issues: list[ManifestIssue],
+) -> list[BundleSkill]:
+    normalized: list[BundleSkill] = []
+    for index, entry in enumerate(root_skills):
+        loaded_skill = _load_skill_dir(
+            skill_dir=repo_root / entry.path,
+            declared_name=entry.name,
+            repo_root=repo_root,
+            label=f"skills[{index}]",
+            issues=issues,
+        )
+        if loaded_skill is not None:
+            normalized.append(loaded_skill)
+    return normalized
+
+
+def _load_skill_dir(
+    *,
+    skill_dir: Path,
+    declared_name: str,
+    repo_root: Path,
+    label: str,
+    issues: list[ManifestIssue],
+) -> BundleSkill | None:
+    relative_dir = skill_dir.relative_to(repo_root).as_posix()
+    if not skill_dir.exists():
+        issues.append(ManifestIssue(f"{label}.path", "directory does not exist"))
+        return None
+    if not skill_dir.is_dir():
+        issues.append(ManifestIssue(f"{label}.path", "expected a directory"))
+        return None
+
+    skill_file_path = skill_dir / "SKILL.md"
+    if not skill_file_path.is_file():
+        issues.append(
+            ManifestIssue(
+                f"{relative_dir}/SKILL.md",
+                "SKILL.md file is required",
+            )
+        )
+        return None
+
+    try:
+        skill_text = skill_file_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        issues.append(
+            ManifestIssue(
+                f"{relative_dir}/SKILL.md",
+                "file must be valid UTF-8 text",
+            )
+        )
+        return None
+
+    frontmatter = _parse_markdown_frontmatter(
+        skill_text,
+        relative_dir=relative_dir,
+        issues=issues,
+    )
+    if frontmatter is None:
+        return None
+
+    name = _parse_skill_name(
+        frontmatter.get("name"),
+        default_name=skill_dir.name,
+        relative_dir=relative_dir,
+        issues=issues,
+    )
+    description = _coerce_non_empty_string(
+        frontmatter.get("description"),
+        f"{relative_dir}/SKILL.md.description",
+        issues,
+    )
+    if not description:
+        issues.append(
+            ManifestIssue(
+                f"{relative_dir}/SKILL.md.description",
+                "description is required",
+            )
+        )
+    if name and declared_name and name != declared_name:
+        issues.append(
+            ManifestIssue(
+                f"{label}.name",
+                f"declared skill name {declared_name!r} did not match effective skill name {name!r}",
+            )
+        )
+    if description and len(description) > SKILL_DESCRIPTION_MAX_LENGTH:
+        issues.append(
+            ManifestIssue(
+                f"{relative_dir}/SKILL.md.description",
+                f"description must be at most {SKILL_DESCRIPTION_MAX_LENGTH} characters",
+            )
+        )
+    disable_model_invocation = _parse_optional_bool(
+        frontmatter.get("disable-model-invocation"),
+        field_name=f"{relative_dir}/SKILL.md.disable-model-invocation",
+        issues=issues,
+    )
+    if not name or not description:
+        return None
+
+    return BundleSkill(
+        name=name,
+        source_path=relative_dir,
+        skill_file=skill_file_path.relative_to(repo_root).as_posix(),
+        description=description,
+        disable_model_invocation=disable_model_invocation,
+    )
+
+
 def _report_duplicate_tool_names(
     built_in_tools: list[BuiltInTool],
     custom_tools: list[CustomTool],
@@ -965,6 +1186,105 @@ def _normalize_relative_path(
         )
         return None
     return candidate.as_posix()
+
+
+def _parse_markdown_frontmatter(
+    raw_text: str,
+    *,
+    relative_dir: str,
+    issues: list[ManifestIssue],
+) -> dict[str, Any] | None:
+    if not raw_text.startswith("---\n"):
+        return {}
+    _, _, remainder = raw_text.partition("---\n")
+    frontmatter_text, separator, _ = remainder.partition("\n---\n")
+    if separator != "\n---\n":
+        issues.append(
+            ManifestIssue(
+                f"{relative_dir}/SKILL.md",
+                "invalid frontmatter block",
+            )
+        )
+        return None
+    try:
+        loaded = yaml.safe_load(frontmatter_text)
+    except yaml.YAMLError as exc:
+        issues.append(
+            ManifestIssue(
+                f"{relative_dir}/SKILL.md",
+                f"invalid YAML frontmatter: {exc}",
+            )
+        )
+        return None
+    if loaded is None:
+        frontmatter = {}
+    elif isinstance(loaded, Mapping):
+        frontmatter = {
+            str(key): value for key, value in loaded.items() if isinstance(key, str)
+        }
+    else:
+        issues.append(
+            ManifestIssue(
+                f"{relative_dir}/SKILL.md",
+                "frontmatter must be a mapping",
+            )
+        )
+        return None
+    return {
+        key: value
+        for key, value in frontmatter.items()
+        if key in SKILL_FRONTMATTER_FIELDS
+    }
+
+
+def _parse_skill_name(
+    value: object,
+    *,
+    default_name: str,
+    relative_dir: str,
+    issues: list[ManifestIssue],
+) -> str:
+    field_name = f"{relative_dir}/SKILL.md.name"
+    if value is None:
+        name = default_name
+    else:
+        name = _coerce_non_empty_string(value, field_name, issues) or default_name
+        if name != default_name:
+            issues.append(
+                ManifestIssue(
+                    field_name,
+                    f"skill name must match parent directory name {default_name!r}",
+                )
+            )
+    if len(name) > SKILL_NAME_MAX_LENGTH:
+        issues.append(
+            ManifestIssue(
+                field_name,
+                f"skill name must be at most {SKILL_NAME_MAX_LENGTH} characters",
+            )
+        )
+    if not SKILL_NAME_PATTERN.fullmatch(name):
+        issues.append(
+            ManifestIssue(
+                field_name,
+                "skill name must contain only lowercase letters, numbers, and single hyphens",
+            )
+        )
+    return name
+
+
+def _parse_optional_bool(
+    value: object,
+    *,
+    field_name: str,
+    issues: list[ManifestIssue],
+) -> bool | None:
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        issues.append(ManifestIssue(field_name, "expected a boolean"))
+        return None
+    return value
 
 
 def _optional_positive_int(
