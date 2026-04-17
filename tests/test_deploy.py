@@ -99,6 +99,24 @@ def write_pi_bundle(repo_root: Path) -> None:
     )
 
 
+def write_valid_skill(repo_root: Path) -> None:
+    (repo_root / "skills" / "review").mkdir(parents=True, exist_ok=True)
+    (repo_root / "skills" / "review" / "SKILL.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "name: review",
+                "description: Review code changes.",
+                "---",
+                "",
+                "Review the current code changes.",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def _git_available() -> bool:
     return shutil.which("git") is not None
 
@@ -256,6 +274,39 @@ def test_prepare_deploy_flow_outputs_normalized_manifest_and_steps(
     )
     assert dry_run["steps"][3]["endpoint"] == "/v1/agents"
     assert dry_run["steps"][3]["payload"]["manifest"]["harness"] == "openai-agents"
+
+
+def test_prepare_deploy_flow_includes_normalized_skills_payload(tmp_path: Path) -> None:
+    write_pi_bundle(tmp_path)
+    write_valid_skill(tmp_path)
+    (tmp_path / "dari.yml").write_text(
+        "\n".join(
+            [
+                "name: support-agent",
+                "harness: pi",
+                "instructions:",
+                "  system: prompts/system.md",
+                "runtime:",
+                "  dockerfile: Dockerfile",
+                "skills:",
+                "  - name: review",
+                "    path: skills/review",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    prepared = prepare_deploy_flow(tmp_path)
+
+    assert prepared.manifest_payload["skills"] == [
+        {
+            "name": "review",
+            "source_path": "skills/review",
+            "skill_file": "skills/review/SKILL.md",
+            "description": "Review code changes.",
+        }
+    ]
 
 
 def test_deploy_checkout_reserves_uploads_finalizes_and_publishes(
@@ -650,5 +701,3 @@ def test_main_deploy_dry_run_prints_full_prepared_payload(
     assert payload["manifest"]["name"] == "support-agent"
     assert payload["steps"][0]["endpoint"] == "/v1/source-snapshots"
     assert payload["steps"][3]["payload"]["manifest"]["harness"] == "openai-agents"
-
-
