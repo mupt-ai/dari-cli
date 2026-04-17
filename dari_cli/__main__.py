@@ -13,6 +13,7 @@ from pathlib import Path
 from .deploy import DeployConfigurationError, deploy_checkout, prepare_deploy_flow
 from .management import (
     DEFAULT_API_URL,
+    DariCliCommandError,
     create_api_key,
     create_organization,
     delete_credential,
@@ -273,7 +274,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the Dari CLI."""
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
-    return args.handler(args)
+    try:
+        return args.handler(args)
+    except DariCliCommandError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
 
 def _handle_deploy(args: argparse.Namespace) -> int:
@@ -313,8 +318,10 @@ def _handle_deploy(args: argparse.Namespace) -> int:
 
 def _handle_auth_login(args: argparse.Namespace) -> int:
     state = login(api_url=args.api_url, environ=os.environ)
-    current_org = None if state.current_org_id is None else state.organizations.get(
-        state.current_org_id
+    current_org = (
+        None
+        if state.current_org_id is None
+        else state.organizations.get(state.current_org_id)
     )
     print(
         json.dumps(
@@ -325,9 +332,7 @@ def _handle_auth_login(args: argparse.Namespace) -> int:
                     if state.supabase_session is None
                     else state.supabase_session.email
                 ),
-                "current_org": (
-                    None if current_org is None else current_org.to_dict()
-                ),
+                "current_org": (None if current_org is None else current_org.to_dict()),
             },
             indent=2,
             sort_keys=True,

@@ -8,13 +8,16 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import socket
 import threading
+import time
 from typing import Any, Callable, Iterator
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlparse
 from urllib.request import Request, urlopen
 import webbrowser
 
+import httpx
 from supabase import ClientOptions, create_client
+from supabase_auth.errors import AuthError, AuthRetryableError, UserDoesntExist
 from supabase_auth.types import CodeExchangeParams, SignInWithOAuthCredentials
 
 from .state import (
@@ -27,10 +30,30 @@ from .state import (
 
 DEFAULT_API_URL = "https://api.dari.dev"
 LOGIN_TIMEOUT_SECONDS = 300.0
+MANAGEMENT_REQUEST_TIMEOUT_SECONDS = 15.0
+SUPABASE_AUTH_TIMEOUT_SECONDS = 15.0
+SESSION_REFRESH_LEEWAY_SECONDS = 60
 
 
-class DariCliAuthError(RuntimeError):
+class DariCliCommandError(RuntimeError):
+    """Raised for expected user-facing CLI command failures."""
+
+
+class DariCliAuthError(DariCliCommandError):
     """Raised when CLI auth or org management fails."""
+
+
+class DariCliNetworkError(DariCliCommandError):
+    """Raised when a CLI command hits a retryable network or transport failure."""
+
+
+class _JsonRequestHttpError(RuntimeError):
+    """Internal structured HTTP error used for auth-aware retry logic."""
+
+    def __init__(self, status_code: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +63,14 @@ class AuthStatus:
     api_url: str | None
     email: str | None
     current_org: StoredOrganization | None
+
+
+@dataclass(frozen=True, slots=True)
+class _AuthenticatedState:
+    """Current auth state plus whether this call reused the cached token."""
+
+    state: CliState
+    used_cached_access_token: bool
 
 
 def login(
@@ -157,13 +188,19 @@ def list_organizations(
     opener: Callable[..., Any] = urlopen,
 ) -> tuple[CliState, list[dict[str, Any]]]:
     """List organizations for the current user and sync local state."""
-    state = _load_authenticated_state(api_url=api_url, environ=environ, opener=opener)
-    payload = _management_request(
+    authenticated_state = _load_authenticated_state(
         api_url=api_url,
-        path="/v1/organizations",
-        bearer_token=state.supabase_session.access_token,
+        environ=environ,
         opener=opener,
     )
+    authenticated_state, payload = _execute_management_request(
+        authenticated_state=authenticated_state,
+        api_url=api_url,
+        environ=environ,
+        path="/v1/organizations",
+        opener=opener,
+    )
+    state = authenticated_state.state
     organizations = list(payload["organizations"])
     state = _sync_organizations(state, organizations)
     save_cli_state(state, environ=environ)
@@ -178,15 +215,20 @@ def create_organization(
     opener: Callable[..., Any] = urlopen,
 ) -> CliState:
     """Create a new organization, switch to it, and cache its managed key."""
-    state = _load_authenticated_state(api_url=api_url, environ=environ, opener=opener)
-    created = _management_request(
+    authenticated_state = _load_authenticated_state(
         api_url=api_url,
+        environ=environ,
+        opener=opener,
+    )
+    authenticated_state, created = _execute_management_request(
+        authenticated_state=authenticated_state,
+        api_url=api_url,
+        environ=environ,
         path="/v1/organizations",
-        bearer_token=state.supabase_session.access_token,
         payload={"name": name},
         opener=opener,
     )
-    state = _upsert_organization(state, created)
+    state = _upsert_organization(authenticated_state.state, created)
     state = _ensure_current_org_key(
         state,
         api_url=api_url,
@@ -230,12 +272,17 @@ def list_api_keys(
     opener: Callable[..., Any] = urlopen,
 ) -> list[dict[str, Any]]:
     """List API keys for the current org."""
-    state = _load_authenticated_state(api_url=api_url, environ=environ, opener=opener)
-    organization = _require_current_org(state)
-    payload = _management_request(
+    authenticated_state = _load_authenticated_state(
         api_url=api_url,
+        environ=environ,
+        opener=opener,
+    )
+    organization = _require_current_org(authenticated_state.state)
+    _, payload = _execute_management_request(
+        authenticated_state=authenticated_state,
+        api_url=api_url,
+        environ=environ,
         path=f"/v1/organizations/{organization.id}/api-keys",
-        bearer_token=state.supabase_session.access_token,
         opener=opener,
     )
     return list(payload["api_keys"])
@@ -249,15 +296,21 @@ def create_api_key(
     opener: Callable[..., Any] = urlopen,
 ) -> dict[str, Any]:
     """Create a manual org API key for the current org."""
-    state = _load_authenticated_state(api_url=api_url, environ=environ, opener=opener)
-    organization = _require_current_org(state)
-    return _management_request(
+    authenticated_state = _load_authenticated_state(
         api_url=api_url,
+        environ=environ,
+        opener=opener,
+    )
+    organization = _require_current_org(authenticated_state.state)
+    _, payload = _execute_management_request(
+        authenticated_state=authenticated_state,
+        api_url=api_url,
+        environ=environ,
         path=f"/v1/organizations/{organization.id}/api-keys",
-        bearer_token=state.supabase_session.access_token,
         payload={"label": label},
         opener=opener,
     )
+    return payload
 
 
 def revoke_api_key(
@@ -268,15 +321,21 @@ def revoke_api_key(
     opener: Callable[..., Any] = urlopen,
 ) -> dict[str, Any]:
     """Revoke a manual org API key for the current org."""
-    state = _load_authenticated_state(api_url=api_url, environ=environ, opener=opener)
-    organization = _require_current_org(state)
-    return _management_request(
+    authenticated_state = _load_authenticated_state(
         api_url=api_url,
+        environ=environ,
+        opener=opener,
+    )
+    organization = _require_current_org(authenticated_state.state)
+    _, payload = _execute_management_request(
+        authenticated_state=authenticated_state,
+        api_url=api_url,
+        environ=environ,
         path=f"/v1/organizations/{organization.id}/api-keys/{api_key_id}",
-        bearer_token=state.supabase_session.access_token,
         method="DELETE",
         opener=opener,
     )
+    return payload
 
 
 def list_members(
@@ -286,12 +345,17 @@ def list_members(
     opener: Callable[..., Any] = urlopen,
 ) -> list[dict[str, Any]]:
     """List members of the current organization."""
-    state = _load_authenticated_state(api_url=api_url, environ=environ, opener=opener)
-    organization = _require_current_org(state)
-    payload = _management_request(
+    authenticated_state = _load_authenticated_state(
         api_url=api_url,
+        environ=environ,
+        opener=opener,
+    )
+    organization = _require_current_org(authenticated_state.state)
+    _, payload = _execute_management_request(
+        authenticated_state=authenticated_state,
+        api_url=api_url,
+        environ=environ,
         path=f"/v1/organizations/{organization.id}/members",
-        bearer_token=state.supabase_session.access_token,
         opener=opener,
     )
     return list(payload["members"])
@@ -306,15 +370,21 @@ def invite_member(
     opener: Callable[..., Any] = urlopen,
 ) -> dict[str, Any]:
     """Invite a member to the current organization."""
-    state = _load_authenticated_state(api_url=api_url, environ=environ, opener=opener)
-    organization = _require_current_org(state)
-    return _management_request(
+    authenticated_state = _load_authenticated_state(
         api_url=api_url,
+        environ=environ,
+        opener=opener,
+    )
+    organization = _require_current_org(authenticated_state.state)
+    _, payload = _execute_management_request(
+        authenticated_state=authenticated_state,
+        api_url=api_url,
+        environ=environ,
         path=f"/v1/organizations/{organization.id}/invitations",
-        bearer_token=state.supabase_session.access_token,
         payload={"email": email, "role": role},
         opener=opener,
     )
+    return payload
 
 
 def resolve_default_api_key(
@@ -340,12 +410,17 @@ def list_credentials(
     opener: Callable[..., Any] = urlopen,
 ) -> list[dict[str, Any]]:
     """List credentials for the current organization."""
-    state = _load_authenticated_state(api_url=api_url, environ=environ, opener=opener)
-    organization = _require_current_org(state)
-    payload = _management_request(
+    authenticated_state = _load_authenticated_state(
         api_url=api_url,
+        environ=environ,
+        opener=opener,
+    )
+    organization = _require_current_org(authenticated_state.state)
+    _, payload = _execute_management_request(
+        authenticated_state=authenticated_state,
+        api_url=api_url,
+        environ=environ,
         path=f"/v1/organizations/{organization.id}/credentials",
-        bearer_token=state.supabase_session.access_token,
         opener=opener,
     )
     return list(payload["credentials"])
@@ -360,18 +435,22 @@ def upsert_credential(
     opener: Callable[..., Any] = urlopen,
 ) -> dict[str, Any]:
     """Create or update a credential for the current organization."""
-    state = _load_authenticated_state(api_url=api_url, environ=environ, opener=opener)
-    organization = _require_current_org(state)
-    return _management_request(
+    authenticated_state = _load_authenticated_state(
         api_url=api_url,
-        path=(
-            f"/v1/organizations/{organization.id}/credentials/{quote(name, safe='')}"
-        ),
-        bearer_token=state.supabase_session.access_token,
+        environ=environ,
+        opener=opener,
+    )
+    organization = _require_current_org(authenticated_state.state)
+    _, payload = _execute_management_request(
+        authenticated_state=authenticated_state,
+        api_url=api_url,
+        environ=environ,
+        path=f"/v1/organizations/{organization.id}/credentials/{quote(name, safe='')}",
         method="PUT",
         payload={"value": value},
         opener=opener,
     )
+    return payload
 
 
 def delete_credential(
@@ -382,17 +461,21 @@ def delete_credential(
     opener: Callable[..., Any] = urlopen,
 ) -> dict[str, Any]:
     """Delete a credential from the current organization."""
-    state = _load_authenticated_state(api_url=api_url, environ=environ, opener=opener)
-    organization = _require_current_org(state)
-    return _management_request(
+    authenticated_state = _load_authenticated_state(
         api_url=api_url,
-        path=(
-            f"/v1/organizations/{organization.id}/credentials/{quote(name, safe='')}"
-        ),
-        bearer_token=state.supabase_session.access_token,
+        environ=environ,
+        opener=opener,
+    )
+    organization = _require_current_org(authenticated_state.state)
+    _, payload = _execute_management_request(
+        authenticated_state=authenticated_state,
+        api_url=api_url,
+        environ=environ,
+        path=f"/v1/organizations/{organization.id}/credentials/{quote(name, safe='')}",
         method="DELETE",
         opener=opener,
     )
+    return payload
 
 
 def _load_authenticated_state(
@@ -400,16 +483,68 @@ def _load_authenticated_state(
     api_url: str,
     environ: dict[str, str] | None,
     opener: Callable[..., Any],
-) -> CliState:
+) -> _AuthenticatedState:
     api_url = _normalize_api_url(api_url)
     state = load_cli_state(environ=environ)
     if not _api_urls_match(state.api_url, api_url) or state.supabase_session is None:
         raise DariCliAuthError(
             "No CLI login is available for this API URL. Run `dari auth login` first."
         )
-    state = _refresh_supabase_session(state, api_url=api_url, opener=opener)
-    save_cli_state(state, environ=environ)
-    return state
+    if _stored_session_needs_refresh(state.supabase_session):
+        state = _refresh_supabase_session(state, api_url=api_url, opener=opener)
+        save_cli_state(state, environ=environ)
+        return _AuthenticatedState(state=state, used_cached_access_token=False)
+    return _AuthenticatedState(state=state, used_cached_access_token=True)
+
+
+def _execute_management_request(
+    *,
+    authenticated_state: _AuthenticatedState,
+    api_url: str,
+    environ: dict[str, str] | None,
+    path: str,
+    opener: Callable[..., Any],
+    payload: dict[str, Any] | None = None,
+    method: str | None = None,
+) -> tuple[_AuthenticatedState, dict[str, Any]]:
+    try:
+        response_payload = _management_request(
+            api_url=api_url,
+            path=path,
+            bearer_token=_require_access_token(authenticated_state.state),
+            payload=payload,
+            method=method,
+            opener=opener,
+        )
+        return authenticated_state, response_payload
+    except _JsonRequestHttpError as exc:
+        if authenticated_state.used_cached_access_token and exc.status_code in {
+            401,
+            403,
+        }:
+            refreshed_state = _refresh_supabase_session(
+                authenticated_state.state,
+                api_url=api_url,
+                opener=opener,
+            )
+            save_cli_state(refreshed_state, environ=environ)
+            retried_state = _AuthenticatedState(
+                state=refreshed_state,
+                used_cached_access_token=False,
+            )
+            try:
+                response_payload = _management_request(
+                    api_url=api_url,
+                    path=path,
+                    bearer_token=_require_access_token(refreshed_state),
+                    payload=payload,
+                    method=method,
+                    opener=opener,
+                )
+                return retried_state, response_payload
+            except _JsonRequestHttpError as retry_exc:
+                raise _translate_management_http_error(retry_exc) from retry_exc
+        raise _translate_management_http_error(exc) from exc
 
 
 def _bootstrap_and_select_current_org(
@@ -484,16 +619,55 @@ def _refresh_supabase_session(
         raise DariCliAuthError("No Supabase session is available.")
     auth_config = _fetch_auth_config(api_url, opener=opener)
     supabase = _build_supabase_client(auth_config)
-    auth_response = supabase.auth.set_session(
-        state.supabase_session.access_token,
-        state.supabase_session.refresh_token,
-    )
-    session = auth_response.session or supabase.auth.get_session()
+    try:
+        auth_response = supabase.auth.set_session(
+            state.supabase_session.access_token,
+            state.supabase_session.refresh_token,
+        )
+        session = auth_response.session or supabase.auth.get_session()
+    except (httpx.TimeoutException, httpx.TransportError, AuthRetryableError) as exc:
+        raise DariCliNetworkError(
+            "Supabase session refresh failed. Try again."
+        ) from exc
+    except (AuthError, UserDoesntExist) as exc:
+        raise DariCliAuthError("Unable to refresh the Supabase session.") from exc
     if session is None or session.user is None or session.user.email is None:
         raise DariCliAuthError("Unable to refresh the Supabase session.")
     state.api_url = api_url
     state.supabase_session = _stored_session_from_supabase_session(session)
     return state
+
+
+def _stored_session_needs_refresh(session: StoredSupabaseSession) -> bool:
+    if session.expires_at is None:
+        return True
+    return session.expires_at <= round(time.time()) + SESSION_REFRESH_LEEWAY_SECONDS
+
+
+def _require_access_token(state: CliState) -> str:
+    if state.supabase_session is None:
+        raise DariCliAuthError("No Supabase session is available.")
+    return state.supabase_session.access_token
+
+
+def _translate_management_http_error(
+    exc: _JsonRequestHttpError,
+) -> DariCliCommandError:
+    if exc.status_code in {401, 403}:
+        return DariCliAuthError(exc.detail)
+    return DariCliCommandError(exc.detail)
+
+
+def _extract_http_error_detail(exc: HTTPError) -> str:
+    detail = exc.reason
+    if exc.fp is not None:
+        try:
+            payload = json.loads(exc.fp.read().decode("utf-8"))
+        except Exception:
+            payload = None
+        if isinstance(payload, dict) and "detail" in payload:
+            detail = str(payload["detail"])
+    return str(detail)
 
 
 def _sync_organizations(
@@ -561,6 +735,10 @@ def _fetch_auth_config(api_url: str, *, opener: Callable[..., Any]) -> dict[str,
     return _json_request(
         _join_url(api_url, "/v1/auth/config"),
         opener=opener,
+        timeout_seconds=MANAGEMENT_REQUEST_TIMEOUT_SECONDS,
+        network_error_message="Failed to fetch CLI auth configuration. Try again.",
+        invalid_response_message="CLI auth configuration response was invalid.",
+        http_error_cls=DariCliCommandError,
     )
 
 
@@ -580,6 +758,10 @@ def _management_request(
         payload=payload,
         headers=headers,
         method=method,
+        timeout_seconds=MANAGEMENT_REQUEST_TIMEOUT_SECONDS,
+        network_error_message="Agent Host management request failed. Try again.",
+        invalid_response_message="Agent Host management request returned an invalid response.",
+        structured_http_errors=True,
     )
 
 
@@ -590,6 +772,11 @@ def _json_request(
     payload: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
     method: str | None = None,
+    timeout_seconds: float,
+    network_error_message: str,
+    invalid_response_message: str,
+    http_error_cls: type[DariCliCommandError] = DariCliCommandError,
+    structured_http_errors: bool = False,
 ) -> dict[str, Any]:
     request_headers = {"Accept": "application/json", **(headers or {})}
     data = None
@@ -605,18 +792,25 @@ def _json_request(
         method=resolved_method,
     )
     try:
-        with opener(request) as response:
-            return json.loads(response.read().decode("utf-8"))
+        with opener(request, timeout=timeout_seconds) as response:
+            response_body = response.read().decode("utf-8")
     except HTTPError as exc:
-        detail = exc.reason
-        if exc.fp is not None:
-            try:
-                payload = json.loads(exc.fp.read().decode("utf-8"))
-            except Exception:
-                payload = None
-            if isinstance(payload, dict) and "detail" in payload:
-                detail = str(payload["detail"])
-        raise DariCliAuthError(str(detail)) from exc
+        detail = _extract_http_error_detail(exc)
+        if structured_http_errors:
+            raise _JsonRequestHttpError(exc.code, detail) from exc
+        raise http_error_cls(detail) from exc
+    except (TimeoutError, socket.timeout, URLError) as exc:
+        raise DariCliNetworkError(network_error_message) from exc
+
+    if not response_body:
+        return {}
+    try:
+        response_json = json.loads(response_body)
+    except json.JSONDecodeError as exc:
+        raise DariCliCommandError(invalid_response_message) from exc
+    if not isinstance(response_json, dict):
+        raise DariCliCommandError(invalid_response_message)
+    return response_json
 
 
 def _join_url(api_url: str, path: str) -> str:
@@ -642,6 +836,7 @@ def _build_supabase_client(auth_config: dict[str, Any]):
             flow_type="pkce",
             persist_session=False,
             auto_refresh_token=False,
+            httpx_client=httpx.Client(timeout=SUPABASE_AUTH_TIMEOUT_SECONDS),
         ),
     )
 
