@@ -426,60 +426,6 @@ def list_credentials(
     return list(payload["credentials"])
 
 
-def list_execution_backends(
-    *,
-    api_url: str,
-    environ: dict[str, str] | None = None,
-    opener: Callable[..., Any] = urlopen,
-) -> list[dict[str, Any]]:
-    """List execution backends for the current organization."""
-    authenticated_state = _load_authenticated_state(
-        api_url=api_url,
-        environ=environ,
-        opener=opener,
-    )
-    organization = _require_current_org(authenticated_state.state)
-    _, payload = _execute_management_request(
-        authenticated_state=authenticated_state,
-        api_url=api_url,
-        environ=environ,
-        path=f"/v1/organizations/{organization.id}/execution-backends",
-        opener=opener,
-    )
-    return list(payload["execution_backends"])
-
-
-def create_execution_backend(
-    *,
-    api_url: str,
-    name: str,
-    provider: str,
-    config: dict[str, Any],
-    environ: dict[str, str] | None = None,
-    opener: Callable[..., Any] = urlopen,
-) -> dict[str, Any]:
-    """Create an execution backend for the current organization."""
-    authenticated_state = _load_authenticated_state(
-        api_url=api_url,
-        environ=environ,
-        opener=opener,
-    )
-    organization = _require_current_org(authenticated_state.state)
-    _, payload = _execute_management_request(
-        authenticated_state=authenticated_state,
-        api_url=api_url,
-        environ=environ,
-        path=f"/v1/organizations/{organization.id}/execution-backends",
-        payload={
-            "name": name,
-            "provider": provider,
-            "config": dict(config),
-        },
-        opener=opener,
-    )
-    return payload
-
-
 def upsert_credential(
     *,
     api_url: str,

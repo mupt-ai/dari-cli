@@ -13,7 +13,6 @@ import pytest
 from dari_cli.__main__ import main
 from dari_cli.deploy import (
     DariApiError,
-    DeployConfigurationError,
     build_source_bundle,
     collect_source_metadata,
     deploy_checkout,
@@ -259,49 +258,6 @@ def test_prepare_deploy_flow_outputs_normalized_manifest_and_steps(
     assert dry_run["steps"][3]["payload"]["manifest"]["harness"] == "openai-agents"
 
 
-def test_prepare_deploy_flow_includes_execution_backend_id_for_pi_harness(
-    tmp_path: Path,
-) -> None:
-    write_pi_bundle(tmp_path)
-
-    prepared = prepare_deploy_flow(
-        tmp_path,
-        execution_backend_id=" execb_123 ",
-    )
-
-    assert prepared.execution_backend_id == "execb_123"
-    assert prepared.to_dict()["steps"][3]["payload"]["execution_backend_id"] == (
-        "execb_123"
-    )
-
-
-def test_prepare_deploy_flow_requires_execution_backend_id_for_pi_harness(
-    tmp_path: Path,
-) -> None:
-    write_pi_bundle(tmp_path)
-
-    with pytest.raises(
-        DeployConfigurationError,
-        match="execution_backend_id is required for harness 'pi'",
-    ):
-        prepare_deploy_flow(tmp_path)
-
-
-def test_prepare_deploy_flow_rejects_execution_backend_id_for_non_pi_harness(
-    tmp_path: Path,
-) -> None:
-    write_valid_bundle(tmp_path)
-
-    with pytest.raises(
-        DeployConfigurationError,
-        match="execution_backend_id is only supported for harness 'pi'",
-    ):
-        prepare_deploy_flow(
-            tmp_path,
-            execution_backend_id="execb_123",
-        )
-
-
 def test_deploy_checkout_reserves_uploads_finalizes_and_publishes(
     tmp_path: Path,
 ) -> None:
@@ -395,75 +351,6 @@ def test_deploy_checkout_reserves_uploads_finalizes_and_publishes(
         {"execution_mode": "ephemeral", "name": "sandbox.exec"}
     ]
     assert response == {"agent_id": "agt_123", "version_id": "ver_123"}
-
-
-def test_deploy_checkout_sends_execution_backend_id_for_pi_harness(
-    tmp_path: Path,
-) -> None:
-    write_pi_bundle(tmp_path)
-    captured_requests: list[dict[str, object]] = []
-
-    class _FakeResponse:
-        def __init__(self, payload: bytes = b"") -> None:
-            self._payload = payload
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb) -> None:
-            return None
-
-        def read(self) -> bytes:
-            return self._payload
-
-    def fake_opener(request):
-        captured_requests.append(
-            {
-                "url": request.full_url,
-                "method": request.get_method(),
-                "headers": dict(request.header_items()),
-                "payload": (
-                    None
-                    if request.data is None
-                    else (
-                        request.data
-                        if request.get_method() == "PUT"
-                        else json.loads(request.data.decode("utf-8"))
-                    )
-                ),
-            }
-        )
-        if request.full_url == "https://api.example.test/v1/source-snapshots":
-            return _FakeResponse(
-                json.dumps(
-                    {
-                        "source_snapshot_id": "src_123",
-                        "upload_url": "https://uploads.example.test/source-bundle",
-                        "upload_headers": {"Content-Type": "application/gzip"},
-                    }
-                ).encode("utf-8")
-            )
-        if request.full_url.endswith("/finalize"):
-            return _FakeResponse(
-                json.dumps({"source_snapshot_id": "src_123", "status": "ready"}).encode(
-                    "utf-8"
-                )
-            )
-        if request.full_url == "https://api.example.test/v1/agents":
-            return _FakeResponse(b'{"id":"agt_123","active_version_id":"ver_1"}')
-        return _FakeResponse()
-
-    deploy_checkout(
-        tmp_path,
-        api_url="https://api.example.test",
-        api_key="test-api-key",
-        execution_backend_id="execb_123",
-        opener=fake_opener,
-    )
-
-    publish_payload = captured_requests[3]["payload"]
-    assert publish_payload["manifest"]["harness"] == "pi"
-    assert publish_payload["execution_backend_id"] == "execb_123"
 
 
 def test_deploy_checkout_persists_agent_id_for_later_publishes(tmp_path: Path) -> None:
@@ -765,32 +652,3 @@ def test_main_deploy_dry_run_prints_full_prepared_payload(
     assert payload["steps"][3]["payload"]["manifest"]["harness"] == "openai-agents"
 
 
-def test_main_supports_execution_backend_id_in_dry_run_output(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    write_pi_bundle(tmp_path)
-
-    exit_code = main(
-        [
-            "deploy",
-            str(tmp_path),
-            "--dry-run",
-            "--execution-backend-id",
-            "execb_123",
-        ]
-    )
-    output = json.loads(capsys.readouterr().out)
-
-    assert exit_code == 0
-    assert output["steps"][3]["payload"]["execution_backend_id"] == "execb_123"
-
-
-def test_main_requires_execution_backend_id_for_pi_harness(tmp_path: Path) -> None:
-    write_pi_bundle(tmp_path)
-
-    with pytest.raises(
-        SystemExit,
-        match="execution_backend_id is required for harness 'pi'",
-    ):
-        main(["deploy", str(tmp_path), "--dry-run"])

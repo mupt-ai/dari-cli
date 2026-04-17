@@ -1,13 +1,10 @@
 # Dari CLI
 
-`dari` is the CLI for validating a managed deployment bundle, packaging the
-current checkout, and publishing agent versions to Agent Host.
+`dari` validates, packages, and publishes agent projects to Agent Host.
 
-Full platform docs live at `https://docs.dari.dev`.
+Full docs: https://docs.dari.dev
 
 ## Install
-
-After the package is published to PyPI:
 
 ```bash
 uv tool install dari-cli
@@ -19,84 +16,88 @@ Or:
 pipx install dari-cli
 ```
 
-Install directly from GitHub before a PyPI release:
+From GitHub before a PyPI release:
 
 ```bash
 uv tool install git+https://github.com/mupt-ai/dari-cli.git
 ```
 
-Or:
-
-```bash
-pipx install git+https://github.com/mupt-ai/dari-cli.git
-```
-
 ## Commands
 
-Validate a managed bundle:
+Most commands require `dari auth login` first. The CLI talks to `https://api.dari.dev`.
+
+### auth
 
 ```bash
-dari manifest validate .
+dari auth login      # browser login, caches org key locally
+dari auth logout     # clear local login state
+dari auth status     # show current login and org
 ```
 
-Log in through the browser:
+### org
 
 ```bash
-dari auth login
+dari org list
+dari org create <name>
+dari org switch <organization>               # slug or id
+dari org members
+dari org invite <email> [--role owner|admin|member]
 ```
 
-Manage runtime credentials for the current org:
+### deploy
 
 ```bash
-dari credentials add OPENAI_API_KEY
+dari deploy [repo_root]
+```
+
+| Flag | Description |
+| --- | --- |
+| `--api-key` | Override the cached org key |
+| `--agent-id` | Publish to a specific agent |
+| `--dry-run` | Validate and package without uploading |
+
+### api-keys
+
+```bash
+dari api-keys list
+dari api-keys create --name <name>           # plaintext key returned once
+dari api-keys revoke <key_id>
+```
+
+### credentials
+
+Stored secrets referenced by name from `dari.yml` (e.g. `llm.api_key_secret: OPENROUTER_API_KEY`).
+
+```bash
 dari credentials list
+dari credentials add <name> [value]          # prompts if value omitted
+dari credentials add <name> --value-stdin < secret.txt
+dari credentials remove <name>
 ```
 
-Create or inspect execution backends for Pi deploys:
+### manifest
 
 ```bash
-dari execution-backends create --name "Primary E2B" --provider e2b --api-key e2b_api_123
-dari execution-backends list
+dari manifest validate [repo_root]
+dari manifest validate --json                # prints normalized manifest
 ```
 
-Deploy the current checkout:
+## Bundle shape
 
-```bash
-dari deploy .
-```
-
-For `harness: pi`, you must also provide the execution backend to pin for that
-publish:
-
-```bash
-dari deploy . --execution-backend-id execb_123
-```
-
-Or set it through the environment:
-
-```bash
-DARI_EXECUTION_BACKEND_ID=execb_123 dari deploy .
-```
-
-This management flow uses the browser login session from `dari auth login` and
-the currently selected org.
-
-The CLI talks to `https://api.dari.dev`.
-
-## Managed Bundle Shape
-
-`dari` expects a repo-root bundle with:
+The repo root must contain:
 
 - `dari.yml`
 - `Dockerfile`
 - any prompt files referenced by `instructions`
-- discovered custom tools under `tools/<name>/tool.yml`
+- custom tools under `tools/<name>/tool.yml`
 
-Minimal example:
+Supported `harness` values: `pi`, `opencode`, `openai-agents`, `claude-agent-sdk`.
+
+Minimal `dari.yml`:
 
 ```yaml
 name: support-agent
-harness: opencode
+harness: pi
 
 instructions:
   system: prompts/system.md
@@ -104,86 +105,41 @@ instructions:
 runtime:
   dockerfile: Dockerfile
 
+sandbox:
+  provider: e2b
+  provider_api_key_secret: E2B_API_KEY
+
 tools:
   - name: repo_search
     path: tools/repo_search
     kind: main
   - name: sandbox.exec
     kind: ephemeral
-
-env:
-  APP_ENV: production
 ```
 
-Example custom tool definition:
-
-```yaml
-name: repo_search
-description: Search the checked-out repository for matching content.
-input_schema: input.schema.json
-runtime: typescript
-handler: handler.ts:main
-retries: 2
-timeout_seconds: 20
-```
-
-## Pi Deploys
-
-Pi deploys require an execution backend ID pinned at publish time.
-
-Create an E2B-backed execution backend for the current org:
+Store the referenced E2B key as an org credential before publishing:
 
 ```bash
-dari execution-backends create --name "Primary E2B" --provider e2b
+dari credentials add E2B_API_KEY
 ```
 
-The command prompts for a provider API key securely by default. Use
-`--api-key` or `--api-key-stdin` when the backend config is just an API key.
+See [examples/](./examples) for per-harness starters. Full schema: https://docs.dari.dev/manifest.
 
-For any provider, you can also pass config through `--config-json` or
-`--config-json-stdin`:
-
-```bash
-dari execution-backends create \
-  --name "Sandbox Backend" \
-  --provider modal \
-  --config-json '{"api_key":"modal_123"}'
-```
-
-List existing execution backends and copy the returned `execb_*` ID:
-
-```bash
-dari execution-backends list
-```
-
-Deploy the Pi repo with that backend pinned:
-
-```bash
-dari deploy . --execution-backend-id execb_123
-```
-
-## Local Development
-
-Install dependencies and run tests:
+## Local development
 
 ```bash
 uv sync --group dev
 uv run pytest
 ```
 
-Examples live under [examples](./examples).
-
 ## Release
 
-1. Update `version` in `pyproject.toml`.
-2. Update `uv.lock` so the editable package entry matches the new version.
-3. Commit the version bump before tagging.
-4. Run `uv build` and `uv run pytest`.
-5. Configure PyPI trusted publishing for the `Publish CLI` GitHub Actions workflow.
-6. Push a tag like `v0.1.1` from the commit that contains that exact version.
-   The release workflow rejects tags that do not match `pyproject.toml`.
-7. GitHub Actions publishes the tagged build to PyPI.
+1. Bump `version` in `pyproject.toml`.
+2. Refresh `uv.lock` so the editable entry matches.
+3. Commit the bump before tagging.
+4. `uv build && uv run pytest`.
+5. Push a `v0.1.x` tag matching `pyproject.toml` — the release workflow rejects mismatched tags.
 
 ## Contributing
 
-Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening a PR.
+See [CONTRIBUTING.md](./CONTRIBUTING.md).

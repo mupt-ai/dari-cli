@@ -56,7 +56,6 @@ class PreparedDeployFlow:
     publish_endpoint: str
     manifest_payload: Mapping[str, Any]
     agent_name: str | None = None
-    execution_backend_id: str | None = None
 
     def build_publish_payload(self, source_snapshot_id: str) -> dict[str, Any]:
         """Build the final publish payload using a reserved snapshot ID."""
@@ -66,8 +65,6 @@ class PreparedDeployFlow:
         }
         if self.agent_name is not None:
             payload["name"] = self.agent_name
-        if self.execution_backend_id is not None:
-            payload["execution_backend_id"] = self.execution_backend_id
         return payload
 
     def to_dict(self) -> dict[str, Any]:
@@ -139,7 +136,6 @@ class DariApiClient:
         repo_root: str | Path,
         *,
         agent_id: str | None = None,
-        execution_backend_id: str | None = None,
         environ: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         """Package the checkout and submit it through the configured client."""
@@ -148,7 +144,6 @@ class DariApiClient:
             api_url=self.api_url,
             api_key=self.api_key,
             agent_id=agent_id,
-            execution_backend_id=execution_backend_id,
             environ=environ,
             opener=self.opener,
         )
@@ -200,7 +195,6 @@ def prepare_deploy_flow(
     repo_root: str | Path,
     *,
     agent_id: str | None = None,
-    execution_backend_id: str | None = None,
     api_url: str | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> PreparedDeployFlow:
@@ -211,11 +205,6 @@ def prepare_deploy_flow(
         api_url=api_url,
     )
     manifest = load_manifest(repo_root)
-    resolved_execution_backend_id = _normalize_optional_string(execution_backend_id)
-    _validate_execution_backend_selection(
-        harness=manifest.harness,
-        execution_backend_id=resolved_execution_backend_id,
-    )
     source_metadata = collect_source_metadata(repo_root, environ=environ)
     bundle = build_source_bundle(
         repo_root,
@@ -226,7 +215,6 @@ def prepare_deploy_flow(
         publish_endpoint=build_publish_endpoint(resolved_agent_id),
         manifest_payload=manifest.to_dict(),
         agent_name=None if resolved_agent_id else manifest.name,
-        execution_backend_id=resolved_execution_backend_id,
     )
 
 
@@ -236,7 +224,6 @@ def deploy_checkout(
     api_url: str,
     api_key: str,
     agent_id: str | None = None,
-    execution_backend_id: str | None = None,
     environ: Mapping[str, str] | None = None,
     opener: Callable[..., Any] = urlopen,
 ) -> dict[str, Any]:
@@ -245,7 +232,6 @@ def deploy_checkout(
     prepared = prepare_deploy_flow(
         resolved_repo_root,
         agent_id=agent_id,
-        execution_backend_id=execution_backend_id,
         api_url=api_url,
         environ=environ,
     )
@@ -457,32 +443,6 @@ def _require_string_mapping(
             raise DariApiError(f"{context} contained invalid upload headers.")
         headers[key] = value
     return headers
-
-
-def _normalize_optional_string(value: str | None) -> str | None:
-    if value is None:
-        return None
-    normalized = value.strip()
-    return normalized or None
-
-
-def _validate_execution_backend_selection(
-    *,
-    harness: str,
-    execution_backend_id: str | None,
-) -> None:
-    if harness == "pi":
-        if execution_backend_id is None:
-            raise DeployConfigurationError(
-                "execution_backend_id is required for harness 'pi'. "
-                "Pass --execution-backend-id or set DARI_EXECUTION_BACKEND_ID."
-            )
-        return
-    if execution_backend_id is not None:
-        raise DeployConfigurationError(
-            "execution_backend_id is only supported for harness 'pi'. "
-            "Remove --execution-backend-id or unset DARI_EXECUTION_BACKEND_ID."
-        )
 
 
 def _resolve_agent_id(
