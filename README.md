@@ -7,19 +7,7 @@ Full docs: https://docs.dari.dev
 ## Install
 
 ```bash
-uv tool install dari-cli
-```
-
-Or:
-
-```bash
-pipx install dari-cli
-```
-
-From GitHub before a PyPI release:
-
-```bash
-uv tool install git+https://github.com/mupt-ai/dari-cli.git
+pip install dari
 ```
 
 ## Commands
@@ -41,7 +29,7 @@ dari org list
 dari org create <name>
 dari org switch <organization>               # slug or id
 dari org members
-dari org invite <email> [--role owner|admin|member]
+dari org invite <email> [--role owner|admin|member]   # default: member
 ```
 
 ### deploy
@@ -50,10 +38,12 @@ dari org invite <email> [--role owner|admin|member]
 dari deploy [repo_root]
 ```
 
+Packages the checkout and publishes a new agent version.
+
 | Flag | Description |
 | --- | --- |
 | `--api-key` | Override the cached org key |
-| `--agent-id` | Publish to a specific agent |
+| `--agent-id` | Publish to a specific agent instead of resolving by name |
 | `--dry-run` | Validate and package without uploading |
 
 ### api-keys
@@ -105,22 +95,10 @@ instructions:
 runtime:
   dockerfile: Dockerfile
 
-sandbox:
-  provider: e2b
-  provider_api_key_secret: E2B_API_KEY
-
 tools:
   - name: repo_search
     path: tools/repo_search
     kind: main
-  - name: sandbox.exec
-    kind: ephemeral
-```
-
-Store the referenced E2B key as an org credential before publishing:
-
-```bash
-dari credentials add E2B_API_KEY
 ```
 
 See [examples/](./examples) for per-harness starters. Full schema: https://docs.dari.dev/manifest.
