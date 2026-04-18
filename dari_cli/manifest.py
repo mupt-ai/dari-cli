@@ -49,6 +49,7 @@ EXECUTION_MODES = ("client", "main", "ephemeral")
 ROOT_TOOL_KINDS = ("main", "ephemeral")
 SUPPORTED_SANDBOX_PROVIDERS = ("e2b",)
 OPENAI_API_KEY_ENV_NAME = "OPENAI_API_KEY"
+BUILT_IN_TOOL_NAMES = frozenset({"read", "bash", "edit", "write", "grep", "find", "ls"})
 SKILL_FRONTMATTER_FIELDS = {
     "name",
     "description",
@@ -644,14 +645,6 @@ def _parse_root_tools(
             continue
         _report_unknown_keys(item, ROOT_TOOL_FIELDS, issues, prefix=label)
         name = _coerce_non_empty_string(item.get("name"), f"{label}.name", issues)
-        kind = _coerce_non_empty_string(item.get("kind"), f"{label}.kind", issues)
-        if kind and kind not in ROOT_TOOL_KINDS:
-            issues.append(
-                ManifestIssue(
-                    f"{label}.kind",
-                    "expected one of 'main' or 'ephemeral'",
-                )
-            )
         raw_path = item.get("path")
         normalized_path: str | None = None
         if raw_path is not None:
@@ -669,6 +662,27 @@ def _parse_root_tools(
                         "expected a path under tools/",
                     )
                 )
+        raw_kind = item.get("kind")
+        if raw_kind is None:
+            kind = ""
+        else:
+            kind = _coerce_non_empty_string(raw_kind, f"{label}.kind", issues)
+            if kind and kind not in ROOT_TOOL_KINDS:
+                issues.append(
+                    ManifestIssue(
+                        f"{label}.kind",
+                        "expected one of 'main' or 'ephemeral'",
+                    )
+                )
+        if normalized_path is None and name and name not in BUILT_IN_TOOL_NAMES:
+            issues.append(
+                ManifestIssue(
+                    f"{label}.name",
+                    "entries without 'path' must reference a built-in tool; "
+                    "expected one of "
+                    + ", ".join(repr(value) for value in sorted(BUILT_IN_TOOL_NAMES)),
+                )
+            )
         parsed.append(
             RootToolOverride(
                 name=name,
