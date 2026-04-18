@@ -11,8 +11,7 @@ tools:
   - name: repo_search
     path: tools/repo_search
     kind: main
-  - name: sandbox.exec
-    kind: ephemeral
+  - name: bash
 
 secrets:
   - OPENAI_API_KEY

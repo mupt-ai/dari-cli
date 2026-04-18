@@ -78,8 +78,7 @@ def write_valid_bundle(repo_root: Path) -> None:
                 "  - name: repo_search_fast",
                 "    path: tools/repo_search",
                 "    kind: ephemeral",
-                "  - name: sandbox.exec",
-                "    kind: main",
+                "  - name: bash",
                 "env:",
                 "  APP_ENV: production",
                 "secrets:",
@@ -152,7 +151,7 @@ def test_load_manifest_discovers_custom_tools_and_root_overrides(
 
     assert manifest.to_dict() == {
         "built_in_tools": [
-            {"execution_mode": "main", "name": "sandbox.exec"},
+            {"execution_mode": "main", "name": "bash"},
         ],
         "custom_tools": [
             {
@@ -321,8 +320,8 @@ def test_duplicate_tool_names_are_rejected(tmp_path: Path) -> None:
                 "runtime:",
                 "  dockerfile: Dockerfile",
                 "tools:",
-                "  - name: repo_search",
-                "    kind: main",
+                "  - name: bash",
+                "  - name: bash",
             ]
         )
         + "\n",
@@ -332,7 +331,64 @@ def test_duplicate_tool_names_are_rejected(tmp_path: Path) -> None:
     with pytest.raises(ManifestValidationError) as exc_info:
         load_manifest(tmp_path)
 
-    assert "duplicate tool name 'repo_search'" in str(exc_info.value)
+    assert "duplicate tool name 'bash'" in str(exc_info.value)
+
+
+def test_built_in_tool_entry_without_kind_defaults_to_main(tmp_path: Path) -> None:
+    write_valid_bundle(tmp_path)
+    (tmp_path / "dari.yml").write_text(
+        "\n".join(
+            [
+                "name: support-agent",
+                "harness: opencode",
+                "instructions:",
+                "  system: prompts/system.md",
+                "runtime:",
+                "  dockerfile: Dockerfile",
+                "tools:",
+                "  - name: read",
+                "  - name: grep",
+                "    kind: ephemeral",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    manifest = load_manifest(tmp_path)
+
+    assert [tool.to_dict() for tool in manifest.built_in_tools] == [
+        {"execution_mode": "main", "name": "read"},
+        {"execution_mode": "ephemeral", "name": "grep"},
+    ]
+
+
+def test_unknown_built_in_tool_name_is_rejected(tmp_path: Path) -> None:
+    write_valid_bundle(tmp_path)
+    (tmp_path / "dari.yml").write_text(
+        "\n".join(
+            [
+                "name: support-agent",
+                "harness: opencode",
+                "instructions:",
+                "  system: prompts/system.md",
+                "runtime:",
+                "  dockerfile: Dockerfile",
+                "tools:",
+                "  - name: sandbox.exec",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ManifestValidationError) as exc_info:
+        load_manifest(tmp_path)
+
+    assert (
+        "tools[0].name: entries without 'path' must reference a built-in tool"
+        in str(exc_info.value)
+    )
 
 
 def test_manifest_validate_json_outputs_normalized_payload(tmp_path: Path) -> None:

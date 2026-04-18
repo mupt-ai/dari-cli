@@ -66,7 +66,7 @@ def write_valid_bundle(repo_root: Path) -> None:
                 "  - name: repo_search",
                 "    path: tools/repo_search",
                 "    kind: main",
-                "  - name: sandbox.exec",
+                "  - name: bash",
                 "    kind: ephemeral",
             ]
         )
@@ -90,7 +90,7 @@ def write_pi_bundle(repo_root: Path) -> None:
                 "  - name: repo_search",
                 "    path: tools/repo_search",
                 "    kind: main",
-                "  - name: sandbox.exec",
+                "  - name: bash",
                 "    kind: ephemeral",
             ]
         )
@@ -265,7 +265,7 @@ def test_prepare_deploy_flow_outputs_normalized_manifest_and_steps(
     }
     assert dry_run["manifest"]["harness"] == "openai-agents"
     assert dry_run["manifest"]["built_in_tools"] == [
-        {"execution_mode": "ephemeral", "name": "sandbox.exec"}
+        {"execution_mode": "ephemeral", "name": "bash"}
     ]
     assert dry_run["manifest"]["custom_tools"][0]["execution_mode"] == "main"
     assert dry_run["steps"][0]["endpoint"] == "/v1/source-snapshots"
@@ -399,7 +399,7 @@ def test_deploy_checkout_reserves_uploads_finalizes_and_publishes(
         "repo_search"
     )
     assert captured_requests[3]["payload"]["manifest"]["built_in_tools"] == [
-        {"execution_mode": "ephemeral", "name": "sandbox.exec"}
+        {"execution_mode": "ephemeral", "name": "bash"}
     ]
     assert response == {"agent_id": "agt_123", "version_id": "ver_123"}
 
