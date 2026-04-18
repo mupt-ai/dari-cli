@@ -11,7 +11,6 @@ tools:
   - name: repo_search
     path: tools/repo_search
     kind: main
-  - name: bash
 
 env:
   APP_ENV: example
