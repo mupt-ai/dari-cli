@@ -193,6 +193,139 @@ def test_login_reports_manual_url_when_browser_open_fails(
         )
 
 
+def test_deploy_resolves_api_url_from_saved_state(monkeypatch, tmp_path) -> None:
+    config_dir = tmp_path / "config"
+    state = CliState(
+        api_url="https://dev.dari.test/",
+        supabase_session=StoredSupabaseSession(
+            access_token="access-token",
+            refresh_token="refresh-token",
+            expires_at=None,
+            user_id="sup_user_123",
+            email="user@example.test",
+            display_name="User Example",
+        ),
+        current_org_id="org_123",
+        organizations={
+            "org_123": StoredOrganization(
+                id="org_123",
+                name="Support",
+                slug="support",
+                role="owner",
+                api_key="dari_cached_key",
+            )
+        },
+    )
+    save_cli_state(state, environ={"DARI_CONFIG_DIR": str(config_dir)})
+    monkeypatch.setenv("DARI_CONFIG_DIR", str(config_dir))
+    monkeypatch.delenv("DARI_API_URL", raising=False)
+
+    (tmp_path / "dari.yml").write_text(
+        "\n".join(
+            [
+                "name: support-agent",
+                "harness: pi",
+                "instructions:",
+                "  system: prompts/system.md",
+                "runtime:",
+                "  dockerfile: Dockerfile",
+                "sandbox:",
+                "  provider: e2b",
+                "  provider_api_key_secret: E2B_API_KEY",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "Dockerfile").write_text(
+        "FROM node:20-bookworm\nWORKDIR /bundle\nCOPY . /bundle\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "prompts").mkdir()
+    (tmp_path / "prompts" / "system.md").write_text(
+        "You are a state-url test bundle.\n",
+        encoding="utf-8",
+    )
+
+    captured: dict[str, str] = {}
+
+    def fake_deploy_checkout(*args, **kwargs):  # noqa: ANN002, ANN003
+        captured["api_url"] = kwargs["api_url"]
+        captured["api_key"] = kwargs["api_key"]
+        return {"id": "agt_123"}
+
+    monkeypatch.setattr("dari_cli.__main__.deploy_checkout", fake_deploy_checkout)
+
+    exit_code = main(["deploy", str(tmp_path)])
+
+    assert exit_code == 0
+    assert captured["api_url"] == "https://dev.dari.test"
+    assert captured["api_key"] == "dari_cached_key"
+
+
+def test_auth_status_reports_api_key_session_without_jwt(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    config_dir = tmp_path / "config"
+    state = CliState(
+        api_url="https://api.example.test",
+        supabase_session=None,
+        current_org_id="org_123",
+        organizations={
+            "org_123": StoredOrganization(
+                id="org_123",
+                name="Support",
+                slug="support",
+                role="owner",
+                api_key="dari_cached_key",
+            )
+        },
+    )
+    save_cli_state(state, environ={"DARI_CONFIG_DIR": str(config_dir)})
+    monkeypatch.setenv("DARI_CONFIG_DIR", str(config_dir))
+
+    exit_code = main(
+        [
+            "auth",
+            "status",
+            "--api-url",
+            "https://api.example.test",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["logged_in"] is True
+    assert payload["session_mode"] == "api_key"
+    assert payload["email"] is None
+    assert payload["current_org"]["slug"] == "support"
+
+
+def test_auth_status_reports_jwt_session_when_fresh(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    config_dir = tmp_path / "config"
+    save_cli_state(
+        _build_cli_state(),
+        environ={"DARI_CONFIG_DIR": str(config_dir)},
+    )
+    monkeypatch.setenv("DARI_CONFIG_DIR", str(config_dir))
+
+    exit_code = main(
+        [
+            "auth",
+            "status",
+            "--api-url",
+            "https://api.example.test",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["logged_in"] is True
+    assert payload["session_mode"] == "jwt"
+    assert payload["email"] == "user@example.test"
+
+
 def test_deploy_uses_cached_current_org_api_key(monkeypatch, tmp_path) -> None:
     config_dir = tmp_path / "config"
     state = CliState(

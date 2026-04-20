@@ -12,7 +12,6 @@ from pathlib import Path
 
 from .deploy import DeployConfigurationError, deploy_checkout, prepare_deploy_flow
 from .management import (
-    DEFAULT_API_URL,
     DariCliCommandError,
     create_api_key,
     create_organization,
@@ -25,6 +24,7 @@ from .management import (
     list_organizations,
     login,
     logout,
+    resolve_api_url,
     resolve_default_api_key,
     revoke_api_key,
     switch_organization,
@@ -50,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     deploy_parser.add_argument(
         "--api-url",
-        default=os.environ.get("DARI_API_URL", DEFAULT_API_URL),
+        default=None,
         help=argparse.SUPPRESS,
     )
     deploy_parser.add_argument(
@@ -241,7 +241,7 @@ def build_parser() -> argparse.ArgumentParser:
 def _add_api_url_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--api-url",
-        default=os.environ.get("DARI_API_URL", DEFAULT_API_URL),
+        default=None,
         help=argparse.SUPPRESS,
     )
 
@@ -274,6 +274,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the Dari CLI."""
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
+    if hasattr(args, "api_url"):
+        args.api_url = resolve_api_url(
+            flag_value=args.api_url,
+            environ=os.environ,
+        )
     try:
         return args.handler(args)
     except DariCliCommandError as exc:
@@ -357,7 +362,8 @@ def _handle_auth_status(args: argparse.Namespace) -> int:
                 "current_org": (
                     None if status.current_org is None else status.current_org.to_dict()
                 ),
-                "logged_in": status.email is not None,
+                "logged_in": status.session_mode is not None,
+                "session_mode": status.session_mode,
             },
             indent=2,
             sort_keys=True,

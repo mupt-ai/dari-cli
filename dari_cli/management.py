@@ -9,7 +9,7 @@ import json
 import socket
 import threading
 import time
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, Literal
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlparse
 from urllib.request import Request, urlopen
@@ -63,6 +63,7 @@ class AuthStatus:
     api_url: str | None
     email: str | None
     current_org: StoredOrganization | None
+    session_mode: Literal["jwt", "api_key"] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,12 +173,29 @@ def get_auth_status(
     """Return the local CLI auth status without making network calls."""
     api_url = _normalize_api_url(api_url)
     state = load_cli_state(environ=environ)
-    if not _api_urls_match(state.api_url, api_url) or state.supabase_session is None:
+    if not _api_urls_match(state.api_url, api_url):
         return AuthStatus(api_url=None, email=None, current_org=None)
+    current_org = _current_org(state)
+    has_fresh_jwt = (
+        state.supabase_session is not None
+        and not _stored_session_needs_refresh(state.supabase_session)
+    )
+    has_cached_api_key = current_org is not None and bool(current_org.api_key)
+    session_mode: Literal["jwt", "api_key"] | None
+    if has_fresh_jwt:
+        session_mode = "jwt"
+    elif has_cached_api_key:
+        session_mode = "api_key"
+    else:
+        session_mode = None
+    if session_mode is None:
+        return AuthStatus(api_url=None, email=None, current_org=None)
+    email = state.supabase_session.email if state.supabase_session is not None else None
     return AuthStatus(
         api_url=state.api_url,
-        email=state.supabase_session.email,
-        current_org=_current_org(state),
+        email=email,
+        current_org=current_org,
+        session_mode=session_mode,
     )
 
 
@@ -401,6 +419,24 @@ def resolve_default_api_key(
     if organization is None:
         return None
     return organization.api_key
+
+
+def resolve_api_url(
+    *,
+    flag_value: str | None,
+    environ: dict[str, str] | None = None,
+) -> str:
+    """Resolve the effective API URL: flag → env → cached state → default."""
+    values = environ if environ is not None else {}
+    if flag_value:
+        return _normalize_api_url(flag_value)
+    env_value = values.get("DARI_API_URL")
+    if env_value and env_value.strip():
+        return _normalize_api_url(env_value)
+    state = load_cli_state(environ=environ)
+    if state.api_url:
+        return _normalize_api_url(state.api_url)
+    return DEFAULT_API_URL
 
 
 def list_credentials(
