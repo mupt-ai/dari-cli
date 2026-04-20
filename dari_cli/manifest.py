@@ -9,12 +9,7 @@ from typing import Any, Literal, Mapping
 
 import yaml
 
-SUPPORTED_HARNESSES = (
-    "openai-agents",
-    "claude-agent-sdk",
-    "opencode",
-    "pi",
-)
+SUPPORTED_HARNESSES = ("pi",)
 SUPPORTED_TOOL_RUNTIMES = ("typescript", "python")
 TOP_LEVEL_FIELDS = {
     "name",
@@ -45,8 +40,9 @@ TOOL_FIELDS = {
     "timeout_seconds",
 }
 ENVIRONMENT_VARIABLE_NAME_PATTERN = re.compile(r"^[A-Z_][A-Z0-9_]*$")
-EXECUTION_MODES = ("client", "main", "ephemeral")
-ROOT_TOOL_KINDS = ("main", "ephemeral")
+EXECUTION_MODES = ("client", "main")
+ROOT_TOOL_KINDS = ("main",)
+DEFAULT_BUILT_IN_TOOL_NAMES = ("read", "bash", "edit", "write")
 SUPPORTED_SANDBOX_PROVIDERS = ("e2b",)
 OPENAI_API_KEY_ENV_NAME = "OPENAI_API_KEY"
 BUILT_IN_TOOL_NAMES = frozenset({"read", "bash", "edit", "write", "grep", "find", "ls"})
@@ -123,7 +119,7 @@ class BuiltInTool:
     """One built-in/default tool exposed by the root manifest."""
 
     name: str
-    execution_mode: Literal["main", "ephemeral"]
+    execution_mode: Literal["main"]
 
     def to_dict(self) -> dict[str, str]:
         return {
@@ -143,7 +139,7 @@ class CustomTool:
     input_schema: str
     runtime: Literal["typescript", "python"]
     handler: str
-    execution_mode: Literal["client", "main", "ephemeral"] = "client"
+    execution_mode: Literal["client", "main"] = "client"
     output_schema: str | None = None
     retries: int | None = None
     timeout_seconds: int | None = None
@@ -195,9 +191,9 @@ class AgentManifest:
     """Normalized managed bundle payload emitted by the CLI."""
 
     name: str
-    harness: Literal["openai-agents", "claude-agent-sdk", "opencode", "pi"]
+    harness: Literal["pi"]
     instructions: BundleInstructions
-    runtime: BundleRuntime
+    runtime: BundleRuntime | None = None
     sandbox: BundleSandbox | None = None
     llm: BundleLlm | None = None
     built_in_tools: tuple[BuiltInTool, ...] = ()
@@ -211,10 +207,11 @@ class AgentManifest:
             "name": self.name,
             "harness": self.harness,
             "instructions": self.instructions.to_dict(),
-            "runtime": self.runtime.to_dict(),
             "built_in_tools": [tool.to_dict() for tool in self.built_in_tools],
             "custom_tools": [tool.to_dict() for tool in self.custom_tools],
         }
+        if self.runtime is not None:
+            payload["runtime"] = self.runtime.to_dict()
         if self.sandbox is not None:
             payload["sandbox"] = self.sandbox.to_dict()
         if self.llm is not None:
@@ -233,7 +230,7 @@ class RootToolOverride:
     """One root-manifest tool entry before normalization."""
 
     name: str
-    kind: Literal["main", "ephemeral"]
+    kind: Literal["main"]
     path: str | None = None
 
 
@@ -317,7 +314,13 @@ def parse_manifest_text(
     _report_secret_env_overlap(secrets, env, issues)
     _validate_llm_references(llm, secrets, env, issues)
     _validate_sandbox_references(sandbox, secrets, issues)
-    root_tools = _parse_root_tools(data.get("tools"), issues)
+    if "tools" in data:
+        root_tools = _parse_root_tools(data.get("tools"), issues)
+    else:
+        root_tools = tuple(
+            RootToolOverride(name=name, kind="main")
+            for name in DEFAULT_BUILT_IN_TOOL_NAMES
+        )
     root_skills = _parse_root_skills(data.get("skills"), issues)
     discovered_tools = _discover_custom_tools(repo_root, issues)
     built_in_tools, custom_tools = _build_effective_tools(
@@ -335,7 +338,6 @@ def parse_manifest_text(
         raise ManifestValidationError(resolved_path, issues)
 
     assert instructions is not None
-    assert runtime is not None
     return AgentManifest(
         name=name,
         harness=harness,
@@ -410,10 +412,10 @@ def _coerce_non_empty_string(
 def _require_harness(
     data: Mapping[str, Any],
     issues: list[ManifestIssue],
-) -> Literal["openai-agents", "claude-agent-sdk", "opencode", "pi"]:
+) -> Literal["pi"]:
     raw_harness = _require_non_empty_string(data, "harness", issues)
     if not raw_harness:
-        return "openai-agents"
+        return "pi"
     if raw_harness not in SUPPORTED_HARNESSES:
         issues.append(
             ManifestIssue(
@@ -422,7 +424,7 @@ def _require_harness(
                 + ", ".join(repr(value) for value in SUPPORTED_HARNESSES),
             )
         )
-        return "openai-agents"
+        return "pi"
     return raw_harness  # type: ignore[return-value]
 
 
@@ -463,7 +465,6 @@ def _parse_runtime(
     issues: list[ManifestIssue],
 ) -> BundleRuntime | None:
     if value is None:
-        issues.append(ManifestIssue("runtime", "field is required"))
         return None
     if not isinstance(value, Mapping):
         issues.append(ManifestIssue("runtime", "expected a mapping"))
@@ -501,6 +502,7 @@ def _parse_sandbox(
     issues: list[ManifestIssue],
 ) -> BundleSandbox | None:
     if value is None:
+        issues.append(ManifestIssue("sandbox", "field is required"))
         return None
     if not isinstance(value, Mapping):
         issues.append(ManifestIssue("sandbox", "expected a mapping"))
@@ -539,6 +541,7 @@ def _parse_llm(
     issues: list[ManifestIssue],
 ) -> BundleLlm | None:
     if value is None:
+        issues.append(ManifestIssue("llm", "field is required"))
         return None
     if not isinstance(value, Mapping):
         issues.append(ManifestIssue("llm", "expected a mapping"))
@@ -588,11 +591,25 @@ def _validate_llm_references(
 ) -> None:
     if llm is None:
         return
+    if llm.api_key_secret == OPENAI_API_KEY_ENV_NAME:
+        issues.append(
+            ManifestIssue(
+                "llm.api_key_secret",
+                f"must not be {OPENAI_API_KEY_ENV_NAME!r} (reserved)",
+            )
+        )
     if llm.api_key_secret in secrets:
         issues.append(
             ManifestIssue(
                 "llm.api_key_secret",
                 "must not also appear in secrets",
+            )
+        )
+    if env and llm.api_key_secret in env:
+        issues.append(
+            ManifestIssue(
+                "llm.api_key_secret",
+                "must not also appear in env",
             )
         )
     if OPENAI_API_KEY_ENV_NAME in secrets:
@@ -671,7 +688,8 @@ def _parse_root_tools(
                 issues.append(
                     ManifestIssue(
                         f"{label}.kind",
-                        "expected one of 'main' or 'ephemeral'",
+                        "expected one of "
+                        + ", ".join(repr(value) for value in ROOT_TOOL_KINDS),
                     )
                 )
         if normalized_path is None and name and name not in BUILT_IN_TOOL_NAMES:

@@ -77,11 +77,11 @@ dari manifest validate --json                # prints normalized manifest
 The repo root must contain:
 
 - `dari.yml`
-- `Dockerfile`
 - any prompt files referenced by `instructions`
 - custom tools under `tools/<name>/tool.yml`
+- `Dockerfile` only if `dari.yml` sets a `runtime:` block; otherwise the default E2B base image is used.
 
-Supported `harness` values: `pi`, `opencode`, `openai-agents`, `claude-agent-sdk`.
+Supported `harness` values: `pi`.
 
 Minimal `dari.yml`:
 
@@ -92,16 +92,17 @@ harness: pi
 instructions:
   system: prompts/system.md
 
-runtime:
-  dockerfile: Dockerfile
+sandbox:
+  provider: e2b
+  provider_api_key_secret: E2B_API_KEY
 
-tools:
-  - name: repo_search
-    path: tools/repo_search
-    kind: main
+llm:
+  model: anthropic/claude-sonnet-4.6
+  base_url: https://openrouter.ai/api/v1
+  api_key_secret: OPENROUTER_API_KEY
 ```
 
-See [examples/](./examples) for per-harness starters. Full schema: https://docs.dari.dev/manifest.
+Full schema: https://docs.dari.dev/manifest.
 
 ## Local development
 

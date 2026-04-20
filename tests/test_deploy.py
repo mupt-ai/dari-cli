@@ -57,11 +57,18 @@ def write_valid_bundle(repo_root: Path) -> None:
         "\n".join(
             [
                 "name: support-agent",
-                "harness: openai-agents",
+                "harness: pi",
                 "instructions:",
                 "  system: prompts/system.md",
                 "runtime:",
                 "  dockerfile: Dockerfile",
+                "sandbox:",
+                "  provider: e2b",
+                "  provider_api_key_secret: E2B_API_KEY",
+                "llm:",
+                "  model: anthropic/claude-sonnet-4.6",
+                "  base_url: https://openrouter.ai/api/v1",
+                "  api_key_secret: OPENROUTER_API_KEY",
                 "tools:",
                 "  - name: repo_search",
                 "    path: tools/repo_search",
@@ -75,24 +82,6 @@ def write_valid_bundle(repo_root: Path) -> None:
 
 def write_pi_bundle(repo_root: Path) -> None:
     write_valid_bundle(repo_root)
-    (repo_root / "dari.yml").write_text(
-        "\n".join(
-            [
-                "name: support-agent",
-                "harness: pi",
-                "instructions:",
-                "  system: prompts/system.md",
-                "runtime:",
-                "  dockerfile: Dockerfile",
-                "tools:",
-                "  - name: repo_search",
-                "    path: tools/repo_search",
-                "    kind: main",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
 
 
 def write_valid_skill(repo_root: Path) -> None:
@@ -259,7 +248,7 @@ def test_prepare_deploy_flow_outputs_normalized_manifest_and_steps(
         "git_commit_sha": "deadbeef",
         "origin": "ci",
     }
-    assert dry_run["manifest"]["harness"] == "openai-agents"
+    assert dry_run["manifest"]["harness"] == "pi"
     assert dry_run["manifest"]["built_in_tools"] == []
     assert dry_run["manifest"]["custom_tools"][0]["execution_mode"] == "main"
     assert dry_run["steps"][0]["endpoint"] == "/v1/source-snapshots"
@@ -267,7 +256,7 @@ def test_prepare_deploy_flow_outputs_normalized_manifest_and_steps(
         "/v1/source-snapshots/<source_snapshot_id from reserve step>/finalize"
     )
     assert dry_run["steps"][3]["endpoint"] == "/v1/agents"
-    assert dry_run["steps"][3]["payload"]["manifest"]["harness"] == "openai-agents"
+    assert dry_run["steps"][3]["payload"]["manifest"]["harness"] == "pi"
 
 
 def test_prepare_deploy_flow_includes_normalized_skills_payload(tmp_path: Path) -> None:
@@ -282,6 +271,13 @@ def test_prepare_deploy_flow_includes_normalized_skills_payload(tmp_path: Path) 
                 "  system: prompts/system.md",
                 "runtime:",
                 "  dockerfile: Dockerfile",
+                "sandbox:",
+                "  provider: e2b",
+                "  provider_api_key_secret: E2B_API_KEY",
+                "llm:",
+                "  model: anthropic/claude-sonnet-4.6",
+                "  base_url: https://openrouter.ai/api/v1",
+                "  api_key_secret: OPENROUTER_API_KEY",
                 "skills:",
                 "  - name: review",
                 "    path: skills/review",
@@ -692,4 +688,4 @@ def test_main_deploy_dry_run_prints_full_prepared_payload(
     payload = json.loads(capsys.readouterr().out)
     assert payload["manifest"]["name"] == "support-agent"
     assert payload["steps"][0]["endpoint"] == "/v1/source-snapshots"
-    assert payload["steps"][3]["payload"]["manifest"]["harness"] == "openai-agents"
+    assert payload["steps"][3]["payload"]["manifest"]["harness"] == "pi"
