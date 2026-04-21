@@ -1,9 +1,8 @@
-name: CLI CI
+name: Go CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
 
 jobs:
@@ -12,14 +11,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-go@v5
         with:
-          python-version: "3.12"
+          go-version-file: go.mod
+          cache: true
 
-      - uses: astral-sh/setup-uv@v5
+      - name: go vet
+        run: go vet ./...
 
-      - name: Install dependencies
-        run: uv sync --group dev
+      - name: go test
+        run: go test -race ./...
 
-      - name: Run tests
-        run: uv run pytest
+      - name: go build
+        run: go build ./...

@@ -1,68 +1,31 @@
-name: Publish CLI
+name: Release
 
 on:
   push:
     tags:
       - "v*"
 
+permissions:
+  contents: write
+
 jobs:
-  build:
+  goreleaser:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          fetch-depth: 0
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
 
-      - name: Validate tag matches package version
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
         env:
-          GITHUB_REF_NAME: ${{ github.ref_name }}
-        run: |
-          python - <<'PY'
-          import os
-          import pathlib
-          import tomllib
-
-          version = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
-          expected_tag = f"v{version}"
-          actual_tag = os.environ["GITHUB_REF_NAME"]
-
-          if actual_tag != expected_tag:
-              raise SystemExit(
-                  f"Git tag {actual_tag!r} does not match pyproject.toml version {version!r}. "
-                  f"Tag the commit that contains {expected_tag!r} instead."
-              )
-
-          print(f"Validated release tag {actual_tag} for package version {version}.")
-          PY
-
-      - name: Build distributions
-        run: uv build
-
-      - name: Upload distributions
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: dist/*
-
-  publish:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-    environment:
-      name: pypi
-    steps:
-      - name: Download distributions
-        uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          skip-existing: true
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

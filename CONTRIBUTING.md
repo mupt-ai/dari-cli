@@ -6,8 +6,8 @@ context for reviewers.
 ## Local Development
 
 ```bash
-uv sync --group dev
-uv run pytest
+go test ./...
+go build ./cmd/dari
 ```
 
 ## Pull Requests
