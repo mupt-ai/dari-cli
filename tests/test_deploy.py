@@ -233,7 +233,7 @@ def test_collect_source_metadata_uses_ci_environment_fallbacks(tmp_path: Path) -
     }
 
 
-def test_prepare_deploy_flow_outputs_normalized_manifest_and_steps(
+def test_prepare_deploy_flow_outputs_bundle_and_server_publish_steps(
     tmp_path: Path,
 ) -> None:
     write_valid_bundle(tmp_path)
@@ -244,59 +244,23 @@ def test_prepare_deploy_flow_outputs_normalized_manifest_and_steps(
     )
     dry_run = prepared.to_dict()
 
+    assert "manifest" not in dry_run
     assert dry_run["bundle"]["metadata"] == {
         "git_commit_sha": "deadbeef",
         "origin": "ci",
     }
-    assert dry_run["manifest"]["harness"] == "pi"
-    assert dry_run["manifest"]["built_in_tools"] == []
-    assert dry_run["manifest"]["custom_tools"][0]["execution_mode"] == "main"
     assert dry_run["steps"][0]["endpoint"] == "/v1/source-snapshots"
     assert dry_run["steps"][2]["endpoint"] == (
         "/v1/source-snapshots/<source_snapshot_id from reserve step>/finalize"
     )
-    assert dry_run["steps"][3]["endpoint"] == "/v1/agents"
-    assert dry_run["steps"][3]["payload"]["manifest"]["harness"] == "pi"
-
-
-def test_prepare_deploy_flow_includes_normalized_skills_payload(tmp_path: Path) -> None:
-    write_pi_bundle(tmp_path)
-    write_valid_skill(tmp_path)
-    (tmp_path / "dari.yml").write_text(
-        "\n".join(
-            [
-                "name: support-agent",
-                "harness: pi",
-                "instructions:",
-                "  system: prompts/system.md",
-                "runtime:",
-                "  dockerfile: Dockerfile",
-                "sandbox:",
-                "  provider: e2b",
-                "  provider_api_key_secret: E2B_API_KEY",
-                "llm:",
-                "  model: anthropic/claude-sonnet-4.6",
-                "  base_url: https://openrouter.ai/api/v1",
-                "  api_key_secret: OPENROUTER_API_KEY",
-                "skills:",
-                "  - name: review",
-                "    path: skills/review",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
+    assert dry_run["steps"][3]["endpoint"] == (
+        "/v1/source-snapshots/<source_snapshot_id from reserve step>/manifest"
     )
-
-    prepared = prepare_deploy_flow(tmp_path)
-
-    assert prepared.manifest_payload["skills"] == [
-        {
-            "name": "review",
-            "source_path": "skills/review",
-            "skill_file": "skills/review/SKILL.md",
-            "description": "Review code changes.",
-        }
-    ]
+    assert dry_run["steps"][3]["method"] == "GET"
+    assert dry_run["steps"][4]["endpoint"] == "/v1/agents"
+    assert dry_run["steps"][4]["payload"] == {
+        "source_snapshot_id": "<source_snapshot_id from reserve step>",
+    }
 
 
 def test_deploy_checkout_reserves_uploads_finalizes_and_publishes(
@@ -354,6 +318,16 @@ def test_deploy_checkout_reserves_uploads_finalizes_and_publishes(
                     }
                 ).encode("utf-8")
             )
+        if request.full_url.endswith("/v1/source-snapshots/src_123/manifest"):
+            return _FakeResponse(
+                json.dumps(
+                    {
+                        "source_snapshot_id": "src_123",
+                        "manifest": {"name": "support-agent", "harness": "pi"},
+                        "system_prompt": "...",
+                    }
+                ).encode("utf-8")
+            )
         if request.full_url == "https://api.example.test/v1/agents":
             return _FakeResponse(
                 json.dumps(
@@ -377,6 +351,7 @@ def test_deploy_checkout_reserves_uploads_finalizes_and_publishes(
         "POST",
         "PUT",
         "POST",
+        "GET",
         "POST",
     ]
     assert captured_requests[0]["url"] == "https://api.example.test/v1/source-snapshots"
@@ -385,10 +360,8 @@ def test_deploy_checkout_reserves_uploads_finalizes_and_publishes(
         "origin": "ci",
     }
     assert captured_requests[2]["url"].endswith("/v1/source-snapshots/src_123/finalize")
-    assert captured_requests[3]["payload"]["manifest"]["custom_tools"][0]["name"] == (
-        "repo_search"
-    )
-    assert captured_requests[3]["payload"]["manifest"]["built_in_tools"] == []
+    assert captured_requests[3]["url"].endswith("/v1/source-snapshots/src_123/manifest")
+    assert captured_requests[4]["payload"] == {"source_snapshot_id": "src_123"}
     assert response == {"agent_id": "agt_123", "version_id": "ver_123"}
 
 
@@ -400,10 +373,12 @@ def test_deploy_checkout_persists_agent_id_for_later_publishes(tmp_path: Path) -
             b'{"source_snapshot_id":"src_1","upload_url":"https://uploads.example.test/1","upload_headers":{},"status":"pending_upload"}',
             b"",
             b'{"source_snapshot_id":"src_1","status":"ready"}',
+            b'{"source_snapshot_id":"src_1","manifest":{"name":"support-agent"},"system_prompt":"..."}',
             b'{"id":"agt_123","agent_id":"agt_123","active_version_id":"ver_1"}',
             b'{"source_snapshot_id":"src_2","upload_url":"https://uploads.example.test/2","upload_headers":{},"status":"pending_upload"}',
             b"",
             b'{"source_snapshot_id":"src_2","status":"ready"}',
+            b'{"source_snapshot_id":"src_2","manifest":{"name":"support-agent"},"system_prompt":"..."}',
             b'{"agent_id":"agt_123","version_id":"ver_2"}',
         ]
     )
@@ -535,6 +510,16 @@ def test_deploy_checkout_cleans_up_reserved_snapshot_after_publish_failure(
                     "utf-8"
                 )
             )
+        if request.full_url.endswith("/v1/source-snapshots/src_123/manifest"):
+            return _FakeResponse(
+                json.dumps(
+                    {
+                        "source_snapshot_id": "src_123",
+                        "manifest": {"name": "support-agent"},
+                        "system_prompt": "...",
+                    }
+                ).encode("utf-8")
+            )
         if request.full_url.endswith("/v1/source-snapshots/src_123"):
             deleted.append(request.full_url)
             return _FakeResponse(b"{}")
@@ -577,6 +562,7 @@ def test_deploy_checkout_deletes_ready_snapshot_when_publish_fails(
             b'{"source_snapshot_id":"src_123","upload_url":"https://uploads.example.test/signed","upload_headers":{},"status":"pending_upload"}',
             b"",
             b'{"source_snapshot_id":"src_123","status":"ready"}',
+            b'{"source_snapshot_id":"src_123","manifest":{"name":"support-agent"},"system_prompt":"..."}',
             _http_error(
                 "https://api.example.test/v1/agents",
                 code=403,
@@ -618,6 +604,7 @@ def test_deploy_checkout_deletes_ready_snapshot_when_publish_fails(
         "https://api.example.test/v1/source-snapshots",
         "https://uploads.example.test/signed",
         "https://api.example.test/v1/source-snapshots/src_123/finalize",
+        "https://api.example.test/v1/source-snapshots/src_123/manifest",
         "https://api.example.test/v1/agents",
         "https://api.example.test/v1/source-snapshots/src_123",
     ]
@@ -632,6 +619,7 @@ def test_deploy_checkout_surfaces_snapshot_id_when_cleanup_fails(
             b'{"source_snapshot_id":"src_123","upload_url":"https://uploads.example.test/signed","upload_headers":{},"status":"pending_upload"}',
             b"",
             b'{"source_snapshot_id":"src_123","status":"ready"}',
+            b'{"source_snapshot_id":"src_123","manifest":{"name":"support-agent"},"system_prompt":"..."}',
             _http_error(
                 "https://api.example.test/v1/agents",
                 code=500,
@@ -686,6 +674,9 @@ def test_main_deploy_dry_run_prints_full_prepared_payload(
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["manifest"]["name"] == "support-agent"
+    assert "manifest" not in payload
     assert payload["steps"][0]["endpoint"] == "/v1/source-snapshots"
-    assert payload["steps"][3]["payload"]["manifest"]["harness"] == "pi"
+    assert payload["steps"][4]["endpoint"] == "/v1/agents"
+    assert payload["steps"][4]["payload"] == {
+        "source_snapshot_id": "<source_snapshot_id from reserve step>",
+    }
