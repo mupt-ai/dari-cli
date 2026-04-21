@@ -10,6 +10,7 @@ import sys
 from collections.abc import Sequence
 
 from .deploy import DeployConfigurationError, deploy_checkout, prepare_deploy_flow
+from .init import InitError, init_project
 from .management import (
     DariCliCommandError,
     create_api_key,
@@ -35,6 +36,33 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the Dari command-line parser."""
     parser = argparse.ArgumentParser(prog="dari", description="Dari CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    init_parser = subparsers.add_parser(
+        "init",
+        help="Scaffold a new Dari agent project in the target directory.",
+    )
+    init_parser.add_argument(
+        "directory",
+        nargs="?",
+        default=".",
+        help="Directory to scaffold into (defaults to the current directory).",
+    )
+    init_parser.add_argument(
+        "--name",
+        default=None,
+        help="Project name for dari.yml (defaults to the directory name).",
+    )
+    init_parser.add_argument(
+        "--skill",
+        default="review",
+        help="Name of the example skill to create under skills/ (default: review).",
+    )
+    init_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing files in the target directory.",
+    )
+    init_parser.set_defaults(handler=_handle_init)
 
     deploy_parser = subparsers.add_parser(
         "deploy",
@@ -232,6 +260,36 @@ def main(argv: Sequence[str] | None = None) -> int:
     except DariCliCommandError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+
+
+def _handle_init(args: argparse.Namespace) -> int:
+    try:
+        result = init_project(
+            args.directory,
+            name=args.name,
+            skill=args.skill,
+            force=args.force,
+        )
+    except InitError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    print(
+        json.dumps(
+            {
+                "project_root": str(result.project_root),
+                "project_name": result.project_name,
+                "skill_name": result.skill_name,
+                "written_files": [
+                    str(path.relative_to(result.project_root))
+                    for path in result.written_files
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
 
 
 def _handle_deploy(args: argparse.Namespace) -> int:
