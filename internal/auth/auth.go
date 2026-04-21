@@ -247,3 +247,26 @@ func translateAuthError(err error) error {
 func rawBearer(ctx context.Context, apiURL, token, method, path string, body, out any) error {
 	return api.New(apiURL).WithBearer(token).Do(ctx, method, path, body, out)
 }
+
+// OrgKeyClient returns an api.Client authenticated with the cached managed
+// CLI API key (the `dari_...` bearer) for the current organization. Used by
+// data-plane commands (agent, session, file) that the server authenticates
+// via the org API key rather than the user JWT.
+func OrgKeyClient(apiURL string) (*api.Client, error) {
+	apiURL = api.NormalizeURL(apiURL)
+	s, err := state.Load()
+	if err != nil {
+		return nil, err
+	}
+	if !api.URLsMatch(s.APIURL, apiURL) {
+		return nil, ErrNotLoggedIn
+	}
+	org := s.CurrentOrg()
+	if org == nil {
+		return nil, ErrNoCurrentOrg
+	}
+	if org.APIKey == "" {
+		return nil, fmt.Errorf("no cached API key for current org; run `dari org switch %s` to refresh", org.Slug)
+	}
+	return api.New(apiURL).WithBearer(org.APIKey), nil
+}

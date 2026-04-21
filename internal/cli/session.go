@@ -42,9 +42,13 @@ func newSessionCreateCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			client, err := auth.OrgKeyClient(apiURL)
+			if err != nil {
+				return err
+			}
 			var resp map[string]any
-			path := "/v1/agents/" + agentID + "/sessions"
-			if _, err := auth.DoAuthenticated(context.Background(), apiURL, http.MethodPost, path, map[string]any{}, &resp); err != nil {
+			if err := client.Do(context.Background(), http.MethodPost,
+				"/v1/agents/"+agentID+"/sessions", map[string]any{}, &resp); err != nil {
 				return err
 			}
 			return printJSON(resp)
@@ -65,9 +69,12 @@ func newSessionGetCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			client, err := auth.OrgKeyClient(apiURL)
+			if err != nil {
+				return err
+			}
 			var resp map[string]any
-			if _, err := auth.DoAuthenticated(context.Background(), apiURL, http.MethodGet,
-				"/v1/sessions/"+args[0], nil, &resp); err != nil {
+			if err := client.Do(context.Background(), http.MethodGet, "/v1/sessions/"+args[0], nil, &resp); err != nil {
 				return err
 			}
 			return printJSON(resp)
@@ -76,9 +83,7 @@ func newSessionGetCmd(gf *globalFlags) *cobra.Command {
 }
 
 func newSessionSendCmd(gf *globalFlags) *cobra.Command {
-	var (
-		useStdin bool
-	)
+	var useStdin bool
 	cmd := &cobra.Command{
 		Use:   "send <session_id> [text]",
 		Short: "Send a user message to a session.",
@@ -92,6 +97,10 @@ func newSessionSendCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			client, err := auth.OrgKeyClient(apiURL)
+			if err != nil {
+				return err
+			}
 			body := map[string]any{
 				"events": []map[string]any{{
 					"type": "user.message",
@@ -102,8 +111,8 @@ func newSessionSendCmd(gf *globalFlags) *cobra.Command {
 				}},
 			}
 			var resp map[string]any
-			path := "/v1/sessions/" + args[0] + "/events"
-			if _, err := auth.DoAuthenticated(context.Background(), apiURL, http.MethodPost, path, body, &resp); err != nil {
+			if err := client.Do(context.Background(), http.MethodPost,
+				"/v1/sessions/"+args[0]+"/events", body, &resp); err != nil {
 				return err
 			}
 			return printJSON(resp)
@@ -124,6 +133,10 @@ func newSessionEventsCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			client, err := auth.OrgKeyClient(apiURL)
+			if err != nil {
+				return err
+			}
 			path := "/v1/sessions/" + args[0] + "/events"
 			if limit > 0 {
 				q := url.Values{}
@@ -131,7 +144,7 @@ func newSessionEventsCmd(gf *globalFlags) *cobra.Command {
 				path += "?" + q.Encode()
 			}
 			var resp map[string]any
-			if _, err := auth.DoAuthenticated(context.Background(), apiURL, http.MethodGet, path, nil, &resp); err != nil {
+			if err := client.Do(context.Background(), http.MethodGet, path, nil, &resp); err != nil {
 				return err
 			}
 			return printJSON(resp)

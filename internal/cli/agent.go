@@ -34,11 +34,14 @@ func newAgentListCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			client, err := auth.OrgKeyClient(apiURL)
+			if err != nil {
+				return err
+			}
 			var resp struct {
 				Agents []any `json:"agents"`
 			}
-			if _, err := auth.DoAuthenticated(context.Background(), apiURL, http.MethodGet,
-				"/v1/agents", nil, &resp); err != nil {
+			if err := client.Do(context.Background(), http.MethodGet, "/v1/agents", nil, &resp); err != nil {
 				return err
 			}
 			return printJSON(map[string]any{"agents": resp.Agents})
@@ -63,9 +66,12 @@ func newAgentDeleteCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			client, err := auth.OrgKeyClient(apiURL)
+			if err != nil {
+				return err
+			}
 			var resp map[string]any
-			if _, err := auth.DoAuthenticated(context.Background(), apiURL, http.MethodDelete,
-				"/v1/agents/"+agentID, nil, &resp); err != nil {
+			if err := client.Do(context.Background(), http.MethodDelete, "/v1/agents/"+agentID, nil, &resp); err != nil {
 				return err
 			}
 			if resp == nil {
