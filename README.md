@@ -7,7 +7,7 @@ Full docs: https://docs.dari.dev
 ## Install
 
 ```bash
-pip install dari
+pip install dari-cli
 ```
 
 ## Commands
