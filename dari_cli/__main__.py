@@ -7,7 +7,9 @@ import getpass
 import json
 import os
 import sys
-from collections.abc import Sequence
+import time
+from collections.abc import Mapping, Sequence
+from typing import Any, TextIO
 
 from .deploy import DeployConfigurationError, deploy_checkout, prepare_deploy_flow
 from .init import InitError, init_project
@@ -93,6 +95,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="Print the prepared publish request instead of sending it.",
+    )
+    deploy_parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress the per-stage deploy progress output on stderr.",
     )
     deploy_parser.set_defaults(handler=_handle_deploy)
 
@@ -316,15 +323,147 @@ def _handle_deploy(args: argparse.Namespace) -> int:
             "DARI_API_KEY is required unless --dry-run is set or CLI login has selected an organization."
         )
 
+    progress = None if args.quiet else _ConsoleDeployProgress(sys.stderr)
     response = deploy_checkout(
         args.repo_root,
         api_url=args.api_url,
         api_key=api_key,
         agent_id=args.agent_id,
         environ=os.environ,
+        progress=progress,
     )
     print(json.dumps(response, indent=2, sort_keys=True))
     return 0
+
+
+class _ConsoleDeployProgress:
+    """Render deploy progress as numbered stages on a text stream."""
+
+    _STAGE_ORDER: tuple[str, ...] = (
+        "package",
+        "reserve",
+        "upload",
+        "finalize",
+        "validate",
+        "publish",
+    )
+    _START_LABELS: Mapping[str, str] = {
+        "package": "Packaging source bundle",
+        "reserve": "Reserving source snapshot",
+        "upload": "Uploading bundle",
+        "finalize": "Finalizing snapshot",
+        "validate": "Validating manifest",
+        "publish": "Publishing",
+    }
+    _DONE_LABELS: Mapping[str, str] = {
+        "package": "Packaged source bundle",
+        "reserve": "Reserved source snapshot",
+        "upload": "Uploaded bundle",
+        "finalize": "Finalized snapshot",
+        "validate": "Validated manifest",
+        "publish": "Published",
+    }
+
+    def __init__(self, stream: TextIO) -> None:
+        self._stream = stream
+        isatty = getattr(stream, "isatty", None)
+        self._is_tty = bool(isatty()) if callable(isatty) else False
+        self._total = len(self._STAGE_ORDER)
+        self._stage_index: dict[str, int] = {
+            name: index + 1 for index, name in enumerate(self._STAGE_ORDER)
+        }
+        self._stage_started: dict[str, float] = {}
+
+    def __call__(self, event: str, data: Mapping[str, Any]) -> None:
+        stage, _, phase = event.partition(":")
+        step = self._stage_index.get(stage)
+        if step is None:
+            return
+        if phase == "start":
+            self._stage_started[stage] = time.monotonic()
+            if self._is_tty:
+                self._write_inline(
+                    self._format_line(
+                        step=step,
+                        label=self._START_LABELS[stage],
+                        detail=self._start_detail(stage, data),
+                        suffix="...",
+                    )
+                )
+        elif phase == "complete":
+            started = self._stage_started.get(stage)
+            elapsed = None if started is None else time.monotonic() - started
+            self._finalize_line(
+                self._format_line(
+                    step=step,
+                    label=self._DONE_LABELS[stage],
+                    detail=self._complete_detail(stage, data),
+                    elapsed=elapsed,
+                )
+            )
+
+    def _format_line(
+        self,
+        *,
+        step: int,
+        label: str,
+        detail: str = "",
+        elapsed: float | None = None,
+        suffix: str = "",
+    ) -> str:
+        parts = [f"[{step}/{self._total}] {label}"]
+        if detail:
+            parts.append(detail)
+        if elapsed is not None:
+            parts.append(f"({elapsed:.1f}s)")
+        line = " ".join(parts)
+        if suffix:
+            line += suffix
+        return line
+
+    def _start_detail(self, stage: str, data: Mapping[str, Any]) -> str:
+        if stage == "upload":
+            size = data.get("size_bytes")
+            if isinstance(size, int):
+                return f"({_format_bytes(size)})"
+        return ""
+
+    def _complete_detail(self, stage: str, data: Mapping[str, Any]) -> str:
+        if stage == "package":
+            files = data.get("file_count")
+            size = data.get("size_bytes")
+            bits: list[str] = []
+            if isinstance(files, int):
+                bits.append(f"{files} file{'s' if files != 1 else ''}")
+            if isinstance(size, int):
+                bits.append(_format_bytes(size))
+            if bits:
+                return f"({', '.join(bits)})"
+        if stage == "publish":
+            agent_id = data.get("agent_id")
+            if isinstance(agent_id, str) and agent_id:
+                return f"(agent_id={agent_id})"
+        return ""
+
+    def _write_inline(self, line: str) -> None:
+        self._stream.write("\r\x1b[2K" + line)
+        self._stream.flush()
+
+    def _finalize_line(self, line: str) -> None:
+        prefix = "\r\x1b[2K" if self._is_tty else ""
+        self._stream.write(prefix + line + "\n")
+        self._stream.flush()
+
+
+def _format_bytes(size: int) -> str:
+    value = float(size)
+    for unit in ("B", "KB", "MB", "GB"):
+        if abs(value) < 1024 or unit == "GB":
+            if unit == "B":
+                return f"{int(value)} {unit}"
+            return f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} GB"
 
 
 def _handle_auth_login(args: argparse.Namespace) -> int:

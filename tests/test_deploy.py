@@ -365,6 +365,91 @@ def test_deploy_checkout_reserves_uploads_finalizes_and_publishes(
     assert response == {"agent_id": "agt_123", "version_id": "ver_123"}
 
 
+def test_deploy_checkout_emits_progress_events_in_order(tmp_path: Path) -> None:
+    write_valid_bundle(tmp_path)
+
+    class _FakeResponse:
+        def __init__(self, payload: bytes = b"") -> None:
+            self._payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return self._payload
+
+    def fake_opener(request):
+        if request.full_url == "https://api.example.test/v1/source-snapshots":
+            return _FakeResponse(
+                json.dumps(
+                    {
+                        "source_snapshot_id": "src_xyz",
+                        "upload_url": "https://uploads.example.test/bundle",
+                        "upload_headers": {},
+                    }
+                ).encode("utf-8")
+            )
+        if request.full_url.endswith("/finalize"):
+            return _FakeResponse(
+                json.dumps(
+                    {"source_snapshot_id": "src_xyz", "status": "ready"}
+                ).encode("utf-8")
+            )
+        if request.full_url.endswith("/manifest"):
+            return _FakeResponse(b"{}")
+        if request.full_url == "https://api.example.test/v1/agents":
+            return _FakeResponse(
+                json.dumps(
+                    {"agent_id": "agt_xyz", "version_id": "ver_xyz"}
+                ).encode("utf-8")
+            )
+        return _FakeResponse()
+
+    events: list[tuple[str, dict[str, object]]] = []
+
+    def progress(event: str, data) -> None:
+        events.append((event, dict(data)))
+
+    deploy_checkout(
+        tmp_path,
+        api_url="https://api.example.test",
+        api_key="test-api-key",
+        environ={},
+        opener=fake_opener,
+        progress=progress,
+    )
+
+    assert [name for name, _ in events] == [
+        "package:start",
+        "package:complete",
+        "reserve:start",
+        "reserve:complete",
+        "upload:start",
+        "upload:complete",
+        "finalize:start",
+        "finalize:complete",
+        "validate:start",
+        "validate:complete",
+        "publish:start",
+        "publish:complete",
+    ]
+
+    by_name = dict(events)
+    assert isinstance(by_name["package:complete"]["size_bytes"], int)
+    assert by_name["package:complete"]["size_bytes"] > 0
+    assert by_name["package:complete"]["file_count"] == 6
+    assert by_name["reserve:complete"]["source_snapshot_id"] == "src_xyz"
+    assert (
+        by_name["upload:start"]["size_bytes"]
+        == by_name["package:complete"]["size_bytes"]
+    )
+    assert by_name["publish:start"]["is_new_agent"] is True
+    assert by_name["publish:complete"]["agent_id"] == "agt_xyz"
+
+
 def test_deploy_checkout_persists_agent_id_for_later_publishes(tmp_path: Path) -> None:
     write_valid_bundle(tmp_path)
     captured_publish_urls: list[str] = []
