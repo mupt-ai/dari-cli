@@ -160,7 +160,7 @@ func (c *supabaseClient) postToken(ctx context.Context, grantType string, body a
 // credentials the CLI uses to talk directly to gotrue.
 func fetchAuthConfig(ctx context.Context, apiURL string) (authConfig, error) {
 	var cfg authConfig
-	err := api.New(apiURL).Do(ctx, http.MethodPost, "/v1/auth/config", nil, &cfg)
+	err := api.New(apiURL).Do(ctx, http.MethodGet, "/v1/auth/config", nil, &cfg)
 	if err != nil {
 		return authConfig{}, err
 	}
