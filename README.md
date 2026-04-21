@@ -123,17 +123,6 @@ go test ./...
 go build ./cmd/dari
 ```
 
-## Release
-
-Tag a commit with `vX.Y.Z` and push it. The release workflow runs GoReleaser,
-which publishes the binaries, updates the Homebrew tap at
-`mupt-ai/homebrew-tap`, and creates a GitHub release.
-
-Setup (one time):
-1. Create the `mupt-ai/homebrew-tap` repo (empty, public).
-2. Generate a GitHub PAT with `contents:write` on the tap repo.
-3. Add the PAT as the `HOMEBREW_TAP_GITHUB_TOKEN` secret on this repo.
-
 ## Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md).
