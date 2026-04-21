@@ -6,9 +6,17 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/mupt-ai/dari-cli/internal/api"
 )
+
+// deployRequestTimeout is the per-request timeout for deploy-path HTTP
+// calls. The publish step (POST /v1/agents[/...]/versions) can take tens
+// of seconds server-side because it validates + provisions, so we use a
+// much longer ceiling than api.DefaultTimeout (15s). Upload uses its
+// own internal ceiling.
+const deployRequestTimeout = 5 * time.Minute
 
 // Progress receives event/data tuples describing deploy stage transitions.
 // Event names are "{stage}:start" or "{stage}:complete" for stages in order:
@@ -55,6 +63,7 @@ func Execute(ctx context.Context, deployRoot string, cfg Config) (map[string]any
 	})
 
 	client := api.New(cfg.APIURL).WithBearer(cfg.APIKey)
+	client.HTTP = &http.Client{Timeout: deployRequestTimeout}
 
 	emit("reserve:start", nil)
 	var reserve reserveResponse
