@@ -7,8 +7,10 @@ Full docs: https://docs.dari.dev
 ## Install
 
 ```bash
-pip install dari-cli
+brew install mupt-ai/tap/dari
 ```
+
+Or download a release archive from [Releases](https://github.com/mupt-ai/dari-cli/releases).
 
 ## Commands
 
@@ -45,6 +47,7 @@ Packages the checkout and publishes a new agent version.
 | `--api-key` | Override the cached org key |
 | `--agent-id` | Publish to a specific agent instead of resolving by name |
 | `--dry-run` | Validate and package without uploading |
+| `--quiet` | Suppress per-stage progress on stderr |
 
 ### api-keys
 
@@ -65,11 +68,20 @@ dari credentials add <name> --value-stdin < secret.txt
 dari credentials remove <name>
 ```
 
-### manifest
+### agent
 
 ```bash
-dari manifest validate [repo_root]
-dari manifest validate --json                # prints normalized manifest
+dari agent list                              # list deployed agents
+dari agent delete <agent_id> [--yes]         # soft-delete
+```
+
+### session
+
+```bash
+dari session create --agent <agent_id>
+dari session get <session_id>
+dari session send <session_id> <text>        # or --stdin < message.txt
+dari session events <session_id> [--limit N]
 ```
 
 ## Bundle shape
@@ -107,17 +119,20 @@ Full schema: https://docs.dari.dev/manifest.
 ## Local development
 
 ```bash
-uv sync --group dev
-uv run pytest
+go test ./...
+go build ./cmd/dari
 ```
 
 ## Release
 
-1. Bump `version` in `pyproject.toml`.
-2. Refresh `uv.lock` so the editable entry matches.
-3. Commit the bump before tagging.
-4. `uv build && uv run pytest`.
-5. Push a `v0.1.x` tag matching `pyproject.toml` — the release workflow rejects mismatched tags.
+Tag a commit with `vX.Y.Z` and push it. The release workflow runs GoReleaser,
+which publishes the binaries, updates the Homebrew tap at
+`mupt-ai/homebrew-tap`, and creates a GitHub release.
+
+Setup (one time):
+1. Create the `mupt-ai/homebrew-tap` repo (empty, public).
+2. Generate a GitHub PAT with `contents:write` on the tap repo.
+3. Add the PAT as the `HOMEBREW_TAP_GITHUB_TOKEN` secret on this repo.
 
 ## Contributing
 
