@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dari-cli"
-version = "0.1.6"
+version = "0.2.0"
 description = "Dari CLI."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -19,7 +19,6 @@ classifiers = [
   "Topic :: Software Development :: Build Tools",
 ]
 dependencies = [
-  "pyyaml>=6.0,<7",
   "supabase>=2.24,<3",
 ]
 

@@ -9,7 +9,6 @@ from typing import Any, Callable, Mapping
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from .manifest import load_manifest
 from .source_bundles import (
     SourceBundleMetadataValue,
     build_source_bundle_archive,
@@ -54,18 +53,11 @@ class PreparedDeployFlow:
 
     bundle: SourceBundle
     publish_endpoint: str
-    manifest_payload: Mapping[str, Any]
-    agent_name: str | None = None
+    is_new_agent: bool
 
     def build_publish_payload(self, source_snapshot_id: str) -> dict[str, Any]:
         """Build the final publish payload using a reserved snapshot ID."""
-        payload: dict[str, Any] = {
-            "manifest": dict(self.manifest_payload),
-            "source_snapshot_id": source_snapshot_id,
-        }
-        if self.agent_name is not None:
-            payload["name"] = self.agent_name
-        return payload
+        return {"source_snapshot_id": source_snapshot_id}
 
     def to_dict(self) -> dict[str, Any]:
         """Render the deploy flow for `--dry-run` output."""
@@ -78,7 +70,6 @@ class PreparedDeployFlow:
                     None if self.bundle.metadata is None else dict(self.bundle.metadata)
                 ),
             },
-            "manifest": dict(self.manifest_payload),
             "steps": [
                 {
                     "action": "reserve_source_snapshot",
@@ -102,9 +93,16 @@ class PreparedDeployFlow:
                     ),
                 },
                 {
-                    "action": "publish_agent_version"
-                    if self.agent_name is None
-                    else "create_agent",
+                    "action": "validate_source_snapshot_manifest",
+                    "method": "GET",
+                    "endpoint": build_source_snapshot_manifest_endpoint(
+                        SOURCE_SNAPSHOT_ID_PLACEHOLDER
+                    ),
+                },
+                {
+                    "action": "create_agent"
+                    if self.is_new_agent
+                    else "publish_agent_version",
                     "method": "POST",
                     "endpoint": self.publish_endpoint,
                     "payload": self.build_publish_payload(
@@ -170,6 +168,11 @@ def build_finalize_source_snapshot_endpoint(source_snapshot_id: str) -> str:
     return f"{SOURCE_SNAPSHOTS_ENDPOINT}/{source_snapshot_id}/finalize"
 
 
+def build_source_snapshot_manifest_endpoint(source_snapshot_id: str) -> str:
+    """Return the parsed-manifest endpoint for a finalized source snapshot."""
+    return f"{SOURCE_SNAPSHOTS_ENDPOINT}/{source_snapshot_id}/manifest"
+
+
 def build_delete_source_snapshot_endpoint(source_snapshot_id: str) -> str:
     """Return the delete endpoint for a reserved source snapshot."""
     return f"{SOURCE_SNAPSHOTS_ENDPOINT}/{source_snapshot_id}"
@@ -204,7 +207,6 @@ def prepare_deploy_flow(
         agent_id=agent_id,
         api_url=api_url,
     )
-    manifest = load_manifest(repo_root)
     source_metadata = collect_source_metadata(repo_root, environ=environ)
     bundle = build_source_bundle(
         repo_root,
@@ -213,8 +215,7 @@ def prepare_deploy_flow(
     return PreparedDeployFlow(
         bundle=bundle,
         publish_endpoint=build_publish_endpoint(resolved_agent_id),
-        manifest_payload=manifest.to_dict(),
-        agent_name=None if resolved_agent_id else manifest.name,
+        is_new_agent=resolved_agent_id is None,
     )
 
 
@@ -287,6 +288,30 @@ def deploy_checkout(
         raise DariApiError(
             f"Source snapshot {source_snapshot_id} did not become ready: {detail}"
         )
+
+    try:
+        _api_json_request(
+            api_url,
+            build_source_snapshot_manifest_endpoint(source_snapshot_id),
+            api_key=api_key,
+            payload=None,
+            opener=opener,
+            method="GET",
+        )
+    except DariApiError as validation_error:
+        cleanup_error = _delete_source_snapshot_best_effort(
+            api_url,
+            source_snapshot_id,
+            api_key=api_key,
+            opener=opener,
+        )
+        if cleanup_error is not None:
+            raise DariApiError(
+                "Uploaded bundle failed dari.yml validation and cleanup also failed "
+                f"for source snapshot {source_snapshot_id}: {validation_error}; "
+                f"cleanup error: {cleanup_error}"
+            ) from validation_error
+        raise
 
     try:
         response_json = _api_json_request(

@@ -8,7 +8,6 @@ import json
 import os
 import sys
 from collections.abc import Sequence
-from pathlib import Path
 
 from .deploy import DeployConfigurationError, deploy_checkout, prepare_deploy_flow
 from .management import (
@@ -30,7 +29,6 @@ from .management import (
     switch_organization,
     upsert_credential,
 )
-from .manifest import ManifestValidationError, load_manifest
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -209,32 +207,6 @@ def build_parser() -> argparse.ArgumentParser:
     credentials_remove_parser.add_argument("name", help="Credential/env var name")
     credentials_remove_parser.set_defaults(handler=_handle_credentials_remove)
 
-    manifest_parser = subparsers.add_parser(
-        "manifest",
-        help="Inspect and validate repo-root dari.yml files",
-    )
-    manifest_subparsers = manifest_parser.add_subparsers(
-        dest="manifest_command",
-        required=True,
-    )
-
-    validate_parser = manifest_subparsers.add_parser(
-        "validate",
-        help="Validate the repo-root dari.yml file",
-    )
-    validate_parser.add_argument(
-        "repo_root",
-        nargs="?",
-        default=".",
-        help="Repository root that contains dari.yml",
-    )
-    validate_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Print the normalized manifest JSON on success",
-    )
-    validate_parser.set_defaults(handler=_run_manifest_validate)
-
     return parser
 
 
@@ -244,30 +216,6 @@ def _add_api_url_argument(parser: argparse.ArgumentParser) -> None:
         default=None,
         help=argparse.SUPPRESS,
     )
-
-
-def _run_manifest_validate(args: argparse.Namespace) -> int:
-    repo_root = Path(args.repo_root)
-    manifest_path = repo_root / "dari.yml"
-
-    if repo_root.exists() and not repo_root.is_dir():
-        print(f"Repository root must be a directory: {repo_root}", file=sys.stderr)
-        return 1
-
-    try:
-        manifest = load_manifest(repo_root)
-    except FileNotFoundError:
-        print(f"Manifest file not found: {manifest_path}", file=sys.stderr)
-        return 1
-    except ManifestValidationError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-
-    if args.json:
-        print(json.dumps(manifest.to_dict(), indent=2, sort_keys=True))
-    else:
-        print(f"Validated {manifest_path}: {manifest.name} ({manifest.harness})")
-    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
