@@ -24,6 +24,17 @@ SOURCE_SNAPSHOT_ID_PLACEHOLDER = "<source_snapshot_id from reserve step>"
 SIGNED_UPLOAD_URL_PLACEHOLDER = "<signed upload URL from reserve step>"
 UPLOAD_HEADERS_PLACEHOLDER = "<upload_headers from reserve step>"
 
+ProgressCallback = Callable[[str, Mapping[str, Any]], None]
+
+DEPLOY_PROGRESS_STAGES: tuple[str, ...] = (
+    "package",
+    "reserve",
+    "upload",
+    "finalize",
+    "validate",
+    "publish",
+)
+
 
 @dataclass(frozen=True)
 class SourceBundle:
@@ -135,6 +146,7 @@ class DariApiClient:
         *,
         agent_id: str | None = None,
         environ: Mapping[str, str] | None = None,
+        progress: ProgressCallback | None = None,
     ) -> dict[str, Any]:
         """Package the checkout and submit it through the configured client."""
         return deploy_checkout(
@@ -144,6 +156,7 @@ class DariApiClient:
             agent_id=agent_id,
             environ=environ,
             opener=self.opener,
+            progress=progress,
         )
 
 
@@ -227,16 +240,29 @@ def deploy_checkout(
     agent_id: str | None = None,
     environ: Mapping[str, str] | None = None,
     opener: Callable[..., Any] = urlopen,
+    progress: ProgressCallback | None = None,
 ) -> dict[str, Any]:
     """Package the checkout, upload it, and publish it."""
     resolved_repo_root = Path(repo_root).resolve()
+
+    _emit_progress(progress, "package:start", {})
     prepared = prepare_deploy_flow(
         resolved_repo_root,
         agent_id=agent_id,
         api_url=api_url,
         environ=environ,
     )
+    _emit_progress(
+        progress,
+        "package:complete",
+        {
+            "size_bytes": prepared.bundle.size_bytes,
+            "file_count": prepared.bundle.file_count,
+            "sha256": prepared.bundle.sha256,
+        },
+    )
 
+    _emit_progress(progress, "reserve:start", {})
     reserved_snapshot = _api_json_request(
         api_url,
         SOURCE_SNAPSHOTS_ENDPOINT,
@@ -258,14 +284,30 @@ def deploy_checkout(
         reserved_snapshot.get("upload_headers"),
         context="source snapshot reserve response",
     )
+    _emit_progress(
+        progress,
+        "reserve:complete",
+        {"source_snapshot_id": source_snapshot_id},
+    )
 
+    _emit_progress(
+        progress,
+        "upload:start",
+        {"size_bytes": prepared.bundle.size_bytes},
+    )
     _upload_bundle(
         upload_url,
         prepared.bundle.content,
         headers=upload_headers,
         opener=opener,
     )
+    _emit_progress(
+        progress,
+        "upload:complete",
+        {"size_bytes": prepared.bundle.size_bytes},
+    )
 
+    _emit_progress(progress, "finalize:start", {})
     finalized_snapshot = _api_json_request(
         api_url,
         build_finalize_source_snapshot_endpoint(source_snapshot_id),
@@ -288,7 +330,13 @@ def deploy_checkout(
         raise DariApiError(
             f"Source snapshot {source_snapshot_id} did not become ready: {detail}"
         )
+    _emit_progress(
+        progress,
+        "finalize:complete",
+        {"source_snapshot_id": source_snapshot_id},
+    )
 
+    _emit_progress(progress, "validate:start", {})
     try:
         _api_json_request(
             api_url,
@@ -312,7 +360,13 @@ def deploy_checkout(
                 f"cleanup error: {cleanup_error}"
             ) from validation_error
         raise
+    _emit_progress(progress, "validate:complete", {})
 
+    _emit_progress(
+        progress,
+        "publish:start",
+        {"is_new_agent": prepared.is_new_agent},
+    )
     try:
         response_json = _api_json_request(
             api_url,
@@ -341,7 +395,29 @@ def deploy_checkout(
         api_url=api_url,
         response_payload=response_json,
     )
+    published_agent_id = response_json.get("agent_id", response_json.get("id"))
+    _emit_progress(
+        progress,
+        "publish:complete",
+        {
+            "agent_id": (
+                published_agent_id
+                if isinstance(published_agent_id, str) and published_agent_id.strip()
+                else None
+            ),
+        },
+    )
     return response_json
+
+
+def _emit_progress(
+    progress: ProgressCallback | None,
+    event: str,
+    data: Mapping[str, Any],
+) -> None:
+    if progress is None:
+        return
+    progress(event, data)
 
 
 def _api_json_request(
