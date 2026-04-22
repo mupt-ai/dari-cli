@@ -111,6 +111,9 @@ func syncOrganizations(s *state.CliState, orgs []OrgRecord) {
 // persists. Returns the raw server list (useful for CLI output that includes
 // fields beyond what state.Organization tracks).
 func ListOrganizations(ctx context.Context, apiURL string) (*state.CliState, []OrgRecord, error) {
+	if EnvAPIKeyValue() != "" {
+		return nil, nil, ErrNeedsUserLogin
+	}
 	var resp orgsListResponse
 	s, err := DoAuthenticated(ctx, apiURL, http.MethodGet, "/v1/organizations", nil, &resp)
 	if err != nil {
@@ -126,6 +129,9 @@ func ListOrganizations(ctx context.Context, apiURL string) (*state.CliState, []O
 // CreateOrganization creates a new org, caches its managed CLI key, and makes
 // it the current org.
 func CreateOrganization(ctx context.Context, apiURL, name string) (*state.CliState, error) {
+	if EnvAPIKeyValue() != "" {
+		return nil, ErrNeedsUserLogin
+	}
 	var created OrgRecord
 	s, err := DoAuthenticated(ctx, apiURL, http.MethodPost, "/v1/organizations", map[string]string{"name": name}, &created)
 	if err != nil {
@@ -152,6 +158,9 @@ func CreateOrganization(ctx context.Context, apiURL, name string) (*state.CliSta
 // SwitchOrganization syncs the org list, matches identifier against id or
 // slug, and caches the managed key for the match.
 func SwitchOrganization(ctx context.Context, apiURL, identifier string) (*state.CliState, error) {
+	if EnvAPIKeyValue() != "" {
+		return nil, ErrNeedsUserLogin
+	}
 	s, orgs, err := ListOrganizations(ctx, apiURL)
 	if err != nil {
 		return nil, err

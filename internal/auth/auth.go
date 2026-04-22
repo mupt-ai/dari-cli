@@ -19,14 +19,34 @@ import (
 const (
 	loginTimeout          = 5 * time.Minute
 	sessionRefreshLeeway  = 60 * time.Second
+
+	// EnvAPIKey is a bearer token that bypasses `dari auth login` entirely.
+	// When set, all CLI commands authenticate with it in place of the cached
+	// Supabase JWT / managed org key.
+	EnvAPIKey = "DARI_API_KEY"
+
+	// EnvOrgID names the organization for commands that build paths like
+	// /v1/organizations/{id}/... while running headless with EnvAPIKey.
+	EnvOrgID = "DARI_ORG_ID"
 )
 
 // Errors returned by this package are intentionally simple: callers print
 // err.Error() verbatim to stderr. Use errors.Is to check auth-specific cases.
 var (
-	ErrNotLoggedIn = errors.New("no CLI login is available for this API URL. Run `dari auth login` first")
-	ErrNoCurrentOrg = errors.New("no current organization is selected. Run `dari org switch <org>`")
+	ErrNotLoggedIn = errors.New("no CLI login is available for this API URL. Run `dari auth login` first, or set DARI_API_KEY")
+	ErrNoCurrentOrg = errors.New("no current organization is selected. Run `dari org switch <org>`, or set DARI_ORG_ID")
+	ErrNeedsUserLogin = errors.New("this command manages user/org membership and requires `dari auth login`; DARI_API_KEY cannot be used here")
 )
+
+// EnvAPIKeyValue returns the DARI_API_KEY env var, trimmed. Empty means unset.
+func EnvAPIKeyValue() string {
+	return strings.TrimSpace(os.Getenv(EnvAPIKey))
+}
+
+// EnvOrgIDValue returns the DARI_ORG_ID env var, trimmed. Empty means unset.
+func EnvOrgIDValue() string {
+	return strings.TrimSpace(os.Getenv(EnvOrgID))
+}
 
 // Status is what `dari auth status` prints.
 type Status struct {
@@ -40,7 +60,13 @@ type Status struct {
 // Login runs the full browser login flow: PKCE + callback + Supabase token
 // exchange + /v1/me/bootstrap + /v1/organizations/{id}/managed-cli-key/ensure.
 // The resulting state is persisted to disk.
+//
+// Login is a no-op when DARI_API_KEY is set: headless auth does not need
+// cached state.
 func Login(ctx context.Context, apiURL string) (*state.CliState, error) {
+	if EnvAPIKeyValue() != "" {
+		return nil, errors.New("DARI_API_KEY is set; `dari auth login` is not needed (unset the env var to use a browser login)")
+	}
 	apiURL = api.NormalizeURL(apiURL)
 
 	cfg, err := fetchAuthConfig(ctx, apiURL)
@@ -113,6 +139,17 @@ func Logout(ctx context.Context, apiURL string) error {
 // CurrentStatus returns the cached auth status without making network calls.
 func CurrentStatus(apiURL string) (Status, error) {
 	apiURL = api.NormalizeURL(apiURL)
+	if EnvAPIKeyValue() != "" {
+		status := Status{
+			APIURL:      api.NormalizeURL(apiURL),
+			LoggedIn:    true,
+			SessionMode: "env_key",
+		}
+		if id := EnvOrgIDValue(); id != "" {
+			status.CurrentOrg = &state.Organization{ID: id}
+		}
+		return status, nil
+	}
 	s, err := state.Load()
 	if err != nil {
 		return Status{}, err
@@ -152,8 +189,15 @@ func CurrentStatus(apiURL string) (Status, error) {
 // on demand (proactively if expired, or reactively on a 401/403). The
 // resulting CliState (possibly mutated with a refreshed session) is saved
 // back to disk before returning.
+//
+// If DARI_API_KEY is set it takes precedence: the key is used as the bearer,
+// the JWT refresh dance is skipped entirely, and no state is written.
 func DoAuthenticated(ctx context.Context, apiURL, method, path string, body, out any) (*state.CliState, error) {
 	apiURL = api.NormalizeURL(apiURL)
+	if key := EnvAPIKeyValue(); key != "" {
+		err := api.New(apiURL).WithBearer(key).Do(ctx, method, path, body, out)
+		return nil, translateAuthError(err)
+	}
 	s, err := state.Load()
 	if err != nil {
 		return nil, err
@@ -252,8 +296,13 @@ func rawBearer(ctx context.Context, apiURL, token, method, path string, body, ou
 // CLI API key (the `dari_...` bearer) for the current organization. Used by
 // data-plane commands (agent, session, file) that the server authenticates
 // via the org API key rather than the user JWT.
+//
+// If DARI_API_KEY is set it takes precedence, skipping the state/login cache.
 func OrgKeyClient(apiURL string) (*api.Client, error) {
 	apiURL = api.NormalizeURL(apiURL)
+	if key := EnvAPIKeyValue(); key != "" {
+		return api.New(apiURL).WithBearer(key), nil
+	}
 	s, err := state.Load()
 	if err != nil {
 		return nil, err

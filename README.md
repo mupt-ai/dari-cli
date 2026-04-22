@@ -16,6 +16,33 @@ Or download a release archive from [Releases](https://github.com/mupt-ai/dari-cl
 
 Most commands require `dari auth login` first. The CLI talks to `https://api.dari.dev`.
 
+### Headless auth (CI, scripts)
+
+Set `DARI_API_KEY` to bypass browser login. When set, the CLI uses it as the
+bearer for every request and skips cached state entirely.
+
+```bash
+export DARI_API_KEY=dari_...
+```
+
+Create a key from a logged-in shell via `dari api-keys create --name ci`.
+
+What works under `DARI_API_KEY`:
+
+- `dari deploy`
+- `dari agent list` / `dari agent delete`
+- `dari session create|get|send|events`
+
+What does **not** work today (server currently enforces Supabase user JWT on
+these routes):
+
+- `dari auth login|logout` (by design — no login needed)
+- `dari org list|create|switch|members|invite`
+- `dari api-keys list|create|revoke`
+- `dari credentials list|add|remove`
+
+For those, run an interactive `dari auth login` first.
+
 ### auth
 
 ```bash

@@ -155,7 +155,13 @@ func orgCreateOrSwitchOutput(s *state.CliState) map[string]any {
 
 // requireCurrentOrgID loads state and asserts a current org is selected.
 // Does no network calls — bails early if the user needs to run `dari org switch`.
+//
+// DARI_ORG_ID takes precedence, enabling headless use together with
+// DARI_API_KEY.
 func requireCurrentOrgID() (string, error) {
+	if id := auth.EnvOrgIDValue(); id != "" {
+		return id, nil
+	}
 	s, err := state.Load()
 	if err != nil {
 		return "", err

@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mupt-ai/dari-cli/internal/api"
+	"github.com/mupt-ai/dari-cli/internal/auth"
 	"github.com/mupt-ai/dari-cli/internal/deploy"
 	"github.com/mupt-ai/dari-cli/internal/state"
 )
@@ -51,7 +52,7 @@ func newDeployCmd(gf *globalFlags) *cobra.Command {
 
 			resolvedKey := apiKey
 			if resolvedKey == "" {
-				resolvedKey = os.Getenv("DARI_API_KEY")
+				resolvedKey = auth.EnvAPIKeyValue()
 			}
 			if resolvedKey == "" {
 				// Fall back to the cached managed CLI key for the current org.
