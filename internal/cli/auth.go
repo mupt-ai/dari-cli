@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"context"
-
 	"github.com/spf13/cobra"
 
 	"github.com/mupt-ai/dari-cli/internal/auth"
@@ -34,7 +32,7 @@ func newAuthLoginCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := auth.Login(context.Background(), apiURL)
+			s, err := auth.Login(cmd.Context(), apiURL)
 			if err != nil {
 				return err
 			}
@@ -53,7 +51,7 @@ func newAuthLogoutCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := auth.Logout(context.Background(), apiURL); err != nil {
+			if err := auth.Logout(cmd.Context(), apiURL); err != nil {
 				return err
 			}
 			return printJSON(map[string]any{"logged_out": true})

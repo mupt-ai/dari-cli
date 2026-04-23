@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -67,7 +68,7 @@ func Build(deployRoot string) (*Archive, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !contains(paths, "dari.yml") {
+	if !slices.Contains(paths, "dari.yml") {
 		return nil, errors.New("deploy root must contain a top-level dari.yml file")
 	}
 
@@ -156,7 +157,7 @@ func gitSelectedPaths(root string) ([]string, bool, error) {
 		}
 		p := string(part)
 		if prefix != "" {
-			trimmed, ok := trimPrefix(p, prefix+"/")
+			trimmed, ok := strings.CutPrefix(p, prefix+"/")
 			if !ok {
 				continue
 			}
@@ -293,18 +294,3 @@ func runGitBytes(cwd string, args []string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
-func contains(slice []string, value string) bool {
-	for _, s := range slice {
-		if s == value {
-			return true
-		}
-	}
-	return false
-}
-
-func trimPrefix(s, prefix string) (string, bool) {
-	if strings.HasPrefix(s, prefix) {
-		return s[len(prefix):], true
-	}
-	return "", false
-}

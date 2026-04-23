@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/mupt-ai/dari-cli/internal/api"
 	"github.com/mupt-ai/dari-cli/internal/state"
 )
 
@@ -37,7 +38,8 @@ func bootstrapAndSelectOrg(ctx context.Context, s *state.CliState, apiURL, prefe
 		return ErrNotLoggedIn
 	}
 	var resp bootstrapResponse
-	if err := rawBearer(ctx, apiURL, s.SupabaseSession.AccessToken, http.MethodPost, "/v1/me/bootstrap", map[string]any{}, &resp); err != nil {
+	client := api.New(apiURL).WithBearer(s.SupabaseSession.AccessToken)
+	if err := client.Do(ctx, http.MethodPost, "/v1/me/bootstrap", map[string]any{}, &resp); err != nil {
 		return fmt.Errorf("bootstrap user: %w", err)
 	}
 	syncOrganizations(s, resp.Organizations)
@@ -67,7 +69,8 @@ func ensureCurrentOrgKey(ctx context.Context, s *state.CliState, apiURL, orgID s
 	}
 	var issued managedKeyResponse
 	path := "/v1/organizations/" + orgID + "/managed-cli-key/ensure"
-	if err := rawBearer(ctx, apiURL, s.SupabaseSession.AccessToken, http.MethodPost, path, map[string]string{"device_name": hostname}, &issued); err != nil {
+	client := api.New(apiURL).WithBearer(s.SupabaseSession.AccessToken)
+	if err := client.Do(ctx, http.MethodPost, path, map[string]string{"device_name": hostname}, &issued); err != nil {
 		return fmt.Errorf("ensure managed CLI key: %w", err)
 	}
 	org, ok := s.Organizations[orgID]

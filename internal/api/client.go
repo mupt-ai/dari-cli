@@ -174,6 +174,20 @@ func AsHTTPError(err error) *HTTPError {
 	return nil
 }
 
+// HumanError unwraps an *HTTPError into a plain error carrying only the
+// server-supplied detail (trimmed). Non-HTTPError errors are returned
+// unchanged, and nil stays nil. Callers that want to special-case 401/403
+// should branch on AsHTTPError(err).Status before calling this.
+func HumanError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if he := AsHTTPError(err); he != nil {
+		return errors.New(strings.TrimSpace(he.Detail))
+	}
+	return err
+}
+
 func extractErrorDetail(raw []byte, fallback string) string {
 	if len(raw) == 0 {
 		return fallback

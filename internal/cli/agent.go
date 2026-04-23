@@ -2,15 +2,12 @@ package cli
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
-
-	"github.com/mupt-ai/dari-cli/internal/auth"
 )
 
 func init() {
@@ -30,18 +27,10 @@ func newAgentListCmd(gf *globalFlags) *cobra.Command {
 		Short: "List agents owned by the current organization.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			apiURL, err := gf.resolveAPIURL()
-			if err != nil {
-				return err
-			}
-			client, err := auth.OrgKeyClient(apiURL)
-			if err != nil {
-				return err
-			}
 			var resp struct {
 				Agents []any `json:"agents"`
 			}
-			if err := client.Do(context.Background(), http.MethodGet, "/v1/agents", nil, &resp); err != nil {
+			if err := orgKeyRequest(cmd, gf, http.MethodGet, "/v1/agents", nil, &resp); err != nil {
 				return err
 			}
 			return printJSON(map[string]any{"agents": resp.Agents})
@@ -57,21 +46,11 @@ func newAgentDeleteCmd(gf *globalFlags) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			agentID := args[0]
-			if !yes {
-				if !confirm(fmt.Sprintf("Delete agent %s? This is soft-delete; the agent becomes unpublished. [y/N] ", agentID)) {
-					return fmt.Errorf("aborted")
-				}
-			}
-			apiURL, err := gf.resolveAPIURL()
-			if err != nil {
-				return err
-			}
-			client, err := auth.OrgKeyClient(apiURL)
-			if err != nil {
-				return err
+			if !yes && !confirm(fmt.Sprintf("Delete agent %s? This is soft-delete; the agent becomes unpublished. [y/N] ", agentID)) {
+				return fmt.Errorf("aborted")
 			}
 			var resp map[string]any
-			if err := client.Do(context.Background(), http.MethodDelete, "/v1/agents/"+agentID, nil, &resp); err != nil {
+			if err := orgKeyRequest(cmd, gf, http.MethodDelete, "/v1/agents/"+agentID, nil, &resp); err != nil {
 				return err
 			}
 			if resp == nil {

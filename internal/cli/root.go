@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mupt-ai/dari-cli/internal/api"
+	"github.com/mupt-ai/dari-cli/internal/auth"
 	"github.com/mupt-ai/dari-cli/internal/state"
 )
 
@@ -88,4 +89,34 @@ func printJSON(v any) error {
 		return fmt.Errorf("encode json: %w", err)
 	}
 	return nil
+}
+
+// orgJWTRequest issues a user-JWT-authenticated request against
+// /v1/organizations/{currentOrgID}{subpath}. Used by org-admin commands
+// (api-keys, credentials, members, invitations) that Supabase gates.
+func orgJWTRequest(cmd *cobra.Command, gf *globalFlags, method, subpath string, body, out any) error {
+	apiURL, err := gf.resolveAPIURL()
+	if err != nil {
+		return err
+	}
+	orgID, err := requireCurrentOrgID()
+	if err != nil {
+		return err
+	}
+	_, err = auth.DoAuthenticated(cmd.Context(), apiURL, method, "/v1/organizations/"+orgID+subpath, body, out)
+	return err
+}
+
+// orgKeyRequest issues a managed-CLI-key-authenticated request against the
+// data plane. Used by agent and session commands.
+func orgKeyRequest(cmd *cobra.Command, gf *globalFlags, method, path string, body, out any) error {
+	apiURL, err := gf.resolveAPIURL()
+	if err != nil {
+		return err
+	}
+	client, err := auth.OrgKeyClient(apiURL)
+	if err != nil {
+		return err
+	}
+	return client.Do(cmd.Context(), method, path, body, out)
 }

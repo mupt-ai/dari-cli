@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,8 +10,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-
-	"github.com/mupt-ai/dari-cli/internal/auth"
 )
 
 func init() {
@@ -38,16 +35,8 @@ func newSessionCreateCmd(gf *globalFlags) *cobra.Command {
 			if agentID == "" {
 				return errors.New("--agent is required")
 			}
-			apiURL, err := gf.resolveAPIURL()
-			if err != nil {
-				return err
-			}
-			client, err := auth.OrgKeyClient(apiURL)
-			if err != nil {
-				return err
-			}
 			var resp map[string]any
-			if err := client.Do(context.Background(), http.MethodPost,
+			if err := orgKeyRequest(cmd, gf, http.MethodPost,
 				"/v1/agents/"+agentID+"/sessions", map[string]any{}, &resp); err != nil {
 				return err
 			}
@@ -65,16 +54,9 @@ func newSessionGetCmd(gf *globalFlags) *cobra.Command {
 		Short: "Fetch the current state of a session.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			apiURL, err := gf.resolveAPIURL()
-			if err != nil {
-				return err
-			}
-			client, err := auth.OrgKeyClient(apiURL)
-			if err != nil {
-				return err
-			}
 			var resp map[string]any
-			if err := client.Do(context.Background(), http.MethodGet, "/v1/sessions/"+args[0], nil, &resp); err != nil {
+			if err := orgKeyRequest(cmd, gf, http.MethodGet,
+				"/v1/sessions/"+args[0], nil, &resp); err != nil {
 				return err
 			}
 			return printJSON(resp)
@@ -93,14 +75,6 @@ func newSessionSendCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			apiURL, err := gf.resolveAPIURL()
-			if err != nil {
-				return err
-			}
-			client, err := auth.OrgKeyClient(apiURL)
-			if err != nil {
-				return err
-			}
 			body := map[string]any{
 				"events": []map[string]any{{
 					"type": "user.message",
@@ -111,7 +85,7 @@ func newSessionSendCmd(gf *globalFlags) *cobra.Command {
 				}},
 			}
 			var resp map[string]any
-			if err := client.Do(context.Background(), http.MethodPost,
+			if err := orgKeyRequest(cmd, gf, http.MethodPost,
 				"/v1/sessions/"+args[0]+"/events", body, &resp); err != nil {
 				return err
 			}
@@ -129,14 +103,6 @@ func newSessionEventsCmd(gf *globalFlags) *cobra.Command {
 		Short: "List persisted events for a session.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			apiURL, err := gf.resolveAPIURL()
-			if err != nil {
-				return err
-			}
-			client, err := auth.OrgKeyClient(apiURL)
-			if err != nil {
-				return err
-			}
 			path := "/v1/sessions/" + args[0] + "/events"
 			if limit > 0 {
 				q := url.Values{}
@@ -144,7 +110,7 @@ func newSessionEventsCmd(gf *globalFlags) *cobra.Command {
 				path += "?" + q.Encode()
 			}
 			var resp map[string]any
-			if err := client.Do(context.Background(), http.MethodGet, path, nil, &resp); err != nil {
+			if err := orgKeyRequest(cmd, gf, http.MethodGet, path, nil, &resp); err != nil {
 				return err
 			}
 			return printJSON(resp)

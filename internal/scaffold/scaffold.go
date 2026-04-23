@@ -1,14 +1,16 @@
-// Package scaffold generates a new Dari agent project. The templates are
-// inlined rather than embedded from disk because they're small and it avoids
-// a separate embed.FS indirection for two interpolations.
+// Package scaffold generates a new Dari agent project from the embedded
+// templates in templates/.
 package scaffold
 
 import (
+	"bytes"
+	"embed"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"text/template"
 )
 
 const (
@@ -17,6 +19,9 @@ const (
 )
 
 var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+
+//go:embed templates
+var templatesFS embed.FS
 
 // Options configures a single scaffold run.
 type Options struct {
@@ -34,56 +39,67 @@ type Result struct {
 	WrittenFiles []string // relative to ProjectRoot, POSIX-separator, sorted
 }
 
+// templateData is what every template in templates/ renders against.
+type templateData struct {
+	ProjectName string
+	SkillName   string
+	SkillTitle  string
+}
+
+// fileSpec maps an embedded source template to its output path. Both the
+// source and the output path are rendered through text/template so the skill
+// directory name can depend on SkillName.
+type fileSpec struct {
+	source     string // path inside templatesFS
+	outputPath string // POSIX path relative to ProjectRoot; may contain template actions
+}
+
+var fileSpecs = []fileSpec{
+	{"templates/dari.yml.tmpl", "dari.yml"},
+	{"templates/Dockerfile", "Dockerfile"},
+	{"templates/system.md.tmpl", "prompts/system.md"},
+	{"templates/tool.yml", "tools/repo_search/tool.yml"},
+	{"templates/input.schema.json", "tools/repo_search/input.schema.json"},
+	{"templates/handler.ts", "tools/repo_search/handler.ts"},
+	{"templates/SKILL.md.tmpl", "skills/{{.SkillName}}/SKILL.md"},
+	{"templates/README.md.tmpl", "README.md"},
+	{"templates/gitignore", ".gitignore"},
+}
+
 // Run scaffolds the project and returns what was written.
 func Run(opts Options) (*Result, error) {
-	targetDir := opts.TargetDir
-	if targetDir == "" {
-		targetDir = "."
-	}
-	projectRoot, err := filepath.Abs(targetDir)
+	projectRoot, err := resolveProjectRoot(opts.TargetDir)
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
-		return nil, err
-	}
-
 	projectName, err := resolveProjectName(opts.Name, projectRoot)
 	if err != nil {
 		return nil, err
 	}
-	skillName := opts.Skill
-	if skillName == "" {
-		skillName = defaultSkillName
-	}
-	if !namePattern.MatchString(skillName) {
-		return nil, fmt.Errorf("skill name must match [a-z0-9][a-z0-9-]* (got %q)", opts.Skill)
+	skillName, err := resolveSkillName(opts.Skill)
+	if err != nil {
+		return nil, err
 	}
 
-	files := renderFiles(projectName, skillName)
+	data := templateData{
+		ProjectName: projectName,
+		SkillName:   skillName,
+		SkillTitle:  titleCase(strings.ReplaceAll(skillName, "-", " ")),
+	}
+	files, err := renderFiles(data)
+	if err != nil {
+		return nil, err
+	}
 
 	if !opts.Force {
-		var conflicts []string
-		for _, f := range files {
-			if _, err := os.Stat(filepath.Join(projectRoot, f.path)); err == nil {
-				conflicts = append(conflicts, f.path)
-			}
-		}
-		if len(conflicts) > 0 {
-			return nil, fmt.Errorf("refusing to overwrite existing files (pass --force to overwrite):\n  %s", strings.Join(conflicts, "\n  "))
+		if err := checkConflicts(projectRoot, files); err != nil {
+			return nil, err
 		}
 	}
 
-	var written []string
-	for _, f := range files {
-		dest := filepath.Join(projectRoot, f.path)
-		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(dest, []byte(f.content), 0o644); err != nil {
-			return nil, err
-		}
-		written = append(written, f.path)
+	written, err := writeAll(projectRoot, files)
+	if err != nil {
+		return nil, err
 	}
 	return &Result{
 		ProjectRoot:  projectRoot,
@@ -91,6 +107,20 @@ func Run(opts Options) (*Result, error) {
 		SkillName:    skillName,
 		WrittenFiles: written,
 	}, nil
+}
+
+func resolveProjectRoot(targetDir string) (string, error) {
+	if targetDir == "" {
+		targetDir = "."
+	}
+	abs, err := filepath.Abs(targetDir)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(abs, 0o755); err != nil {
+		return "", err
+	}
+	return abs, nil
 }
 
 func resolveProjectName(explicit, projectRoot string) (string, error) {
@@ -111,139 +141,96 @@ func resolveProjectName(explicit, projectRoot string) (string, error) {
 	return candidate, nil
 }
 
+func resolveSkillName(explicit string) (string, error) {
+	if explicit == "" {
+		return defaultSkillName, nil
+	}
+	if !namePattern.MatchString(explicit) {
+		return "", fmt.Errorf("skill name must match [a-z0-9][a-z0-9-]* (got %q)", explicit)
+	}
+	return explicit, nil
+}
+
+type renderedFile struct {
+	path    string
+	content []byte
+}
+
+func renderFiles(data templateData) ([]renderedFile, error) {
+	out := make([]renderedFile, 0, len(fileSpecs))
+	for _, spec := range fileSpecs {
+		path, err := renderString(spec.outputPath, data)
+		if err != nil {
+			return nil, fmt.Errorf("render output path for %s: %w", spec.source, err)
+		}
+		raw, err := templatesFS.ReadFile(spec.source)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", spec.source, err)
+		}
+		content, err := renderTemplate(spec.source, string(raw), data)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, renderedFile{path: filepath.ToSlash(path), content: content})
+	}
+	return out, nil
+}
+
+func renderString(s string, data templateData) (string, error) {
+	out, err := renderTemplate("<path>", s, data)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+func renderTemplate(name, body string, data templateData) ([]byte, error) {
+	t, err := template.New(name).Option("missingkey=error").Parse(body)
+	if err != nil {
+		return nil, fmt.Errorf("parse template %s: %w", name, err)
+	}
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, data); err != nil {
+		return nil, fmt.Errorf("render template %s: %w", name, err)
+	}
+	return buf.Bytes(), nil
+}
+
+func checkConflicts(projectRoot string, files []renderedFile) error {
+	var conflicts []string
+	for _, f := range files {
+		if _, err := os.Stat(filepath.Join(projectRoot, f.path)); err == nil {
+			conflicts = append(conflicts, f.path)
+		}
+	}
+	if len(conflicts) > 0 {
+		return fmt.Errorf("refusing to overwrite existing files (pass --force to overwrite):\n  %s", strings.Join(conflicts, "\n  "))
+	}
+	return nil
+}
+
+func writeAll(projectRoot string, files []renderedFile) ([]string, error) {
+	written := make([]string, 0, len(files))
+	for _, f := range files {
+		dest := filepath.Join(projectRoot, f.path)
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(dest, f.content, 0o644); err != nil {
+			return nil, err
+		}
+		written = append(written, f.path)
+	}
+	return written, nil
+}
+
 func slugify(v string) string {
 	lowered := strings.ToLower(strings.TrimSpace(v))
 	re := regexp.MustCompile(`[^a-z0-9]+`)
 	return strings.Trim(re.ReplaceAllString(lowered, "-"), "-")
 }
 
-type renderedFile struct {
-	path    string
-	content string
-}
-
-func renderFiles(projectName, skillName string) []renderedFile {
-	return []renderedFile{
-		{"dari.yml", renderDariYml(projectName, skillName)},
-		{"Dockerfile", renderDockerfile()},
-		{"prompts/system.md", renderSystemPrompt(skillName)},
-		{"tools/repo_search/tool.yml", renderToolYml()},
-		{"tools/repo_search/input.schema.json", renderToolInputSchema()},
-		{"tools/repo_search/handler.ts", renderToolHandler()},
-		{filepath.ToSlash(filepath.Join("skills", skillName, "SKILL.md")), renderSkillMd(skillName)},
-		{"README.md", renderReadme(projectName, skillName)},
-		{".gitignore", renderGitignore()},
-	}
-}
-
-func renderDariYml(projectName, skillName string) string {
-	return fmt.Sprintf(`name: %s
-harness: pi
-
-instructions:
-  system: prompts/system.md
-
-runtime:
-  dockerfile: Dockerfile
-
-sandbox:
-  provider: e2b
-  provider_api_key_secret: E2B_API_KEY
-
-llm:
-  model: anthropic/claude-sonnet-4.6
-  base_url: https://openrouter.ai/api/v1
-  api_key_secret: OPENROUTER_API_KEY
-
-tools:
-  - name: repo_search
-    path: tools/repo_search
-    kind: main
-
-skills:
-  - name: %s
-    path: skills/%s
-
-env:
-  APP_ENV: example
-`, projectName, skillName, skillName)
-}
-
-func renderDockerfile() string {
-	return `FROM node:20-bookworm
-
-WORKDIR /bundle
-COPY . /bundle
-`
-}
-
-func renderSystemPrompt(skillName string) string {
-	return fmt.Sprintf(`You are a managed agent bundle.
-Use `+"`repo_search`"+` before answering questions about checked-in files.
-Load the `+"`%s`"+` skill when the user asks you to apply it.
-`, skillName)
-}
-
-func renderToolYml() string {
-	return `name: repo_search
-description: Search the checked-out repository for matching content.
-input_schema: input.schema.json
-runtime: typescript
-handler: handler.ts:main
-retries: 2
-timeout_seconds: 20
-`
-}
-
-func renderToolInputSchema() string {
-	return `{
-  "type": "object",
-  "properties": {
-    "query": {
-      "type": "string"
-    }
-  },
-  "required": ["query"],
-  "additionalProperties": false
-}
-`
-}
-
-func renderToolHandler() string {
-	return `export async function main(input: { query: string }) {
-  return {
-    matches: [` + "`matched: ${input.query}`" + `],
-  };
-}
-`
-}
-
-func renderSkillMd(skillName string) string {
-	title := titleCase(strings.ReplaceAll(skillName, "-", " "))
-	return fmt.Sprintf(`---
-name: %s
-description: %s playbook for this agent.
----
-
-# %s
-
-Steps to follow when the agent is asked to apply this skill:
-
-1. Gather the relevant files with `+"`repo_search`"+`.
-2. Summarize what you found before taking action.
-3. Reply with concrete, specific recommendations.
-`, skillName, title, title)
-}
-
-func renderReadme(projectName, skillName string) string {
-	return fmt.Sprintf("# %s\n\nScaffolded with `dari init`. Validate and deploy from this directory:\n\n```bash\ndari deploy --dry-run\ndari deploy\n```\n\nBefore a real deploy, upload any referenced credentials:\n\n```bash\ndari credentials add OPENROUTER_API_KEY\ndari credentials add E2B_API_KEY\n```\n\n## Layout\n\n- `dari.yml` — manifest\n- `prompts/system.md` — system prompt\n- `tools/repo_search/` — example tool\n- `skills/%s/SKILL.md` — example skill\n", projectName, skillName)
-}
-
-func renderGitignore() string {
-	return ".dari/\n.env\n"
-}
-
-// titleCase mirrors Python's str.title() — uppercases the first character of
+// titleCase mirrors Python's str.title(): uppercases the first character of
 // each whitespace-delimited word, lowercases the rest.
 func titleCase(s string) string {
 	parts := strings.Fields(s)

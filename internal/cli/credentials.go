@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bufio"
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,8 +12,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
-
-	"github.com/mupt-ai/dari-cli/internal/auth"
 )
 
 func init() {
@@ -35,19 +32,10 @@ func newCredentialsListCmd(gf *globalFlags) *cobra.Command {
 		Short: "List stored credential names for the current org",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			apiURL, err := gf.resolveAPIURL()
-			if err != nil {
-				return err
-			}
-			orgID, err := requireCurrentOrgID()
-			if err != nil {
-				return err
-			}
 			var resp struct {
 				Credentials []any `json:"credentials"`
 			}
-			if _, err := auth.DoAuthenticated(context.Background(), apiURL, http.MethodGet,
-				"/v1/organizations/"+orgID+"/credentials", nil, &resp); err != nil {
+			if err := orgJWTRequest(cmd, gf, http.MethodGet, "/credentials", nil, &resp); err != nil {
 				return err
 			}
 			return printJSON(map[string]any{"credentials": resp.Credentials})
@@ -72,17 +60,9 @@ func newCredentialsAddCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			apiURL, err := gf.resolveAPIURL()
-			if err != nil {
-				return err
-			}
-			orgID, err := requireCurrentOrgID()
-			if err != nil {
-				return err
-			}
 			var resp map[string]any
-			path := "/v1/organizations/" + orgID + "/credentials/" + url.PathEscape(name)
-			if _, err := auth.DoAuthenticated(context.Background(), apiURL, http.MethodPut, path,
+			if err := orgJWTRequest(cmd, gf, http.MethodPut,
+				"/credentials/"+url.PathEscape(name),
 				map[string]string{"value": value}, &resp); err != nil {
 				return err
 			}
@@ -99,17 +79,9 @@ func newCredentialsRemoveCmd(gf *globalFlags) *cobra.Command {
 		Short: "Delete a runtime credential from the current org",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			apiURL, err := gf.resolveAPIURL()
-			if err != nil {
-				return err
-			}
-			orgID, err := requireCurrentOrgID()
-			if err != nil {
-				return err
-			}
 			var resp map[string]any
-			path := "/v1/organizations/" + orgID + "/credentials/" + url.PathEscape(args[0])
-			if _, err := auth.DoAuthenticated(context.Background(), apiURL, http.MethodDelete, path, nil, &resp); err != nil {
+			if err := orgJWTRequest(cmd, gf, http.MethodDelete,
+				"/credentials/"+url.PathEscape(args[0]), nil, &resp); err != nil {
 				return err
 			}
 			return printJSON(resp)

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 
@@ -35,7 +34,7 @@ func newOrgListCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, orgs, err := auth.ListOrganizations(context.Background(), apiURL)
+			s, orgs, err := auth.ListOrganizations(cmd.Context(), apiURL)
 			if err != nil {
 				return err
 			}
@@ -57,7 +56,7 @@ func newOrgCreateCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := auth.CreateOrganization(context.Background(), apiURL, args[0])
+			s, err := auth.CreateOrganization(cmd.Context(), apiURL, args[0])
 			if err != nil {
 				return err
 			}
@@ -76,7 +75,7 @@ func newOrgSwitchCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := auth.SwitchOrganization(context.Background(), apiURL, args[0])
+			s, err := auth.SwitchOrganization(cmd.Context(), apiURL, args[0])
 			if err != nil {
 				return err
 			}
@@ -91,19 +90,10 @@ func newOrgMembersCmd(gf *globalFlags) *cobra.Command {
 		Short: "List members in the current org",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			apiURL, err := gf.resolveAPIURL()
-			if err != nil {
-				return err
-			}
-			orgID, err := requireCurrentOrgID()
-			if err != nil {
-				return err
-			}
 			var resp struct {
 				Members []any `json:"members"`
 			}
-			if _, err := auth.DoAuthenticated(context.Background(), apiURL, http.MethodGet,
-				"/v1/organizations/"+orgID+"/members", nil, &resp); err != nil {
+			if err := orgJWTRequest(cmd, gf, http.MethodGet, "/members", nil, &resp); err != nil {
 				return err
 			}
 			return printJSON(map[string]any{"members": resp.Members})
@@ -121,17 +111,8 @@ func newOrgInviteCmd(gf *globalFlags) *cobra.Command {
 			if role != "owner" && role != "admin" && role != "member" {
 				return fmt.Errorf("invalid role %q: expected owner, admin, or member", role)
 			}
-			apiURL, err := gf.resolveAPIURL()
-			if err != nil {
-				return err
-			}
-			orgID, err := requireCurrentOrgID()
-			if err != nil {
-				return err
-			}
 			var resp map[string]any
-			if _, err := auth.DoAuthenticated(context.Background(), apiURL, http.MethodPost,
-				"/v1/organizations/"+orgID+"/invitations",
+			if err := orgJWTRequest(cmd, gf, http.MethodPost, "/invitations",
 				map[string]string{"email": args[0], "role": role}, &resp); err != nil {
 				return err
 			}
@@ -171,4 +152,3 @@ func requireCurrentOrgID() (string, error) {
 	}
 	return s.CurrentOrgID, nil
 }
-

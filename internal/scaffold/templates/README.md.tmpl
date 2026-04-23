@@ -1,0 +1,22 @@
+# {{.ProjectName}}
+
+Scaffolded with `dari init`. Validate and deploy from this directory:
+
+```bash
+dari deploy --dry-run
+dari deploy
+```
+
+Before a real deploy, upload any referenced credentials:
+
+```bash
+dari credentials add OPENROUTER_API_KEY
+dari credentials add E2B_API_KEY
+```
+
+## Layout
+
+- `dari.yml` — manifest
+- `prompts/system.md` — system prompt
+- `tools/repo_search/` — example tool
+- `skills/{{.SkillName}}/SKILL.md` — example skill

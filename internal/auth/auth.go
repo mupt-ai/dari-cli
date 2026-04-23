@@ -274,22 +274,10 @@ func sessionToStored(sess *supabaseSession) *state.SupabaseSession {
 }
 
 func translateAuthError(err error) error {
-	if err == nil {
-		return nil
+	if he := api.AsHTTPError(err); he != nil && (he.Status == 401 || he.Status == 403) {
+		return fmt.Errorf("%w: %s", ErrNotLoggedIn, strings.TrimSpace(he.Detail))
 	}
-	if he := api.AsHTTPError(err); he != nil {
-		if he.Status == 401 || he.Status == 403 {
-			return fmt.Errorf("%w: %s", ErrNotLoggedIn, he.Detail)
-		}
-		return errors.New(strings.TrimSpace(he.Detail))
-	}
-	return err
-}
-
-// rawBearer performs a single request with the given JWT. Used during
-// the login flow where state isn't yet persisted.
-func rawBearer(ctx context.Context, apiURL, token, method, path string, body, out any) error {
-	return api.New(apiURL).WithBearer(token).Do(ctx, method, path, body, out)
+	return api.HumanError(err)
 }
 
 // OrgKeyClient returns an api.Client authenticated with the cached managed

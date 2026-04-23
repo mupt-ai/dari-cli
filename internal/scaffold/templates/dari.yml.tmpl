@@ -1,0 +1,29 @@
+name: {{.ProjectName}}
+harness: pi
+
+instructions:
+  system: prompts/system.md
+
+runtime:
+  dockerfile: Dockerfile
+
+sandbox:
+  provider: e2b
+  provider_api_key_secret: E2B_API_KEY
+
+llm:
+  model: anthropic/claude-sonnet-4.6
+  base_url: https://openrouter.ai/api/v1
+  api_key_secret: OPENROUTER_API_KEY
+
+tools:
+  - name: repo_search
+    path: tools/repo_search
+    kind: main
+
+skills:
+  - name: {{.SkillName}}
+    path: skills/{{.SkillName}}
+
+env:
+  APP_ENV: example

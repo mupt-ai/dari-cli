@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -52,7 +53,7 @@ func startCallbackServer() (*callbackServer, error) {
 		q := r.URL.Query()
 		res := callbackResult{
 			Code:  q.Get("code"),
-			Error: firstNonEmpty(q.Get("error_description"), q.Get("error")),
+			Error: cmp.Or(q.Get("error_description"), q.Get("error")),
 		}
 		body := "Dari CLI login complete. You can close this tab.\n"
 		status := http.StatusOK
@@ -99,11 +100,3 @@ func (cb *callbackServer) Close() {
 	_ = cb.srv.Shutdown(shutdownCtx)
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}

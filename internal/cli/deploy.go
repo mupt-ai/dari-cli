@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -78,7 +77,7 @@ func newDeployCmd(gf *globalFlags) *cobra.Command {
 			if !quiet {
 				cfg.Progress = deploy.NewConsoleProgress(os.Stderr).Handle
 			}
-			response, err := deploy.Execute(context.Background(), repoRoot, cfg)
+			response, err := deploy.Execute(cmd.Context(), repoRoot, cfg)
 			if err != nil {
 				return translateDeployError(err)
 			}
@@ -95,12 +94,9 @@ func newDeployCmd(gf *globalFlags) *cobra.Command {
 // translateDeployError strips HTTPError wrapping so user-facing errors are
 // cleaner. Login/permission failures get a hint about `dari auth login`.
 func translateDeployError(err error) error {
-	if he := api.AsHTTPError(err); he != nil {
-		if he.Status == 401 || he.Status == 403 {
-			return fmt.Errorf("%s (run `dari auth login` or pass --api-key)", strings.TrimSpace(he.Detail))
-		}
-		return errors.New(strings.TrimSpace(he.Detail))
+	if he := api.AsHTTPError(err); he != nil && (he.Status == 401 || he.Status == 403) {
+		return fmt.Errorf("%s (run `dari auth login` or pass --api-key)", strings.TrimSpace(he.Detail))
 	}
-	return err
+	return api.HumanError(err)
 }
 
