@@ -4,12 +4,12 @@ harness: pi
 instructions:
   system: prompts/system.md
 
-runtime:
-  dockerfile: Dockerfile
-
 sandbox:
   provider: e2b
   provider_api_key_secret: E2B_API_KEY
+  dockerfile: Dockerfile
+  env:
+    APP_ENV: example
 
 llm:
   model: anthropic/claude-sonnet-4.6
@@ -24,6 +24,3 @@ tools:
 skills:
   - name: {{.SkillName}}
     path: skills/{{.SkillName}}
-
-env:
-  APP_ENV: example
