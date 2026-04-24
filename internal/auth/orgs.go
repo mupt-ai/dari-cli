@@ -187,6 +187,44 @@ func SwitchOrganization(ctx context.Context, apiURL, identifier string) (*state.
 	return s, nil
 }
 
+// DeleteOrganization soft-deletes the organization identified by id or slug
+// and updates local state so the org no longer shows up as current.
+func DeleteOrganization(ctx context.Context, apiURL, identifier string) (*state.CliState, OrgRecord, error) {
+	if EnvAPIKeyValue() != "" {
+		return nil, OrgRecord{}, ErrNeedsUserLogin
+	}
+	s, orgs, err := ListOrganizations(ctx, apiURL)
+	if err != nil {
+		return nil, OrgRecord{}, err
+	}
+	var matched *OrgRecord
+	for i := range orgs {
+		if orgs[i].ID == identifier || orgs[i].Slug == identifier {
+			matched = &orgs[i]
+			break
+		}
+	}
+	if matched == nil {
+		return nil, OrgRecord{}, fmt.Errorf("unknown organization %q", identifier)
+	}
+	var deleted OrgRecord
+	if _, err := DoAuthenticated(ctx, apiURL, http.MethodDelete, "/v1/organizations/"+matched.ID, nil, &deleted); err != nil {
+		return nil, OrgRecord{}, err
+	}
+	delete(s.Organizations, matched.ID)
+	if s.CurrentOrgID == matched.ID {
+		s.CurrentOrgID = ""
+		for id := range s.Organizations {
+			s.CurrentOrgID = id
+			break
+		}
+	}
+	if err := state.Save(s); err != nil {
+		return nil, OrgRecord{}, err
+	}
+	return s, *matched, nil
+}
+
 func existingKey(org state.Organization, ok bool) string {
 	if !ok {
 		return ""

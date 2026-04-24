@@ -17,6 +17,7 @@ func init() {
 			newOrgListCmd(gf),
 			newOrgCreateCmd(gf),
 			newOrgSwitchCmd(gf),
+			newOrgDeleteCmd(gf),
 			newOrgMembersCmd(gf),
 			newOrgInviteCmd(gf),
 		)
@@ -63,6 +64,35 @@ func newOrgCreateCmd(gf *globalFlags) *cobra.Command {
 			return printJSON(orgCreateOrSwitchOutput(s))
 		},
 	}
+}
+
+func newOrgDeleteCmd(gf *globalFlags) *cobra.Command {
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "delete <organization>",
+		Short: "Delete an organization by slug or ID. Owner only. Soft-delete; all agents in the org are marked deleted.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			identifier := args[0]
+			if !yes && !confirm(fmt.Sprintf("Delete organization %s? This also deletes all of its agents. [y/N] ", identifier)) {
+				return fmt.Errorf("aborted")
+			}
+			apiURL, err := gf.resolveAPIURL()
+			if err != nil {
+				return err
+			}
+			s, deleted, err := auth.DeleteOrganization(cmd.Context(), apiURL, identifier)
+			if err != nil {
+				return err
+			}
+			return printJSON(map[string]any{
+				"current_org_id":       nilIfEmpty(s.CurrentOrgID),
+				"deleted_organization": orgRecordToMap(deleted),
+			})
+		},
+	}
+	cmd.Flags().BoolVar(&yes, "yes", false, "Skip the interactive confirmation prompt")
+	return cmd
 }
 
 func newOrgSwitchCmd(gf *globalFlags) *cobra.Command {
@@ -121,6 +151,15 @@ func newOrgInviteCmd(gf *globalFlags) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&role, "role", "member", "Membership role for the invite (owner|admin|member)")
 	return cmd
+}
+
+func orgRecordToMap(r auth.OrgRecord) map[string]any {
+	return map[string]any{
+		"id":   r.ID,
+		"name": r.Name,
+		"slug": r.Slug,
+		"role": r.Role,
+	}
 }
 
 func orgCreateOrSwitchOutput(s *state.CliState) map[string]any {
