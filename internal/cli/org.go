@@ -86,8 +86,8 @@ func newOrgDeleteCmd(gf *globalFlags) *cobra.Command {
 				return err
 			}
 			return printJSON(map[string]any{
-				"current_org_id":        nilIfEmpty(s.CurrentOrgID),
-				"deleted_organization":  orgRecordToMap(deleted),
+				"current_org_id":       nilIfEmpty(s.CurrentOrgID),
+				"deleted_organization": orgRecordToMap(deleted),
 			})
 		},
 	}
