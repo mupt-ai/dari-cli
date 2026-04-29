@@ -6,15 +6,12 @@ instructions:
 
 sandbox:
   provider: e2b
-  provider_api_key_secret: E2B_API_KEY
   dockerfile: Dockerfile
   env:
     APP_ENV: example
 
 llm:
-  model: anthropic/claude-sonnet-4.6
-  base_url: https://openrouter.ai/api/v1
-  api_key_secret: OPENROUTER_API_KEY
+  model: openai/gpt-5.5
 
 tools:
   - name: repo_search

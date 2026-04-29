@@ -86,7 +86,7 @@ dari api-keys revoke <key_id>
 
 ### credentials
 
-Stored secrets referenced by name from `dari.yml` (e.g. `llm.api_key_secret: OPENROUTER_API_KEY`).
+Stored secrets referenced by name from `dari.yml`. You only need these for explicit BYOK fields (`llm.api_key_secret`, `sandbox.provider_api_key_secret`) or names listed under `sandbox.secrets`; omitted provider key fields use Dari-managed defaults.
 
 ```bash
 dari credentials list
@@ -118,7 +118,7 @@ The repo root must contain:
 - `dari.yml`
 - any prompt files referenced by `instructions`
 - custom tools under `tools/<name>/tool.yml`
-- `Dockerfile` only if `dari.yml` sets a `runtime:` block; otherwise the default E2B base image is used.
+- `Dockerfile` only if `dari.yml` sets `sandbox.dockerfile`; otherwise the default E2B base image is used.
 
 Supported `harness` values: `pi`.
 
@@ -133,12 +133,9 @@ instructions:
 
 sandbox:
   provider: e2b
-  provider_api_key_secret: E2B_API_KEY
 
 llm:
-  model: anthropic/claude-sonnet-4.6
-  base_url: https://openrouter.ai/api/v1
-  api_key_secret: OPENROUTER_API_KEY
+  model: openai/gpt-5.5
 ```
 
 Full schema: https://docs.dari.dev/manifest.

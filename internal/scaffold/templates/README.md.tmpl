@@ -7,12 +7,7 @@ dari deploy --dry-run
 dari deploy
 ```
 
-Before a real deploy, upload any referenced credentials:
-
-```bash
-dari credentials add OPENROUTER_API_KEY
-dari credentials add E2B_API_KEY
-```
+This scaffold uses Dari-managed OpenRouter and E2B keys by default. Upload credentials only when you add explicit BYOK fields such as `llm.api_key_secret`, `sandbox.provider_api_key_secret`, or names under `sandbox.secrets`.
 
 ## Layout
 
