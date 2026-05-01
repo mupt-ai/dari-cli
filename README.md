@@ -1,6 +1,6 @@
 # Dari CLI
 
-`dari` validates, packages, and publishes agent projects to Agent Host.
+`dari` packages and publishes agent projects to Dari.
 
 Full docs: https://docs.dari.dev
 
@@ -73,7 +73,7 @@ Packages the checkout and publishes a new agent version.
 | --- | --- |
 | `--api-key` | Override the cached org key |
 | `--agent-id` | Publish to a specific agent instead of resolving by name |
-| `--dry-run` | Validate and package without uploading |
+| `--dry-run` | Build the local bundle and print the publish flow without uploading |
 | `--quiet` | Suppress per-stage progress on stderr |
 
 ### api-keys
@@ -130,9 +130,6 @@ harness: pi
 
 instructions:
   system: prompts/system.md
-
-sandbox:
-  provider: e2b
 
 llm:
   model: openai/gpt-5.5

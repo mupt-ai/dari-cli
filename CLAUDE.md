@@ -2,9 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-`dari` is the public CLI for Dari (https://dari.dev). It validates, packages,
-and publishes agent bundles to `https://api.dari.dev`. End-user docs live at
-https://docs.dari.dev.
+`dari` is the public CLI for Dari (https://dari.dev). It packages and publishes
+agent bundles to `https://api.dari.dev`. End-user docs live at https://docs.dari.dev.
 
 **This directory is public.** On every push to `main` of the monorepo, it is
 force-pushed to `mupt-ai/dari-cli` via a subtree split. Do not reference
@@ -31,8 +30,8 @@ toolchain (see `go.mod` for the exact Go version).
 - `internal/api/` — typed HTTP client for `api.dari.dev`.
 - `internal/auth/` — browser-login flow, `DARI_API_KEY` bypass, cached org
   key.
-- `internal/bundle/` — repo-root packaging and `dari.yml` validation. Keep
-  the manifest parsing here aligned with `docs/manifest.mdx` in the monorepo.
+- `internal/bundle/` — repo-root packaging and deterministic archive selection.
+  Keep bundle behavior aligned with `docs/manifest.mdx` in the monorepo.
 - `internal/deploy/` — publish pipeline (source snapshot upload + finalize).
 - `internal/state/` — on-disk cache for login/org selection.
 - `internal/scaffold/` — `dari init` project templates.
