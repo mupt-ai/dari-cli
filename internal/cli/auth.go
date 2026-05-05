@@ -32,7 +32,9 @@ func newAuthLoginCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := auth.Login(cmd.Context(), apiURL)
+			s, err := auth.LoginWithOptions(cmd.Context(), apiURL, auth.LoginOptions{
+				Stdin: cmd.InOrStdin(),
+			})
 			if err != nil {
 				return err
 			}

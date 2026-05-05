@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -17,8 +18,8 @@ import (
 )
 
 const (
-	loginTimeout          = 5 * time.Minute
-	sessionRefreshLeeway  = 60 * time.Second
+	loginTimeout         = 5 * time.Minute
+	sessionRefreshLeeway = 60 * time.Second
 
 	// EnvAPIKey is a bearer token that bypasses `dari auth login` entirely.
 	// When set, all CLI commands authenticate with it in place of the cached
@@ -33,8 +34,8 @@ const (
 // Errors returned by this package are intentionally simple: callers print
 // err.Error() verbatim to stderr. Use errors.Is to check auth-specific cases.
 var (
-	ErrNotLoggedIn = errors.New("no CLI login is available for this API URL. Run `dari auth login` first, or set DARI_API_KEY")
-	ErrNoCurrentOrg = errors.New("no current organization is selected. Run `dari org switch <org>`, or set DARI_ORG_ID")
+	ErrNotLoggedIn    = errors.New("no CLI login is available for this API URL. Run `dari auth login` first, or set DARI_API_KEY")
+	ErrNoCurrentOrg   = errors.New("no current organization is selected. Run `dari org switch <org>`, or set DARI_ORG_ID")
 	ErrNeedsUserLogin = errors.New("this command manages user/org membership and requires `dari auth login`; DARI_API_KEY cannot be used here")
 )
 
@@ -46,6 +47,11 @@ func EnvAPIKeyValue() string {
 // EnvOrgIDValue returns the DARI_ORG_ID env var, trimmed. Empty means unset.
 func EnvOrgIDValue() string {
 	return strings.TrimSpace(os.Getenv(EnvOrgID))
+}
+
+// LoginOptions customizes the interactive browser login flow.
+type LoginOptions struct {
+	Stdin io.Reader
 }
 
 // Status is what `dari auth status` prints.
@@ -64,6 +70,10 @@ type Status struct {
 // Login is a no-op when DARI_API_KEY is set: headless auth does not need
 // cached state.
 func Login(ctx context.Context, apiURL string) (*state.CliState, error) {
+	return LoginWithOptions(ctx, apiURL, LoginOptions{})
+}
+
+func LoginWithOptions(ctx context.Context, apiURL string, opts LoginOptions) (*state.CliState, error) {
 	if EnvAPIKeyValue() != "" {
 		return nil, errors.New("DARI_API_KEY is set; `dari auth login` is not needed (unset the env var to use a browser login)")
 	}
@@ -86,11 +96,13 @@ func Login(ctx context.Context, apiURL string) (*state.CliState, error) {
 	defer server.Close()
 
 	authorizeURL := sb.buildAuthorizeURL("google", server.RedirectURL, pkce.Challenge)
-	if !openBrowser(authorizeURL) {
-		fmt.Fprintf(os.Stderr, "Open this URL in a browser to continue login:\n  %s\n", authorizeURL)
+	if openBrowser(authorizeURL) {
+		fmt.Fprintf(os.Stderr, "Waiting for browser login. If it doesn't complete automatically, open this URL:\n  %s\n\nAfter signing in, paste the localhost callback URL or code below.\n", authorizeURL)
+	} else {
+		fmt.Fprintf(os.Stderr, "Open this URL in a browser to continue login:\n  %s\n\nAfter signing in, paste the localhost callback URL or code below.\n", authorizeURL)
 	}
 
-	cb, err := server.Wait(ctx, loginTimeout)
+	cb, err := server.WaitOrInput(ctx, opts.Stdin, loginTimeout)
 	if err != nil {
 		return nil, err
 	}

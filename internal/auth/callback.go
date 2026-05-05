@@ -1,12 +1,17 @@
 package auth
 
 import (
+	"bufio"
 	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/url"
+	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -100,3 +105,73 @@ func (cb *callbackServer) Close() {
 	_ = cb.srv.Shutdown(shutdownCtx)
 }
 
+// WaitOrInput blocks until either the local callback fires or the user pastes
+// the redirected callback URL/code. The paste path makes `dari auth login`
+// work from remote VMs without requiring a separate command or flag.
+func (cb *callbackServer) WaitOrInput(ctx context.Context, r io.Reader, timeout time.Duration) (callbackResult, error) {
+	if r == nil {
+		r = os.Stdin
+	}
+	fmt.Fprint(os.Stderr, "Paste callback URL or code: ")
+
+	lineCh := make(chan string, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		scanner := bufio.NewScanner(r)
+		if scanner.Scan() {
+			lineCh <- scanner.Text()
+			return
+		}
+		if err := scanner.Err(); err != nil {
+			errCh <- err
+			return
+		}
+		errCh <- io.EOF
+	}()
+
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	for {
+		select {
+		case res := <-cb.result:
+			if res.Code == "" && res.Error == "" {
+				return res, errors.New("browser callback did not include a code")
+			}
+			return res, nil
+		case raw := <-lineCh:
+			return parseManualCallback(raw)
+		case err := <-errCh:
+			if err != nil && !errors.Is(err, io.EOF) {
+				return callbackResult{}, fmt.Errorf("read callback URL: %w", err)
+			}
+			errCh = nil
+		case <-deadline.C:
+			return callbackResult{}, errors.New("timed out waiting for browser login to complete")
+		case <-ctx.Done():
+			return callbackResult{}, ctx.Err()
+		}
+	}
+}
+
+func parseManualCallback(raw string) (callbackResult, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return callbackResult{}, errors.New("empty callback URL or code")
+	}
+	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return callbackResult{}, fmt.Errorf("parse callback URL: %w", err)
+		}
+		q := u.Query()
+		res := callbackResult{
+			Code:  q.Get("code"),
+			Error: cmp.Or(q.Get("error_description"), q.Get("error")),
+		}
+		if res.Code == "" && res.Error == "" {
+			return res, errors.New("callback URL did not include a code")
+		}
+		return res, nil
+	}
+	return callbackResult{Code: raw}, nil
+}
