@@ -19,7 +19,7 @@ func shouldSkipUpdateNotice(cmd *cobra.Command) bool {
 	for c := cmd; c != nil; c = c.Parent() {
 		name := strings.TrimSpace(c.Name())
 		switch name {
-		case "update", "completion", "help":
+		case "update", "completion", "help", "__complete", "__completeNoDesc":
 			return true
 		}
 	}

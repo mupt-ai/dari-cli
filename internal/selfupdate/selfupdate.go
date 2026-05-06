@@ -78,14 +78,14 @@ type Client struct {
 	UserAgent  string
 }
 
-// NewClient returns a release client with a short default timeout.
+// NewClient returns a release client that relies on per-operation context deadlines.
 func NewClient(currentVersion string) *Client {
 	uaVersion := strings.TrimSpace(currentVersion)
 	if uaVersion == "" {
 		uaVersion = "dev"
 	}
 	return &Client{
-		HTTPClient: &http.Client{Timeout: 10 * time.Second},
+		HTTPClient: http.DefaultClient,
 		LatestURL:  latestReleaseURL,
 		UserAgent:  "dari-cli/" + uaVersion,
 	}
@@ -93,6 +93,12 @@ func NewClient(currentVersion string) *Client {
 
 // Latest fetches the latest non-prerelease GitHub release.
 func (c *Client) Latest(ctx context.Context) (Release, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+	}
+
 	latestURL := c.LatestURL
 	if latestURL == "" {
 		latestURL = latestReleaseURL
@@ -108,7 +114,7 @@ func (c *Client) Latest(ctx context.Context) (Release, error) {
 
 	hc := c.HTTPClient
 	if hc == nil {
-		hc = &http.Client{Timeout: 10 * time.Second}
+		hc = http.DefaultClient
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -328,7 +334,7 @@ func (c *Client) download(ctx context.Context, url string) ([]byte, error) {
 	}
 	hc := c.HTTPClient
 	if hc == nil {
-		hc = &http.Client{Timeout: 10 * time.Second}
+		hc = http.DefaultClient
 	}
 	resp, err := hc.Do(req)
 	if err != nil {

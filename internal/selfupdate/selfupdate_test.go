@@ -7,6 +7,16 @@ import (
 	"testing"
 )
 
+func TestNewClientDoesNotSetHTTPClientTimeout(t *testing.T) {
+	client := NewClient("v1.2.3")
+	if client.HTTPClient == nil {
+		t.Fatal("HTTPClient is nil")
+	}
+	if client.HTTPClient.Timeout != 0 {
+		t.Fatalf("HTTPClient.Timeout = %v, want no client-wide timeout", client.HTTPClient.Timeout)
+	}
+}
+
 func TestCompareVersions(t *testing.T) {
 	tests := []struct {
 		a, b string
