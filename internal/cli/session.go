@@ -27,6 +27,10 @@ func init() {
 
 func newSessionCreateCmd(gf *globalFlags) *cobra.Command {
 	var agentID string
+	var secretAssignments []string
+	var secretEnvNames []string
+	var llmAPIKey string
+	var llmAPIKeyEnv string
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create a session for an agent.",
@@ -35,17 +39,88 @@ func newSessionCreateCmd(gf *globalFlags) *cobra.Command {
 			if agentID == "" {
 				return errors.New("--agent is required")
 			}
+			secrets, err := resolveSessionSecrets(secretAssignments, secretEnvNames)
+			if err != nil {
+				return err
+			}
+			resolvedLLMAPIKey, err := resolveSessionLLMAPIKey(llmAPIKey, llmAPIKeyEnv)
+			if err != nil {
+				return err
+			}
+			body := map[string]any{}
+			if len(secrets) > 0 {
+				body["secrets"] = secrets
+			}
+			if resolvedLLMAPIKey != "" {
+				body["llm_api_key"] = resolvedLLMAPIKey
+			}
 			var resp map[string]any
 			if err := orgKeyRequest(cmd, gf, http.MethodPost,
-				"/v1/agents/"+agentID+"/sessions", map[string]any{}, &resp); err != nil {
+				"/v1/agents/"+agentID+"/sessions", body, &resp); err != nil {
 				return err
 			}
 			return printJSON(resp)
 		},
 	}
 	cmd.Flags().StringVar(&agentID, "agent", "", "Agent ID to start a session against")
+	cmd.Flags().StringArrayVar(&secretAssignments, "secret", nil, "Runtime secret as NAME=VALUE (repeatable)")
+	cmd.Flags().StringArrayVar(&secretEnvNames, "secret-env", nil, "Read runtime secret NAME from the local environment (repeatable)")
+	cmd.Flags().StringVar(&llmAPIKey, "llm-api-key", "", "Override the session LLM provider API key")
+	cmd.Flags().StringVar(&llmAPIKeyEnv, "llm-api-key-env", "", "Read the session LLM provider API key from this local environment variable")
 	_ = cmd.MarkFlagRequired("agent")
 	return cmd
+}
+
+func resolveSessionSecrets(assignments, envNames []string) (map[string]string, error) {
+	secrets := map[string]string{}
+	for _, assignment := range assignments {
+		name, value, ok := strings.Cut(assignment, "=")
+		name = strings.TrimSpace(name)
+		if !ok || name == "" {
+			return nil, fmt.Errorf("invalid --secret %q: expected NAME=VALUE", assignment)
+		}
+		if value == "" {
+			return nil, fmt.Errorf("invalid --secret %q: value must be non-empty", name)
+		}
+		if _, exists := secrets[name]; exists {
+			return nil, fmt.Errorf("duplicate runtime secret %q", name)
+		}
+		secrets[name] = value
+	}
+	for _, rawName := range envNames {
+		name := strings.TrimSpace(rawName)
+		if name == "" {
+			return nil, errors.New("--secret-env requires a non-empty NAME")
+		}
+		value, ok := os.LookupEnv(name)
+		if !ok || value == "" {
+			return nil, fmt.Errorf("environment variable %s is not set or is empty", name)
+		}
+		if _, exists := secrets[name]; exists {
+			return nil, fmt.Errorf("duplicate runtime secret %q", name)
+		}
+		secrets[name] = value
+	}
+	return secrets, nil
+}
+
+func resolveSessionLLMAPIKey(inline, envName string) (string, error) {
+	inline = strings.TrimSpace(inline)
+	envName = strings.TrimSpace(envName)
+	if inline != "" && envName != "" {
+		return "", errors.New("pass either --llm-api-key or --llm-api-key-env, not both")
+	}
+	if inline != "" {
+		return inline, nil
+	}
+	if envName == "" {
+		return "", nil
+	}
+	value, ok := os.LookupEnv(envName)
+	if !ok || value == "" {
+		return "", fmt.Errorf("environment variable %s is not set or is empty", envName)
+	}
+	return value, nil
 }
 
 func newSessionGetCmd(gf *globalFlags) *cobra.Command {
