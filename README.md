@@ -12,6 +12,14 @@ brew install mupt-ai/tap/dari
 
 Or download a release archive from [Releases](https://github.com/mupt-ai/dari-cli/releases).
 
+Update later with:
+
+```bash
+dari update
+```
+
+The CLI also checks for newer releases periodically and prints a stderr notice when your installed version is behind. Set `DARI_DISABLE_UPDATE_CHECK=1` to disable that check.
+
 ## Commands
 
 Most commands require `dari auth login` first. The CLI talks to `https://api.dari.dev`.
@@ -42,6 +50,15 @@ these routes):
 - `dari credentials list|add|remove`
 
 For those, run an interactive `dari auth login` first.
+
+### update
+
+```bash
+dari update           # install the latest release
+dari update --check   # report whether an update is available
+```
+
+Homebrew-managed installs are upgraded through `brew update` and `brew upgrade dari`; release-archive installs replace the current binary after verifying the release checksum.
 
 ### auth
 

@@ -26,20 +26,24 @@ func Execute(version string) int {
 
 // globalFlags hold cross-command options resolved at root level.
 type globalFlags struct {
-	apiURL string
+	apiURL  string
+	version string
 }
 
 func newRootCmd(version string) *cobra.Command {
-	gf := &globalFlags{}
 	if version == "" {
 		version = "dev"
 	}
+	gf := &globalFlags{version: version}
 	cmd := &cobra.Command{
 		Use:           "dari",
 		Short:         "dari packages and publishes agent projects to Dari.",
 		SilenceUsage:  true,
 		SilenceErrors: false,
 		Version:       version,
+	}
+	cmd.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
+		maybePrintUpdateNotice(cmd, version)
 	}
 	cmd.SetVersionTemplate("dari {{.Version}}\n")
 
