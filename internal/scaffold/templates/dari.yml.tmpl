@@ -5,8 +5,11 @@ instructions:
   system: prompts/system.md
 
 sandbox:
+  provider: e2b
   runtimes:
     node: "20"
+  env:
+    APP_ENV: example
 
 llm:
   model: openai/gpt-5.5

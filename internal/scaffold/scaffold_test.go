@@ -35,8 +35,11 @@ func TestRunDefaults(t *testing.T) {
 	if !strings.Contains(string(yml), "name: my-agent") {
 		t.Errorf("dari.yml does not interpolate project name: %s", yml)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "Dockerfile")); err == nil {
-		t.Error("default scaffold should use Dari's managed sandbox, not generate a Dockerfile")
+	if strings.Contains(string(yml), "dockerfile:") {
+		t.Errorf("dari.yml should use the default E2B runtime instead of a Dockerfile: %s", yml)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Dockerfile")); !os.IsNotExist(err) {
+		t.Errorf("Dockerfile should not be scaffolded by default; stat err=%v", err)
 	}
 }
 
