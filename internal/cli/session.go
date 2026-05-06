@@ -76,12 +76,10 @@ func newSessionSendCmd(gf *globalFlags) *cobra.Command {
 				return err
 			}
 			body := map[string]any{
-				"events": []map[string]any{{
-					"type": "user.message",
-					"content": []map[string]any{{
-						"type": "text",
-						"text": text,
-					}},
+				"type": "user.message",
+				"content": []map[string]any{{
+					"type": "text",
+					"text": text,
 				}},
 			}
 			var resp map[string]any
