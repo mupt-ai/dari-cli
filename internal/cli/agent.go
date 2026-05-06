@@ -4,10 +4,13 @@ import (
 	"bufio"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/mupt-ai/dari-cli/internal/deploy"
 )
 
 func init() {
@@ -15,6 +18,9 @@ func init() {
 		cmd := &cobra.Command{Use: "agent", Short: "Manage deployed agents"}
 		cmd.AddCommand(
 			newAgentListCmd(gf),
+			newAgentVersionsCmd(gf),
+			newAgentVersionCmd(gf),
+			newAgentStatusCmd(gf),
 			newAgentWebhookCmd(gf),
 			newAgentDeleteCmd(gf),
 		)
@@ -37,6 +43,144 @@ func newAgentListCmd(gf *globalFlags) *cobra.Command {
 			return printJSON(map[string]any{"agents": resp.Agents})
 		},
 	}
+}
+
+func newAgentVersionsCmd(gf *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "versions <agent_id>",
+		Short: "List published versions for an agent.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var resp map[string]any
+			if err := orgKeyRequest(cmd, gf, http.MethodGet, "/v1/agents/"+args[0]+"/versions", nil, &resp); err != nil {
+				return err
+			}
+			return printJSON(resp)
+		},
+	}
+}
+
+func newAgentVersionCmd(gf *globalFlags) *cobra.Command {
+	cmd := &cobra.Command{Use: "version", Short: "Inspect one published agent version"}
+	cmd.AddCommand(
+		newAgentVersionShowCmd(gf),
+		newAgentVersionFilesCmd(gf),
+		newAgentVersionCatCmd(gf),
+	)
+	return cmd
+}
+
+func newAgentVersionShowCmd(gf *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "show <agent_id> <version_id>",
+		Short: "Show published version metadata.",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var resp map[string]any
+			if err := orgKeyRequest(cmd, gf, http.MethodGet, "/v1/agents/"+args[0]+"/versions/"+args[1], nil, &resp); err != nil {
+				return err
+			}
+			return printJSON(resp)
+		},
+	}
+}
+
+func newAgentVersionFilesCmd(gf *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "files <agent_id> <version_id>",
+		Short: "List files in a version source bundle.",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var resp map[string]any
+			if err := orgKeyRequest(cmd, gf, http.MethodGet, "/v1/agents/"+args[0]+"/versions/"+args[1]+"/bundle", nil, &resp); err != nil {
+				return err
+			}
+			return printJSON(resp)
+		},
+	}
+}
+
+func newAgentVersionCatCmd(gf *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "cat <agent_id> <version_id> <path>",
+		Short: "Print one UTF-8 file from a version source bundle.",
+		Args:  cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var resp struct {
+				Content string `json:"content"`
+			}
+			path := "/v1/agents/" + args[0] + "/versions/" + args[1] + "/bundle/file?path=" + url.QueryEscape(args[2])
+			if err := orgKeyRequest(cmd, gf, http.MethodGet, path, nil, &resp); err != nil {
+				return err
+			}
+			fmt.Print(resp.Content)
+			return nil
+		},
+	}
+}
+
+func newAgentStatusCmd(gf *globalFlags) *cobra.Command {
+	var agentID string
+	cmd := &cobra.Command{
+		Use:   "status [repo_root]",
+		Short: "Check whether the local bundle matches the active published version.",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repoRoot := "."
+			if len(args) == 1 {
+				repoRoot = args[0]
+			}
+			apiURL, err := gf.resolveAPIURL()
+			if err != nil {
+				return err
+			}
+			resolvedAgentID := strings.TrimSpace(agentID)
+			if resolvedAgentID == "" {
+				resolvedAgentID = strings.TrimSpace(os.Getenv("DARI_AGENT_ID"))
+			}
+			prepared, err := deploy.Prepare(repoRoot, apiURL, resolvedAgentID)
+			if err != nil {
+				return err
+			}
+			if prepared.AgentID == "" {
+				return fmt.Errorf("no agent id found; pass --agent-id, set DARI_AGENT_ID, or run dari deploy once from this repo")
+			}
+
+			var resp struct {
+				Agent struct {
+					ID              string `json:"id"`
+					ActiveVersionID string `json:"active_version_id"`
+				} `json:"agent"`
+				Versions []struct {
+					ID            string `json:"id"`
+					IsActive      bool   `json:"is_active"`
+					ArchiveSHA256 string `json:"archive_sha256"`
+					SizeBytes     *int64 `json:"size_bytes"`
+				} `json:"versions"`
+			}
+			if err := orgKeyRequest(cmd, gf, http.MethodGet, "/v1/agents/"+prepared.AgentID+"/versions", nil, &resp); err != nil {
+				return err
+			}
+			activeVersionID := resp.Agent.ActiveVersionID
+			activeSHA := ""
+			for _, version := range resp.Versions {
+				if version.IsActive || version.ID == activeVersionID {
+					activeVersionID = version.ID
+					activeSHA = version.ArchiveSHA256
+					break
+				}
+			}
+			return printJSON(map[string]any{
+				"agent_id":          prepared.AgentID,
+				"active_version_id": activeVersionID,
+				"local_sha256":      prepared.Bundle.SHA256,
+				"active_sha256":     activeSHA,
+				"up_to_date":        activeSHA != "" && activeSHA == prepared.Bundle.SHA256,
+			})
+		},
+	}
+	cmd.Flags().StringVar(&agentID, "agent-id", "", "Existing agent ID to compare against (falls back to $DARI_AGENT_ID or .dari/deploy-state.json)")
+	return cmd
 }
 
 func newAgentWebhookCmd(gf *globalFlags) *cobra.Command {

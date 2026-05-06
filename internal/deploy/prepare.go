@@ -13,9 +13,9 @@ const (
 
 	// Placeholders used in --dry-run output so scripted consumers know
 	// which fields resolve only after the reserve call.
-	sourceSnapshotIDPlaceholder   = "<source_snapshot_id from reserve step>"
-	signedUploadURLPlaceholder    = "<signed upload URL from reserve step>"
-	uploadHeadersPlaceholder      = "<upload_headers from reserve step>"
+	sourceSnapshotIDPlaceholder = "<source_snapshot_id from reserve step>"
+	signedUploadURLPlaceholder  = "<signed upload URL from reserve step>"
+	uploadHeadersPlaceholder    = "<upload_headers from reserve step>"
 )
 
 // PreparedFlow is what `dari deploy --dry-run` prints.
@@ -23,6 +23,7 @@ type PreparedFlow struct {
 	Bundle          *bundle.Archive
 	BundleMetadata  bundle.Metadata
 	PublishEndpoint string
+	AgentID         string
 	IsNewAgent      bool
 }
 
@@ -74,6 +75,7 @@ func Prepare(deployRoot, apiURL, agentID string) (*PreparedFlow, error) {
 		Bundle:          archive,
 		BundleMetadata:  metadata,
 		PublishEndpoint: BuildPublishEndpoint(resolvedAgentID),
+		AgentID:         resolvedAgentID,
 		IsNewAgent:      resolvedAgentID == "",
 	}, nil
 }
