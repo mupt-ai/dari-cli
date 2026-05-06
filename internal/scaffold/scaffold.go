@@ -56,7 +56,6 @@ type fileSpec struct {
 
 var fileSpecs = []fileSpec{
 	{"templates/dari.yml.tmpl", "dari.yml"},
-	{"templates/Dockerfile", "Dockerfile"},
 	{"templates/system.md.tmpl", "prompts/system.md"},
 	{"templates/tool.yml", "tools/repo_search/tool.yml"},
 	{"templates/input.schema.json", "tools/repo_search/input.schema.json"},

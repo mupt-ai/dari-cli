@@ -5,10 +5,8 @@ instructions:
   system: prompts/system.md
 
 sandbox:
-  provider: e2b
-  dockerfile: Dockerfile
-  env:
-    APP_ENV: example
+  runtimes:
+    node: "20"
 
 llm:
   model: openai/gpt-5.5
@@ -17,6 +15,10 @@ tools:
   - name: repo_search
     path: tools/repo_search
     kind: main
+    runtime: typescript
+    handler: handler.ts:main
+    retries: 2
+    timeout_seconds: 20
 
 skills:
   - name: {{.SkillName}}

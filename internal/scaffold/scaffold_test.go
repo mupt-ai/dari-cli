@@ -20,7 +20,7 @@ func TestRunDefaults(t *testing.T) {
 		t.Errorf("skill: %q", result.SkillName)
 	}
 	mustExist := []string{
-		"dari.yml", "Dockerfile", "prompts/system.md",
+		"dari.yml", "prompts/system.md",
 		"tools/repo_search/tool.yml", "tools/repo_search/input.schema.json",
 		"tools/repo_search/handler.ts", "skills/review/SKILL.md",
 		"README.md", ".gitignore",
@@ -34,6 +34,9 @@ func TestRunDefaults(t *testing.T) {
 	yml, _ := os.ReadFile(filepath.Join(dir, "dari.yml"))
 	if !strings.Contains(string(yml), "name: my-agent") {
 		t.Errorf("dari.yml does not interpolate project name: %s", yml)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Dockerfile")); err == nil {
+		t.Error("default scaffold should use Dari's managed sandbox, not generate a Dockerfile")
 	}
 }
 

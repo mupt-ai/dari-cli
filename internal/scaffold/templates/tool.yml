@@ -1,7 +1,3 @@
 name: repo_search
 description: Search the checked-out repository for matching content.
 input_schema: input.schema.json
-runtime: typescript
-handler: handler.ts:main
-retries: 2
-timeout_seconds: 20
