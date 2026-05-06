@@ -15,6 +15,7 @@ func init() {
 		cmd := &cobra.Command{Use: "agent", Short: "Manage deployed agents"}
 		cmd.AddCommand(
 			newAgentListCmd(gf),
+			newAgentWebhookCmd(gf),
 			newAgentDeleteCmd(gf),
 		)
 		root.AddCommand(cmd)
@@ -34,6 +35,78 @@ func newAgentListCmd(gf *globalFlags) *cobra.Command {
 				return err
 			}
 			return printJSON(map[string]any{"agents": resp.Agents})
+		},
+	}
+}
+
+func newAgentWebhookCmd(gf *globalFlags) *cobra.Command {
+	cmd := &cobra.Command{Use: "webhook", Short: "Manage agent webhooks"}
+	cmd.AddCommand(
+		newAgentWebhookGetCmd(gf),
+		newAgentWebhookSetCmd(gf),
+		newAgentWebhookClearCmd(gf),
+		newAgentWebhookRotateCmd(gf),
+	)
+	return cmd
+}
+
+func newAgentWebhookGetCmd(gf *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "get <agent_id>",
+		Short: "Show an agent webhook configuration.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var resp map[string]any
+			if err := orgKeyRequest(cmd, gf, http.MethodGet, "/v1/agents/"+args[0]+"/webhook", nil, &resp); err != nil {
+				return err
+			}
+			return printJSON(resp)
+		},
+	}
+}
+
+func newAgentWebhookSetCmd(gf *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "set <agent_id> <webhook_url>",
+		Short: "Set an agent webhook URL for external tool requests.",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			body := map[string]any{"webhook_url": args[1]}
+			var resp map[string]any
+			if err := orgKeyRequest(cmd, gf, http.MethodPut, "/v1/agents/"+args[0]+"/webhook", body, &resp); err != nil {
+				return err
+			}
+			return printJSON(resp)
+		},
+	}
+}
+
+func newAgentWebhookClearCmd(gf *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "clear <agent_id>",
+		Short: "Clear an agent webhook configuration.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var resp map[string]any
+			if err := orgKeyRequest(cmd, gf, http.MethodDelete, "/v1/agents/"+args[0]+"/webhook", nil, &resp); err != nil {
+				return err
+			}
+			return printJSON(resp)
+		},
+	}
+}
+
+func newAgentWebhookRotateCmd(gf *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "rotate-secret <agent_id>",
+		Short: "Rotate an agent webhook signing secret.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var resp map[string]any
+			if err := orgKeyRequest(cmd, gf, http.MethodPost, "/v1/agents/"+args[0]+"/webhook/rotate-secret", nil, &resp); err != nil {
+				return err
+			}
+			return printJSON(resp)
 		},
 	}
 }

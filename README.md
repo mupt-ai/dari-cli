@@ -46,7 +46,7 @@ For those, run an interactive `dari auth login` first.
 ### auth
 
 ```bash
-dari auth login      # browser login, caches org key locally
+dari auth login      # browser login, caches org key locally; paste callback code/URL if redirect fails
 dari auth logout     # clear local login state
 dari auth status     # show current login and org
 ```
