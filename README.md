@@ -28,10 +28,11 @@ Most commands require `dari auth login` first. The CLI talks to `https://api.dar
 
 ```bash
 dari init my-agent
-dari init recursive-agent --recursive --org-api-key "$DARI_API_KEY"
+dari credentials add DARI_API_KEY
+dari init recursive-agent --recursive
 ```
 
-`--recursive` scaffolds an agent with the Dari CLI and a `skills/dari` playbook so it can deploy copies of itself and start child sessions.
+`--recursive` scaffolds an agent with the Dari CLI and a `skills/dari` playbook so it can deploy copies of itself and start child sessions. The recursive manifest references a stored runtime credential named `DARI_API_KEY`; the key is not written to `dari.yml`.
 
 ### Headless auth (CI, scripts)
 

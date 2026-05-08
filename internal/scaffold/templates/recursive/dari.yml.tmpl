@@ -17,9 +17,10 @@ sandbox:
   setup:
     script: scripts/install-dari.sh
   env:
-    DARI_API_KEY: {{ yamlQuote .OrgAPIKey }}
     DARI_API_URL: {{ yamlQuote .APIURL }}
     DARI_SOURCE_BUNDLE_ROOT: /bundle
+  secrets:
+    - DARI_API_KEY
 
 llm:
   model: openai/gpt-5.5

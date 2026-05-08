@@ -31,7 +31,6 @@ type Options struct {
 	Skill     string // defaults to "review", or "recursive-delegation" in recursive mode
 	Force     bool
 	Recursive bool
-	OrgAPIKey string // required in recursive mode; embedded into sandbox.env as DARI_API_KEY
 	APIURL    string // optional; embedded into sandbox.env as DARI_API_URL in recursive mode
 }
 
@@ -49,7 +48,6 @@ type templateData struct {
 	ProjectName string
 	SkillName   string
 	SkillTitle  string
-	OrgAPIKey   string
 	APIURL      string
 }
 
@@ -100,9 +98,6 @@ func Run(opts Options) (*Result, error) {
 		return nil, err
 	}
 	if opts.Recursive {
-		if strings.TrimSpace(opts.OrgAPIKey) == "" {
-			return nil, fmt.Errorf("org API key is required for recursive scaffold")
-		}
 		if skillName == "dari" {
 			return nil, fmt.Errorf("skill name %q is reserved by recursive scaffold", skillName)
 		}
@@ -112,7 +107,6 @@ func Run(opts Options) (*Result, error) {
 		ProjectName: projectName,
 		SkillName:   skillName,
 		SkillTitle:  titleCase(strings.ReplaceAll(skillName, "-", " ")),
-		OrgAPIKey:   strings.TrimSpace(opts.OrgAPIKey),
 		APIURL:      strings.TrimSpace(opts.APIURL),
 	}
 	files, err := renderFiles(data, specsForOptions(opts))

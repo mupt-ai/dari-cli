@@ -84,7 +84,6 @@ func TestRecursiveScaffold(t *testing.T) {
 	result, err := Run(Options{
 		TargetDir: dir,
 		Recursive: true,
-		OrgAPIKey: "dari_test_key",
 		APIURL:    "https://api.example.test",
 	})
 	if err != nil {
@@ -109,7 +108,7 @@ func TestRecursiveScaffold(t *testing.T) {
 	yml, _ := os.ReadFile(filepath.Join(dir, "dari.yml"))
 	ymlText := string(yml)
 	for _, want := range []string{
-		`DARI_API_KEY: "dari_test_key"`,
+		"secrets:\n    - DARI_API_KEY",
 		`DARI_API_URL: "https://api.example.test"`,
 		"script: scripts/install-dari.sh",
 		"name: dari",
@@ -119,17 +118,13 @@ func TestRecursiveScaffold(t *testing.T) {
 			t.Errorf("dari.yml missing %q:\n%s", want, ymlText)
 		}
 	}
-}
-
-func TestRecursiveScaffoldRequiresOrgAPIKey(t *testing.T) {
-	_, err := Run(Options{TargetDir: t.TempDir(), Recursive: true})
-	if err == nil {
-		t.Fatal("expected error without org API key")
+	if strings.Contains(ymlText, "DARI_API_KEY:") {
+		t.Errorf("dari.yml must not embed DARI_API_KEY as a plaintext env value:\n%s", ymlText)
 	}
 }
 
 func TestRecursiveScaffoldReservesDariSkillName(t *testing.T) {
-	_, err := Run(Options{TargetDir: t.TempDir(), Recursive: true, OrgAPIKey: "dari_test_key", Skill: "dari"})
+	_, err := Run(Options{TargetDir: t.TempDir(), Recursive: true, Skill: "dari"})
 	if err == nil {
 		t.Fatal("expected error for reserved recursive skill name")
 	}

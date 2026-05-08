@@ -45,7 +45,7 @@ set -euo pipefail
 command -v dari || export PATH="$HOME/.local/bin:$PATH"
 agent_id="<agent_id>"
 session_json="$(mktemp)"
-dari session create --agent "$agent_id" > "$session_json"
+dari session create --agent "$agent_id" --secret-env DARI_API_KEY > "$session_json"
 python3 - "$session_json" <<'PY'
 import json, sys
 payload = json.load(open(sys.argv[1]))
