@@ -1,0 +1,38 @@
+# {{.ProjectName}}
+
+Scaffolded with `dari init --recursive`. This agent has the Dari CLI installed in its sandbox and expects a stored runtime credential named `DARI_API_KEY`, so it can deploy copies of itself and start child sessions without committing the key to `dari.yml`.
+
+> This example intentionally does not enforce recursion depth, spend, or cleanup guardrails.
+
+## Validate and deploy
+
+Store the org API key once as a Dari runtime credential before starting sessions:
+
+```bash
+dari credentials add DARI_API_KEY
+```
+
+Then deploy the agent:
+
+```bash
+dari deploy --dry-run
+dari deploy
+```
+
+## Start a session
+
+```bash
+agent_id=<agent_id from deploy>
+dari session create --agent "$agent_id"
+```
+
+Then ask the agent to spawn child agents or delegate work recursively.
+
+## Layout
+
+- `dari.yml` — manifest with recursive sandbox env, secret references, and setup
+- `prompts/system.md` — recursive system prompt
+- `scripts/install-dari.sh` — installs the Dari CLI into the sandbox
+- `skills/dari/SKILL.md` — how the agent should use the Dari CLI
+- `skills/{{.SkillName}}/SKILL.md` — recursive delegation playbook
+- `tools/repo_search/` — example search tool

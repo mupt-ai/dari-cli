@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	defaultSkillName   = "review"
-	defaultProjectName = "my-agent"
+	defaultSkillName          = "review"
+	defaultRecursiveSkillName = "recursive-delegation"
+	defaultProjectName        = "my-agent"
 )
 
 var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
@@ -27,8 +28,10 @@ var templatesFS embed.FS
 type Options struct {
 	TargetDir string
 	Name      string // optional; inferred from TargetDir when empty
-	Skill     string // defaults to "review"
+	Skill     string // defaults to "review", or "recursive-delegation" in recursive mode
 	Force     bool
+	Recursive bool
+	APIURL    string // optional; embedded into sandbox.env as DARI_API_URL in recursive mode
 }
 
 // Result is what `dari init` prints.
@@ -36,6 +39,7 @@ type Result struct {
 	ProjectRoot  string
 	ProjectName  string
 	SkillName    string
+	Recursive    bool
 	WrittenFiles []string // relative to ProjectRoot, POSIX-separator, sorted
 }
 
@@ -44,6 +48,7 @@ type templateData struct {
 	ProjectName string
 	SkillName   string
 	SkillTitle  string
+	APIURL      string
 }
 
 // fileSpec maps an embedded source template to its output path. Both the
@@ -54,7 +59,7 @@ type fileSpec struct {
 	outputPath string // POSIX path relative to ProjectRoot; may contain template actions
 }
 
-var fileSpecs = []fileSpec{
+var defaultFileSpecs = []fileSpec{
 	{"templates/dari.yml.tmpl", "dari.yml"},
 	{"templates/system.md.tmpl", "prompts/system.md"},
 	{"templates/tool.yml", "tools/repo_search/tool.yml"},
@@ -62,6 +67,19 @@ var fileSpecs = []fileSpec{
 	{"templates/handler.ts", "tools/repo_search/handler.ts"},
 	{"templates/SKILL.md.tmpl", "skills/{{.SkillName}}/SKILL.md"},
 	{"templates/README.md.tmpl", "README.md"},
+	{"templates/gitignore", ".gitignore"},
+}
+
+var recursiveFileSpecs = []fileSpec{
+	{"templates/recursive/dari.yml.tmpl", "dari.yml"},
+	{"templates/recursive/system.md.tmpl", "prompts/system.md"},
+	{"templates/tool.yml", "tools/repo_search/tool.yml"},
+	{"templates/input.schema.json", "tools/repo_search/input.schema.json"},
+	{"templates/handler.ts", "tools/repo_search/handler.ts"},
+	{"templates/recursive/dari-skill.md.tmpl", "skills/dari/SKILL.md"},
+	{"templates/recursive/SKILL.md.tmpl", "skills/{{.SkillName}}/SKILL.md"},
+	{"templates/recursive/README.md.tmpl", "README.md"},
+	{"templates/recursive/install-dari.sh", "scripts/install-dari.sh"},
 	{"templates/gitignore", ".gitignore"},
 }
 
@@ -75,17 +93,23 @@ func Run(opts Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	skillName, err := resolveSkillName(opts.Skill)
+	skillName, err := resolveSkillName(opts.Skill, opts.Recursive)
 	if err != nil {
 		return nil, err
+	}
+	if opts.Recursive {
+		if skillName == "dari" {
+			return nil, fmt.Errorf("skill name %q is reserved by recursive scaffold", skillName)
+		}
 	}
 
 	data := templateData{
 		ProjectName: projectName,
 		SkillName:   skillName,
 		SkillTitle:  titleCase(strings.ReplaceAll(skillName, "-", " ")),
+		APIURL:      strings.TrimSpace(opts.APIURL),
 	}
-	files, err := renderFiles(data)
+	files, err := renderFiles(data, specsForOptions(opts))
 	if err != nil {
 		return nil, err
 	}
@@ -104,6 +128,7 @@ func Run(opts Options) (*Result, error) {
 		ProjectRoot:  projectRoot,
 		ProjectName:  projectName,
 		SkillName:    skillName,
+		Recursive:    opts.Recursive,
 		WrittenFiles: written,
 	}, nil
 }
@@ -140,8 +165,11 @@ func resolveProjectName(explicit, projectRoot string) (string, error) {
 	return candidate, nil
 }
 
-func resolveSkillName(explicit string) (string, error) {
+func resolveSkillName(explicit string, recursive bool) (string, error) {
 	if explicit == "" {
+		if recursive {
+			return defaultRecursiveSkillName, nil
+		}
 		return defaultSkillName, nil
 	}
 	if !namePattern.MatchString(explicit) {
@@ -155,9 +183,16 @@ type renderedFile struct {
 	content []byte
 }
 
-func renderFiles(data templateData) ([]renderedFile, error) {
-	out := make([]renderedFile, 0, len(fileSpecs))
-	for _, spec := range fileSpecs {
+func specsForOptions(opts Options) []fileSpec {
+	if opts.Recursive {
+		return recursiveFileSpecs
+	}
+	return defaultFileSpecs
+}
+
+func renderFiles(data templateData, specs []fileSpec) ([]renderedFile, error) {
+	out := make([]renderedFile, 0, len(specs))
+	for _, spec := range specs {
 		path, err := renderString(spec.outputPath, data)
 		if err != nil {
 			return nil, fmt.Errorf("render output path for %s: %w", spec.source, err)
@@ -184,7 +219,9 @@ func renderString(s string, data templateData) (string, error) {
 }
 
 func renderTemplate(name, body string, data templateData) ([]byte, error) {
-	t, err := template.New(name).Option("missingkey=error").Parse(body)
+	t, err := template.New(name).Funcs(template.FuncMap{
+		"yamlQuote": yamlQuote,
+	}).Option("missingkey=error").Parse(body)
 	if err != nil {
 		return nil, fmt.Errorf("parse template %s: %w", name, err)
 	}
@@ -240,4 +277,26 @@ func titleCase(s string) string {
 		parts[i] = strings.ToUpper(p[:1]) + strings.ToLower(p[1:])
 	}
 	return strings.Join(parts, " ")
+}
+
+func yamlQuote(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '\\', '"':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }

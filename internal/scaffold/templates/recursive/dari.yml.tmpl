@@ -1,0 +1,47 @@
+name: {{.ProjectName}}
+harness: pi
+
+instructions:
+  system: prompts/system.md
+
+sandbox:
+  provider: e2b
+  runtimes:
+    node: "20"
+    python: "3.13"
+  packages:
+    apt:
+      - ca-certificates
+      - curl
+      - tar
+  setup:
+    script: scripts/install-dari.sh
+  env:
+    DARI_API_URL: {{ yamlQuote .APIURL }}
+    DARI_SOURCE_BUNDLE_ROOT: /bundle
+  secrets:
+    - DARI_API_KEY
+
+llm:
+  model: openai/gpt-5.5
+
+built_in_tools:
+  - read
+  - bash
+  - edit
+  - write
+
+custom_tools:
+  - name: repo_search
+    path: tools/repo_search
+    kind: main
+    runtime: typescript
+    handler: handler.ts:main
+    retries: 2
+    timeout_seconds: 20
+
+skills:
+  - name: dari
+    path: skills/dari
+  - name: {{.SkillName}}
+    path: skills/{{.SkillName}}
