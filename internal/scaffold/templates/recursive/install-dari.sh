@@ -22,13 +22,18 @@ case "$(uname -m)" in
 esac
 
 repo="mupt-ai/dari-cli"
-version="$(python3 - <<'PY'
-import json, urllib.request
-with urllib.request.urlopen('https://api.github.com/repos/mupt-ai/dari-cli/releases/latest', timeout=30) as response:
-    payload = json.load(response)
-print(payload['tag_name'])
-PY
-)"
+version="${DARI_CLI_VERSION:-}"
+if [[ -z "$version" ]]; then
+  latest_url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${repo}/releases/latest")"
+  version="${latest_url##*/}"
+fi
+if [[ "$version" != v* ]]; then
+  version="v${version}"
+fi
+if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "could not resolve Dari CLI release version: $version" >&2
+  exit 1
+fi
 archive_version="${version#v}"
 archive="dari_${archive_version}_linux_${arch}.tar.gz"
 url="https://github.com/${repo}/releases/download/${version}/${archive}"
@@ -43,7 +48,8 @@ if install -m 0755 "$tmpdir/dari" /usr/local/bin/dari 2>/dev/null; then
   exit 0
 fi
 
-mkdir -p "$HOME/.local/bin"
-install -m 0755 "$tmpdir/dari" "$HOME/.local/bin/dari"
-echo 'Dari CLI installed at $HOME/.local/bin/dari. Add $HOME/.local/bin to PATH if needed.'
-"$HOME/.local/bin/dari" --version
+home_dir="${HOME:-/tmp}"
+mkdir -p "$home_dir/.local/bin"
+install -m 0755 "$tmpdir/dari" "$home_dir/.local/bin/dari"
+echo "Dari CLI installed at $home_dir/.local/bin/dari. Add $home_dir/.local/bin to PATH if needed."
+"$home_dir/.local/bin/dari" --version

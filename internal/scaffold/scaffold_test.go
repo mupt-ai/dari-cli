@@ -121,6 +121,15 @@ func TestRecursiveScaffold(t *testing.T) {
 	if strings.Contains(ymlText, "DARI_API_KEY:") {
 		t.Errorf("dari.yml must not embed DARI_API_KEY as a plaintext env value:\n%s", ymlText)
 	}
+
+	installScript, _ := os.ReadFile(filepath.Join(dir, "scripts/install-dari.sh"))
+	installText := string(installScript)
+	if strings.Contains(installText, "python3") {
+		t.Errorf("recursive installer must not depend on python3 during setup:\n%s", installText)
+	}
+	if !strings.Contains(installText, "DARI_CLI_VERSION") {
+		t.Errorf("recursive installer should allow pinning the CLI version:\n%s", installText)
+	}
 }
 
 func TestRecursiveScaffoldReservesDariSkillName(t *testing.T) {
