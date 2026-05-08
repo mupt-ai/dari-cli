@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
@@ -69,10 +70,24 @@ func newDeployCmd(gf *globalFlags) *cobra.Command {
 				return errors.New("DARI_API_KEY is required unless --dry-run is set or CLI login has selected an organization")
 			}
 
+			resolvedAgentID := strings.TrimSpace(agentID)
+			if resolvedAgentID != "" && !strings.HasPrefix(resolvedAgentID, "agt_") {
+				var agentsResp struct {
+					Agents []agentReferenceSummary `json:"agents"`
+				}
+				client := api.New(apiURL).WithBearer(resolvedKey)
+				if err := client.Do(cmd.Context(), http.MethodGet, "/v1/agents", nil, &agentsResp); err != nil {
+					return err
+				}
+				resolvedAgentID, err = matchAgentRef(resolvedAgentID, agentsResp.Agents)
+				if err != nil {
+					return err
+				}
+			}
 			cfg := deploy.Config{
 				APIURL:  apiURL,
 				APIKey:  resolvedKey,
-				AgentID: agentID,
+				AgentID: resolvedAgentID,
 			}
 			if !quiet {
 				cfg.Progress = deploy.NewConsoleProgress(os.Stderr).Handle
@@ -85,7 +100,7 @@ func newDeployCmd(gf *globalFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&apiKey, "api-key", "", "Bearer token for the Dari API (falls back to $DARI_API_KEY or the cached CLI login)")
-	cmd.Flags().StringVar(&agentID, "agent-id", os.Getenv("DARI_AGENT_ID"), "Existing agent ID to publish a new version for")
+	cmd.Flags().StringVar(&agentID, "agent-id", os.Getenv("DARI_AGENT_ID"), "Existing agent ID or name to publish a new version for")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the prepared publish request instead of sending it")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress per-stage deploy progress on stderr")
 	return cmd
@@ -99,4 +114,3 @@ func translateDeployError(err error) error {
 	}
 	return api.HumanError(err)
 }
-
