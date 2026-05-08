@@ -24,6 +24,15 @@ The CLI also checks for newer releases periodically and prints a stderr notice w
 
 Most commands require `dari auth login` first. The CLI talks to `https://api.dari.dev`.
 
+### init
+
+```bash
+dari init my-agent
+dari init recursive-agent --recursive --org-api-key "$DARI_API_KEY"
+```
+
+`--recursive` scaffolds an agent with the Dari CLI and a `skills/dari` playbook so it can deploy copies of itself and start child sessions.
+
 ### Headless auth (CI, scripts)
 
 Set `DARI_API_KEY` to bypass browser login. When set, the CLI uses it as the

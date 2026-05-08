@@ -78,3 +78,59 @@ func TestCustomSkillName(t *testing.T) {
 		t.Errorf("missing skill dir: %v", err)
 	}
 }
+
+func TestRecursiveScaffold(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "recursive-agent")
+	result, err := Run(Options{
+		TargetDir: dir,
+		Recursive: true,
+		OrgAPIKey: "dari_test_key",
+		APIURL:    "https://api.example.test",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !result.Recursive {
+		t.Error("recursive result should be marked recursive")
+	}
+	if result.SkillName != "recursive-delegation" {
+		t.Errorf("skill: %q", result.SkillName)
+	}
+	mustExist := []string{
+		"dari.yml", "prompts/system.md", "scripts/install-dari.sh",
+		"skills/dari/SKILL.md", "skills/recursive-delegation/SKILL.md",
+		"tools/repo_search/tool.yml", "README.md", ".gitignore",
+	}
+	for _, p := range mustExist {
+		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
+			t.Errorf("missing %s: %v", p, err)
+		}
+	}
+	yml, _ := os.ReadFile(filepath.Join(dir, "dari.yml"))
+	ymlText := string(yml)
+	for _, want := range []string{
+		`DARI_API_KEY: "dari_test_key"`,
+		`DARI_API_URL: "https://api.example.test"`,
+		"script: scripts/install-dari.sh",
+		"name: dari",
+		"name: recursive-delegation",
+	} {
+		if !strings.Contains(ymlText, want) {
+			t.Errorf("dari.yml missing %q:\n%s", want, ymlText)
+		}
+	}
+}
+
+func TestRecursiveScaffoldRequiresOrgAPIKey(t *testing.T) {
+	_, err := Run(Options{TargetDir: t.TempDir(), Recursive: true})
+	if err == nil {
+		t.Fatal("expected error without org API key")
+	}
+}
+
+func TestRecursiveScaffoldReservesDariSkillName(t *testing.T) {
+	_, err := Run(Options{TargetDir: t.TempDir(), Recursive: true, OrgAPIKey: "dari_test_key", Skill: "dari"})
+	if err == nil {
+		t.Fatal("expected error for reserved recursive skill name")
+	}
+}

@@ -1,0 +1,48 @@
+---
+name: {{.SkillName}}
+description: {{.SkillTitle}} playbook for spawning recursive Dari child agents.
+---
+
+# {{.SkillTitle}}
+
+Use this skill when the user asks you to create child agents, recurse, fork, fan out, delegate subtasks, or run multiple agent sessions.
+
+## Steps
+
+1. Load the `dari` skill.
+2. State the task decomposition: what each child session should do and what result you expect back.
+3. Deploy the current bundle from `${DARI_SOURCE_BUNDLE_ROOT:-/bundle}` with `dari deploy`.
+4. Create one child session per delegated subtask with `dari session create --agent <agent_id>`.
+5. Send each child a precise task with `dari session send`.
+6. Inspect each child with `dari session events` and synthesize the results for the user.
+
+## Minimal spawn script
+
+```bash
+set -euo pipefail
+command -v dari || export PATH="$HOME/.local/bin:$PATH"
+BUNDLE_ROOT="${DARI_SOURCE_BUNDLE_ROOT:-/bundle}"
+
+deploy_json="$(mktemp)"
+dari deploy "$BUNDLE_ROOT" --quiet > "$deploy_json"
+agent_id="$(python3 - "$deploy_json" <<'PY'
+import json, sys
+payload = json.load(open(sys.argv[1]))
+print(payload.get("agent_id") or payload.get("id") or "")
+PY
+)"
+test -n "$agent_id"
+
+session_json="$(mktemp)"
+dari session create --agent "$agent_id" > "$session_json"
+session_id="$(python3 - "$session_json" <<'PY'
+import json, sys
+payload = json.load(open(sys.argv[1]))
+print(payload.get("session_id") or payload.get("id") or "")
+PY
+)"
+test -n "$session_id"
+
+dari session send "$session_id" "Do this delegated task: <task>"
+dari session events "$session_id" --limit 50
+```
