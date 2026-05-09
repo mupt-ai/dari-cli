@@ -16,6 +16,7 @@ func init() {
 	commandRegistrars = append(commandRegistrars, func(root *cobra.Command, gf *globalFlags) {
 		cmd := &cobra.Command{Use: "session", Short: "Drive a conversation with a deployed agent"}
 		cmd.AddCommand(
+			newSessionListCmd(gf),
 			newSessionCreateCmd(gf),
 			newSessionGetCmd(gf),
 			newSessionSendCmd(gf),
@@ -23,6 +24,33 @@ func init() {
 		)
 		root.AddCommand(cmd)
 	})
+}
+
+func newSessionListCmd(gf *globalFlags) *cobra.Command {
+	var agentRef string
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List sessions for an agent.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if agentRef == "" {
+				return errors.New("--agent is required")
+			}
+			agentID, err := resolveAgentRef(cmd, gf, agentRef)
+			if err != nil {
+				return err
+			}
+			var resp map[string]any
+			if err := orgKeyRequest(cmd, gf, http.MethodGet,
+				"/v1/agents/"+agentID+"/sessions", nil, &resp); err != nil {
+				return err
+			}
+			return printJSON(resp)
+		},
+	}
+	cmd.Flags().StringVar(&agentRef, "agent", "", "Agent ID or name to list sessions for")
+	_ = cmd.MarkFlagRequired("agent")
+	return cmd
 }
 
 func newSessionCreateCmd(gf *globalFlags) *cobra.Command {

@@ -49,7 +49,7 @@ What works under `DARI_API_KEY`:
 
 - `dari deploy`
 - `dari agent list` / `dari agent delete`
-- `dari session create|get|send|events`
+- `dari session list|create|get|send|events`
 
 What does **not** work today (server currently enforces Supabase user JWT on
 these routes):
@@ -132,6 +132,7 @@ dari agent delete <agent_id> [--yes]         # soft-delete
 ### session
 
 ```bash
+dari session list --agent <agent_id>
 dari session create --agent <agent_id>
 dari session create --agent <agent_id> --secret-env INTERNAL_API_TOKEN
 dari session create --agent <agent_id> --llm-api-key-env OPENROUTER_API_KEY
