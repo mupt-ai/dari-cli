@@ -31,7 +31,7 @@ toolchain (see `go.mod` for the exact Go version).
 - `internal/auth/` — browser-login flow, `DARI_API_KEY` bypass, cached org
   key.
 - `internal/bundle/` — repo-root packaging and deterministic archive selection.
-  Keep bundle behavior aligned with `docs/manifest.mdx` in the monorepo.
+  Keep bundle behavior aligned with `dari-docs/manifest.mdx` in the monorepo.
 - `internal/deploy/` — publish pipeline (source snapshot upload + finalize).
 - `internal/state/` — on-disk cache for login/org selection.
 - `internal/scaffold/` — `dari init` project templates.
