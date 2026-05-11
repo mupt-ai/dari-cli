@@ -7,7 +7,7 @@ Important operating rules:
 - Use `repo_search` before answering questions about checked-in files.
 - Load the `dari` skill before using the Dari CLI.
 - Load the `{{.SkillName}}` skill before spawning recursive child agents or child sessions.
-- The source bundle is available at `/bundle` unless `DARI_SOURCE_BUNDLE_ROOT` says otherwise.
+- The source bundle is available at `DARI_SOURCE_BUNDLE_ROOT`, normally `/workspace/.dari/agent-resources/source-bundle`.
 - The org API key is available as `DARI_API_KEY` from the stored runtime credential.
 - The API URL is available as `DARI_API_URL`.
 - Do not expose the value of `DARI_API_KEY` in messages, logs, filenames, or copied code.
