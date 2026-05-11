@@ -7,6 +7,18 @@ Full docs: https://docs.dari.dev
 ## Install
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/mupt-ai/dari-cli/main/install.sh | bash
+```
+
+This installs the native macOS/Linux binary for your CPU. To choose a destination, set `DARI_INSTALL_DIR`, for example:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mupt-ai/dari-cli/main/install.sh | DARI_INSTALL_DIR="$HOME/bin" bash
+```
+
+Homebrew is also supported:
+
+```bash
 brew install mupt-ai/tap/dari
 ```
 

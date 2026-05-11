@@ -48,5 +48,5 @@ command, decide which auth mode it needs and match the existing pattern in
 ## Release
 
 Releases are built with GoReleaser (`.goreleaser.yaml`) and distributed via
-the `mupt-ai/tap` Homebrew tap and GitHub Releases. Don't hand-edit version
-strings; the release workflow owns them.
+the native install script, the `mupt-ai/tap` Homebrew tap, and GitHub Releases.
+Don't hand-edit version strings; the release workflow owns them.
