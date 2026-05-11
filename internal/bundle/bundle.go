@@ -293,4 +293,3 @@ func runGitBytes(cwd string, args []string) ([]byte, error) {
 	}
 	return stdout.Bytes(), nil
 }
-
