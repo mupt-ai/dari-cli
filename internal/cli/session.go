@@ -74,33 +74,18 @@ func newSessionCreateCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			secrets, err := resolveSessionSecrets(secretAssignments, secretEnvNames)
+			body, err := buildCreateSessionRequestBody(
+				cmd,
+				sessionName,
+				secretAssignments,
+				secretEnvNames,
+				llmAPIKey,
+				llmAPIKeyEnv,
+				internetAccess,
+				noInternetAccess,
+			)
 			if err != nil {
 				return err
-			}
-			resolvedLLMAPIKey, err := resolveSessionLLMAPIKey(llmAPIKey, llmAPIKeyEnv)
-			if err != nil {
-				return err
-			}
-			internetAccessSet := cmd.Flags().Changed("internet-access")
-			noInternetAccessSet := cmd.Flags().Changed("no-internet-access")
-			if internetAccessSet && noInternetAccessSet {
-				return errors.New("pass either --internet-access or --no-internet-access, not both")
-			}
-			body := map[string]any{}
-			if cmd.Flags().Changed("name") {
-				body["name"] = strings.TrimSpace(sessionName)
-			}
-			if len(secrets) > 0 {
-				body["secrets"] = secrets
-			}
-			if resolvedLLMAPIKey != "" {
-				body["llm_api_key"] = resolvedLLMAPIKey
-			}
-			if internetAccessSet {
-				body["internet_access"] = internetAccess
-			} else if noInternetAccessSet {
-				body["internet_access"] = !noInternetAccess
 			}
 			var resp map[string]any
 			if err := orgKeyRequest(cmd, gf, http.MethodPost,
@@ -120,6 +105,47 @@ func newSessionCreateCmd(gf *globalFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&noInternetAccess, "no-internet-access", false, "Disable public internet access from the execution sandbox")
 	_ = cmd.MarkFlagRequired("agent")
 	return cmd
+}
+
+func buildCreateSessionRequestBody(
+	cmd *cobra.Command,
+	sessionName string,
+	secretAssignments []string,
+	secretEnvNames []string,
+	llmAPIKey string,
+	llmAPIKeyEnv string,
+	internetAccess bool,
+	noInternetAccess bool,
+) (map[string]any, error) {
+	secrets, err := resolveSessionSecrets(secretAssignments, secretEnvNames)
+	if err != nil {
+		return nil, err
+	}
+	resolvedLLMAPIKey, err := resolveSessionLLMAPIKey(llmAPIKey, llmAPIKeyEnv)
+	if err != nil {
+		return nil, err
+	}
+	internetAccessSet := cmd.Flags().Changed("internet-access")
+	noInternetAccessSet := cmd.Flags().Changed("no-internet-access")
+	if internetAccessSet && noInternetAccessSet {
+		return nil, errors.New("pass either --internet-access or --no-internet-access, not both")
+	}
+	body := map[string]any{}
+	if cmd.Flags().Changed("name") {
+		body["name"] = strings.TrimSpace(sessionName)
+	}
+	if len(secrets) > 0 {
+		body["secrets"] = secrets
+	}
+	if resolvedLLMAPIKey != "" {
+		body["llm_api_key"] = resolvedLLMAPIKey
+	}
+	if internetAccessSet {
+		body["internet_access"] = internetAccess
+	} else if noInternetAccessSet {
+		body["internet_access"] = !noInternetAccess
+	}
+	return body, nil
 }
 
 func resolveSessionSecrets(assignments, envNames []string) (map[string]string, error) {
@@ -200,11 +226,59 @@ func newSessionGetCmd(gf *globalFlags) *cobra.Command {
 func newSessionSendCmd(gf *globalFlags) *cobra.Command {
 	var useStdin bool
 	var agentRef string
+	var sessionName string
+	var secretAssignments []string
+	var secretEnvNames []string
+	var llmAPIKey string
+	var llmAPIKeyEnv string
+	var internetAccess bool
+	var noInternetAccess bool
 	cmd := &cobra.Command{
-		Use:   "send <session> [text]",
-		Short: "Send a user message to a session.",
-		Args:  cobra.RangeArgs(1, 2),
+		Use:   "send [session] [text]",
+		Short: "Send a user message to a session, or create one with --agent.",
+		Args:  cobra.RangeArgs(0, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			autoCreate := shouldCreateSessionForSend(args, useStdin, agentRef)
+			if autoCreate {
+				agentID, err := resolveAgentRef(cmd, gf, agentRef)
+				if err != nil {
+					return err
+				}
+				text, err := resolveNewSessionText(args, useStdin)
+				if err != nil {
+					return err
+				}
+				sessionBody, err := buildCreateSessionRequestBody(
+					cmd,
+					sessionName,
+					secretAssignments,
+					secretEnvNames,
+					llmAPIKey,
+					llmAPIKeyEnv,
+					internetAccess,
+					noInternetAccess,
+				)
+				if err != nil {
+					return err
+				}
+				body := buildUserMessageBody(text)
+				if len(sessionBody) > 0 {
+					body["session"] = sessionBody
+				}
+				var resp map[string]any
+				if err := orgKeyRequest(cmd, gf, http.MethodPost,
+					"/v1/agents/"+agentID+"/messages", body, &resp); err != nil {
+					return err
+				}
+				return printJSON(resp)
+			}
+
+			if usesCreateOnlyFlags(cmd) {
+				return errors.New("session creation flags require --agent without a session argument")
+			}
+			if len(args) == 0 {
+				return errors.New("session is required unless --agent creates a new session")
+			}
 			sessionID, err := resolveSessionRef(cmd, gf, args[0], agentRef)
 			if err != nil {
 				return err
@@ -213,13 +287,7 @@ func newSessionSendCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			body := map[string]any{
-				"type": "user.message",
-				"content": []map[string]any{{
-					"type": "text",
-					"text": text,
-				}},
-			}
+			body := buildUserMessageBody(text)
 			var resp map[string]any
 			if err := orgKeyRequest(cmd, gf, http.MethodPost,
 				"/v1/sessions/"+sessionID+"/events", body, &resp); err != nil {
@@ -229,7 +297,14 @@ func newSessionSendCmd(gf *globalFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&useStdin, "stdin", false, "Read the message body from standard input")
-	cmd.Flags().StringVar(&agentRef, "agent", "", "Agent ID or name used to resolve a session name")
+	cmd.Flags().StringVar(&agentRef, "agent", "", "Agent ID or name; without a session argument, create a new session before sending")
+	cmd.Flags().StringVar(&sessionName, "name", "", "Optional name for an auto-created session")
+	cmd.Flags().StringArrayVar(&secretAssignments, "secret", nil, "Runtime secret as NAME=VALUE for an auto-created session (repeatable)")
+	cmd.Flags().StringArrayVar(&secretEnvNames, "secret-env", nil, "Read runtime secret NAME from the local environment for an auto-created session (repeatable)")
+	cmd.Flags().StringVar(&llmAPIKey, "llm-api-key", "", "Override the session LLM provider API key for an auto-created session")
+	cmd.Flags().StringVar(&llmAPIKeyEnv, "llm-api-key-env", "", "Read the session LLM provider API key from this local environment variable for an auto-created session")
+	cmd.Flags().BoolVar(&internetAccess, "internet-access", false, "Allow public internet access from the execution sandbox for an auto-created session")
+	cmd.Flags().BoolVar(&noInternetAccess, "no-internet-access", false, "Disable public internet access from the execution sandbox for an auto-created session")
 	return cmd
 }
 
@@ -261,6 +336,70 @@ func newSessionEventsCmd(gf *globalFlags) *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 0, "Maximum number of events to return (0 = server default)")
 	cmd.Flags().StringVar(&agentRef, "agent", "", "Agent ID or name used to resolve a session name")
 	return cmd
+}
+
+func shouldCreateSessionForSend(args []string, useStdin bool, agentRef string) bool {
+	if strings.TrimSpace(agentRef) == "" {
+		return false
+	}
+	if len(args) == 0 {
+		return true
+	}
+	return len(args) == 1 && !useStdin && !strings.HasPrefix(strings.TrimSpace(args[0]), "sess_")
+}
+
+func resolveNewSessionText(args []string, useStdin bool) (string, error) {
+	if len(args) > 1 {
+		return "", errors.New("too many arguments for auto-created session send")
+	}
+	if useStdin {
+		if len(args) > 0 {
+			return "", errors.New("pass either TEXT or --stdin, not both")
+		}
+		raw, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return "", fmt.Errorf("read stdin: %w", err)
+		}
+		text := strings.TrimRight(string(raw), "\r\n")
+		if text == "" {
+			return "", errors.New("message body must be non-empty")
+		}
+		return text, nil
+	}
+	if len(args) == 0 {
+		return "", errors.New("message text is required (pass as an argument or use --stdin)")
+	}
+	if args[0] == "" {
+		return "", errors.New("message body must be non-empty")
+	}
+	return args[0], nil
+}
+
+func buildUserMessageBody(text string) map[string]any {
+	return map[string]any{
+		"type": "user.message",
+		"content": []map[string]any{{
+			"type": "text",
+			"text": text,
+		}},
+	}
+}
+
+func usesCreateOnlyFlags(cmd *cobra.Command) bool {
+	for _, name := range []string{
+		"name",
+		"secret",
+		"secret-env",
+		"llm-api-key",
+		"llm-api-key-env",
+		"internet-access",
+		"no-internet-access",
+	} {
+		if cmd.Flags().Changed(name) {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveSessionText picks the message body from a positional arg or stdin,

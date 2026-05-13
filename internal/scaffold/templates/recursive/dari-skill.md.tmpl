@@ -23,9 +23,10 @@ Do not print `DARI_API_KEY`.
 ```bash
 set -euo pipefail
 command -v dari || export PATH="$HOME/.local/bin:$PATH"
-BUNDLE_ROOT="${DARI_SOURCE_BUNDLE_ROOT:-/bundle}"
+SOURCE_ROOT="${DARI_SOURCE_BUNDLE_ROOT:-/workspace/.dari/agent-resources/source-bundle}"
+test -d "$SOURCE_ROOT"
 deploy_json="$(mktemp)"
-dari deploy "$BUNDLE_ROOT" --quiet > "$deploy_json"
+dari deploy "$SOURCE_ROOT" --quiet > "$deploy_json"
 python3 - "$deploy_json" <<'PY'
 import json, sys
 payload = json.load(open(sys.argv[1]))
@@ -72,5 +73,6 @@ dari session events "$session_id" --limit 50
 dari agent list
 dari session get <session_id>
 dari session events <session_id> --limit 100
-dari deploy "$BUNDLE_ROOT" --dry-run
+SOURCE_ROOT="${DARI_SOURCE_BUNDLE_ROOT:-/workspace/.dari/agent-resources/source-bundle}"
+dari deploy "$SOURCE_ROOT" --dry-run
 ```

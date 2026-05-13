@@ -187,22 +187,12 @@ func buildManifestWithCodeFirstTools(root string, tools []codeFirstTool) ([]byte
 		}
 	}
 	for _, tool := range tools {
-		if manifestAlreadyDeclaresTool(entries, tool) {
+		generated := generatedCodeFirstToolEntry(tool)
+		if entry := matchingManifestToolEntry(entries, tool); entry != nil {
+			mergeMissingManifestToolFields(entry, generated)
 			continue
 		}
-		entry := map[string]any{
-			"name":              tool.Name,
-			"path":              tool.ManifestPath,
-			"kind":              "main",
-			"runtime":           "typescript",
-			"handler":           tool.SourcePath + ":handler",
-			"description":       tool.Spec.Description,
-			"input_schema_json": tool.Spec.InputSchema,
-		}
-		if tool.Spec.OutputSchema != nil {
-			entry["output_schema_json"] = tool.Spec.OutputSchema
-		}
-		entries = append(entries, entry)
+		entries = append(entries, generated)
 	}
 	manifest["custom_tools"] = entries
 	out, err := yaml.Marshal(manifest)
@@ -212,15 +202,39 @@ func buildManifestWithCodeFirstTools(root string, tools []codeFirstTool) ([]byte
 	return out, nil
 }
 
-func manifestAlreadyDeclaresTool(entries []any, tool codeFirstTool) bool {
+func generatedCodeFirstToolEntry(tool codeFirstTool) map[string]any {
+	entry := map[string]any{
+		"name":              tool.Name,
+		"path":              tool.ManifestPath,
+		"kind":              "main",
+		"runtime":           "typescript",
+		"handler":           tool.SourcePath + ":handler",
+		"description":       tool.Spec.Description,
+		"input_schema_json": tool.Spec.InputSchema,
+	}
+	if tool.Spec.OutputSchema != nil {
+		entry["output_schema_json"] = tool.Spec.OutputSchema
+	}
+	return entry
+}
+
+func matchingManifestToolEntry(entries []any, tool codeFirstTool) map[string]any {
 	for _, entry := range entries {
 		m, ok := entry.(map[string]any)
 		if !ok {
 			continue
 		}
 		if m["path"] == tool.ManifestPath || m["name"] == tool.Name {
-			return true
+			return m
 		}
 	}
-	return false
+	return nil
+}
+
+func mergeMissingManifestToolFields(entry, generated map[string]any) {
+	for key, value := range generated {
+		if _, exists := entry[key]; !exists || entry[key] == nil {
+			entry[key] = value
+		}
+	}
 }

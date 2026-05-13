@@ -151,6 +151,7 @@ dari session create --agent <agent_id> --llm-api-key-env OPENROUTER_API_KEY
 dari session create --agent <agent_id> --internet-access
 dari session get <session_id>
 dari session send <session_id> <text>        # or --stdin < message.txt
+dari session send --agent <agent_id> <text>  # creates a new session first
 dari session events <session_id> [--limit N]
 ```
 

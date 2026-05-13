@@ -11,7 +11,7 @@ Use this skill when the user asks you to create child agents, recurse, fork, fan
 
 1. Load the `dari` skill.
 2. State the task decomposition: what each child session should do and what result you expect back.
-3. Deploy the current bundle from `${DARI_SOURCE_BUNDLE_ROOT:-/bundle}` with `dari deploy`.
+3. Deploy the current source bundle from `${DARI_SOURCE_BUNDLE_ROOT:-/workspace/.dari/agent-resources/source-bundle}` with `dari deploy`.
 4. Create one child session per delegated subtask with `dari session create --agent <agent_id>`.
 5. Send each child a precise task with `dari session send`.
 6. Inspect each child with `dari session events` and synthesize the results for the user.
@@ -21,10 +21,11 @@ Use this skill when the user asks you to create child agents, recurse, fork, fan
 ```bash
 set -euo pipefail
 command -v dari || export PATH="$HOME/.local/bin:$PATH"
-BUNDLE_ROOT="${DARI_SOURCE_BUNDLE_ROOT:-/bundle}"
+SOURCE_ROOT="${DARI_SOURCE_BUNDLE_ROOT:-/workspace/.dari/agent-resources/source-bundle}"
+test -d "$SOURCE_ROOT"
 
 deploy_json="$(mktemp)"
-dari deploy "$BUNDLE_ROOT" --quiet > "$deploy_json"
+dari deploy "$SOURCE_ROOT" --quiet > "$deploy_json"
 agent_id="$(python3 - "$deploy_json" <<'PY'
 import json, sys
 payload = json.load(open(sys.argv[1]))

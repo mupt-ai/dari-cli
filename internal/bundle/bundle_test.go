@@ -192,6 +192,38 @@ export function handler(input: { query: string }) { return { query: normalize(in
 	}
 }
 
+func TestBuildCompletesPartialCodeFirstToolManifestEntry(t *testing.T) {
+	if _, _, err := codeFirstToolExtractorCommand("helper.mjs", "tool.ts"); err != nil {
+		t.Skip(err)
+	}
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "dari.yml"), "name: test\nharness: pi\ncustom_tools:\n  - name: repo_search\n    path: tools/repo_search.ts\n    timeout_seconds: 20\n", 0o644)
+	writeFile(t, filepath.Join(dir, "tools", "repo_search.ts"), `export const description = "Search.";
+export const inputSchema = { type: "object", properties: { query: { type: "string" } } };
+export function handler(input: { query: string }) { return { query: input.query }; }
+`, 0o644)
+
+	archive, err := Build(dir)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	manifest := readTarContents(t, archive.Content)["dari.yml"]
+	for _, want := range []string{
+		"name: repo_search",
+		"path: tools/repo_search.ts",
+		"kind: main",
+		"runtime: typescript",
+		"handler: tools/repo_search.ts:handler",
+		"description: Search.",
+		"input_schema_json:",
+		"timeout_seconds: 20",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("generated manifest missing %q:\n%s", want, manifest)
+		}
+	}
+}
+
 type member struct {
 	mode    int64
 	modTime int64

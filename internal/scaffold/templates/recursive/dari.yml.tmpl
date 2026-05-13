@@ -18,7 +18,7 @@ sandbox:
     script: scripts/install-dari.sh
   env:
     DARI_API_URL: {{ yamlQuote .APIURL }}
-    DARI_SOURCE_BUNDLE_ROOT: /bundle
+    DARI_SOURCE_BUNDLE_ROOT: /workspace/.dari/agent-resources/source-bundle
   secrets:
     - DARI_API_KEY
 
