@@ -71,10 +71,6 @@ func Build(deployRoot string) (*Archive, error) {
 	if !slices.Contains(paths, "dari.yml") {
 		return nil, errors.New("deploy root must contain a top-level dari.yml file")
 	}
-	overlays, paths, err := buildCodeFirstToolOverlays(resolved, paths)
-	if err != nil {
-		return nil, err
-	}
 
 	var buf bytes.Buffer
 	gzw, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
@@ -89,14 +85,6 @@ func Build(deployRoot string) (*Archive, error) {
 
 	tw := tar.NewWriter(gzw)
 	for _, rel := range paths {
-		if content, ok := overlays[rel]; ok {
-			if err := addVirtualFile(tw, rel, content); err != nil {
-				_ = tw.Close()
-				_ = gzw.Close()
-				return nil, err
-			}
-			continue
-		}
 		if err := addFile(tw, resolved, rel); err != nil {
 			_ = tw.Close()
 			_ = gzw.Close()
@@ -220,22 +208,6 @@ func fallbackSelectedPaths(root string) ([]string, error) {
 	}
 	sort.Strings(paths)
 	return paths, nil
-}
-
-func addVirtualFile(tw *tar.Writer, rel string, content []byte) error {
-	hdr := &tar.Header{
-		Name:     rel,
-		Typeflag: tar.TypeReg,
-		Mode:     0o644,
-		Size:     int64(len(content)),
-		ModTime:  time.Unix(0, 0),
-		Format:   tar.FormatPAX,
-	}
-	if err := tw.WriteHeader(hdr); err != nil {
-		return err
-	}
-	_, err := tw.Write(content)
-	return err
 }
 
 func addFile(tw *tar.Writer, root, rel string) error {

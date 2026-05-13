@@ -21,7 +21,8 @@ func TestRunDefaults(t *testing.T) {
 	}
 	mustExist := []string{
 		"dari.yml", "prompts/system.md",
-		"tools/repo_search.ts", "skills/review/SKILL.md",
+		"tools/repo_search/tool.yml", "tools/repo_search/input.schema.json",
+		"tools/repo_search/handler.ts", "skills/review/SKILL.md",
 		"README.md", ".gitignore",
 	}
 	for _, p := range mustExist {
@@ -97,7 +98,7 @@ func TestRecursiveScaffold(t *testing.T) {
 	mustExist := []string{
 		"dari.yml", "prompts/system.md", "scripts/install-dari.sh",
 		"skills/dari/SKILL.md", "skills/recursive-delegation/SKILL.md",
-		"tools/repo_search.ts", "README.md", ".gitignore",
+		"tools/repo_search/tool.yml", "README.md", ".gitignore",
 	}
 	for _, p := range mustExist {
 		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {

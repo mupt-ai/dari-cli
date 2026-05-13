@@ -31,6 +31,15 @@ built_in_tools:
   - edit
   - write
 
+custom_tools:
+  - name: repo_search
+    path: tools/repo_search
+    kind: main
+    runtime: typescript
+    handler: handler.ts:main
+    retries: 2
+    timeout_seconds: 20
+
 skills:
   - name: dari
     path: skills/dari

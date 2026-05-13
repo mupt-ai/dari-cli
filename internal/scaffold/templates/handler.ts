@@ -26,27 +26,7 @@ type SearchMatch = {
   preview: string;
 };
 
-export const description = "Case-insensitive content search over the checked-out repository.";
-
-export const inputSchema = {
-  type: "object",
-  properties: {
-    query: {
-      type: "string",
-      minLength: 1,
-    },
-    max_results: {
-      type: "integer",
-      minimum: 1,
-      maximum: 100,
-      default: 20,
-    },
-  },
-  required: ["query"],
-  additionalProperties: false,
-};
-
-export async function handler(input: SearchInput) {
+export async function main(input: SearchInput) {
   if (typeof input?.query !== "string") {
     throw new Error("repo_search query must be a non-empty string.");
   }

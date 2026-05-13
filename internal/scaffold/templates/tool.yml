@@ -1,0 +1,3 @@
+name: repo_search
+description: Case-insensitive content search over the checked-out repository.
+input_schema: input.schema.json
