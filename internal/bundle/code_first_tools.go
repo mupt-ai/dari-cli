@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -32,6 +33,8 @@ type codeFirstTool struct {
 	ManifestPath string
 }
 
+const codeFirstToolMetadataPath = ".dari/code-first-tools.json"
+
 func buildCodeFirstToolOverlays(root string, selectedPaths []string) (map[string][]byte, []string, error) {
 	tools, err := discoverCodeFirstTools(root, selectedPaths)
 	if err != nil {
@@ -47,6 +50,15 @@ func buildCodeFirstToolOverlays(root string, selectedPaths []string) (map[string
 		return nil, nil, err
 	}
 	overlays["dari.yml"] = manifest
+	metadata, err := buildCodeFirstToolMetadata(tools)
+	if err != nil {
+		return nil, nil, err
+	}
+	overlays[codeFirstToolMetadataPath] = metadata
+	if !slices.Contains(selectedPaths, codeFirstToolMetadataPath) {
+		selectedPaths = append(selectedPaths, codeFirstToolMetadataPath)
+		sort.Strings(selectedPaths)
+	}
 	return overlays, selectedPaths, nil
 }
 
@@ -86,9 +98,6 @@ func codeFirstToolName(rel string) (string, bool) {
 		return "", false
 	}
 	parts := strings.Split(rel, "/")
-	if len(parts) == 2 {
-		return codeFirstToolNameFromDirectFile(parts[1])
-	}
 	if len(parts) == 3 && (parts[2] == "tool.ts" || parts[2] == "tool.mts") {
 		name := parts[1]
 		if name != "" {
@@ -96,26 +105,6 @@ func codeFirstToolName(rel string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-func codeFirstToolNameFromDirectFile(base string) (string, bool) {
-	var name string
-	switch {
-	case strings.HasSuffix(base, ".tool.ts"):
-		name = strings.TrimSuffix(base, ".tool.ts")
-	case strings.HasSuffix(base, ".ts"):
-		name = strings.TrimSuffix(base, ".ts")
-	case strings.HasSuffix(base, ".tool.mts"):
-		name = strings.TrimSuffix(base, ".tool.mts")
-	case strings.HasSuffix(base, ".mts"):
-		name = strings.TrimSuffix(base, ".mts")
-	default:
-		return "", false
-	}
-	if name == "" || name == "handler" || name == "index" {
-		return "", false
-	}
-	return name, true
 }
 
 func extractCodeFirstToolSpec(root, rel string) (codeFirstToolSpec, error) {
@@ -189,6 +178,7 @@ func buildManifestWithCodeFirstTools(root string, tools []codeFirstTool) ([]byte
 	for _, tool := range tools {
 		generated := generatedCodeFirstToolEntry(tool)
 		if entry := matchingManifestToolEntry(entries, tool); entry != nil {
+			removeCodeFirstManifestSchemaFields(entry)
 			mergeMissingManifestToolFields(entry, generated)
 			continue
 		}
@@ -203,19 +193,33 @@ func buildManifestWithCodeFirstTools(root string, tools []codeFirstTool) ([]byte
 }
 
 func generatedCodeFirstToolEntry(tool codeFirstTool) map[string]any {
-	entry := map[string]any{
-		"name":              tool.Name,
-		"path":              tool.ManifestPath,
-		"kind":              "main",
-		"runtime":           "typescript",
-		"handler":           tool.SourcePath + ":handler",
-		"description":       tool.Spec.Description,
-		"input_schema_json": tool.Spec.InputSchema,
+	return map[string]any{
+		"name":        tool.Name,
+		"path":        tool.ManifestPath,
+		"kind":        "main",
+		"runtime":     "typescript",
+		"handler":     tool.SourcePath + ":handler",
+		"description": tool.Spec.Description,
 	}
-	if tool.Spec.OutputSchema != nil {
-		entry["output_schema_json"] = tool.Spec.OutputSchema
+}
+
+func buildCodeFirstToolMetadata(tools []codeFirstTool) ([]byte, error) {
+	entries := make([]map[string]any, 0, len(tools))
+	for _, tool := range tools {
+		entry := map[string]any{
+			"name":              tool.Name,
+			"path":              tool.ManifestPath,
+			"input_schema_json": tool.Spec.InputSchema,
+		}
+		if tool.Spec.OutputSchema != nil {
+			entry["output_schema_json"] = tool.Spec.OutputSchema
+		}
+		entries = append(entries, entry)
 	}
-	return entry
+	return json.MarshalIndent(map[string]any{
+		"version": 1,
+		"tools":   entries,
+	}, "", "  ")
 }
 
 func matchingManifestToolEntry(entries []any, tool codeFirstTool) map[string]any {
@@ -229,6 +233,11 @@ func matchingManifestToolEntry(entries []any, tool codeFirstTool) map[string]any
 		}
 	}
 	return nil
+}
+
+func removeCodeFirstManifestSchemaFields(entry map[string]any) {
+	delete(entry, "input_schema_json")
+	delete(entry, "output_schema_json")
 }
 
 func mergeMissingManifestToolFields(entry, generated map[string]any) {

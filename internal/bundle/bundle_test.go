@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -96,26 +97,13 @@ func TestBuildRejectsSymlink(t *testing.T) {
 	}
 }
 
-func TestBuildAddsCodeFirstTypeScriptToolToManifest(t *testing.T) {
-	if _, _, err := codeFirstToolExtractorCommand("helper.mjs", "tool.ts"); err != nil {
-		t.Skip(err)
-	}
+func TestBuildDoesNotDiscoverDirectTypeScriptToolFile(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "dari.yml"), "name: test\nharness: pi\ninstructions:\n  system: prompts/system.md\n", 0o644)
 	writeFile(t, filepath.Join(dir, "prompts", "system.md"), "hello", 0o644)
 	writeFile(t, filepath.Join(dir, "tools", "repo_search.ts"), `export const description = "Search the repository.";
-export const inputSchema = {
-  type: "object",
-  properties: { query: { type: "string" } },
-  required: ["query"]
-};
-export const outputSchema = {
-  type: "object",
-  properties: { matches: { type: "array", items: { type: "string" } } }
-};
-export async function handler(input: { query: string }) {
-  return { matches: [input.query] };
-}
+export const inputSchema = { type: "object" };
+export async function handler(input: unknown) { return input; }
 `, 0o644)
 
 	archive, err := Build(dir)
@@ -123,38 +111,15 @@ export async function handler(input: { query: string }) {
 		t.Fatalf("Build: %v", err)
 	}
 	contents := readTarContents(t, archive.Content)
-	for _, name := range []string{
-		"dari.yml",
-		"tools/repo_search.ts",
-	} {
-		if _, ok := contents[name]; !ok {
-			t.Fatalf("missing path %s; got %v", name, keys(contents))
-		}
-	}
-	for _, generated := range []string{
-		"tools/repo_search/tool.yml",
-		"tools/repo_search/input.schema.json",
-		"tools/repo_search/output.schema.json",
-		"tools/repo_search/handler.ts",
-	} {
-		if _, ok := contents[generated]; ok {
-			t.Fatalf("unexpected generated compatibility file %s", generated)
-		}
+	if _, ok := contents["tools/repo_search.ts"]; !ok {
+		t.Fatalf("missing direct TypeScript source file; got %v", keys(contents))
 	}
 	manifest := contents["dari.yml"]
-	for _, want := range []string{
-		"custom_tools:",
-		"name: repo_search",
-		"path: tools/repo_search.ts",
-		"runtime: typescript",
-		"handler: tools/repo_search.ts:handler",
-		"description: Search the repository.",
-		"input_schema_json:",
-		"output_schema_json:",
-	} {
-		if !strings.Contains(manifest, want) {
-			t.Fatalf("generated manifest missing %q:\n%s", want, manifest)
-		}
+	if strings.Contains(manifest, "custom_tools:") {
+		t.Fatalf("direct TypeScript tool file should not be auto-discovered:\n%s", manifest)
+	}
+	if _, ok := contents[codeFirstToolMetadataPath]; ok {
+		t.Fatalf("direct TypeScript tool file should not generate %s", codeFirstToolMetadataPath)
 	}
 }
 
@@ -184,12 +149,16 @@ export function handler(input: { query: string }) { return { query: normalize(in
 	for _, want := range []string{
 		"path: tools/repo_search",
 		"handler: tools/repo_search/tool.ts:handler",
-		"input_schema_json:",
 	} {
 		if !strings.Contains(manifest, want) {
 			t.Fatalf("generated manifest missing %q:\n%s", want, manifest)
 		}
 	}
+	if strings.Contains(manifest, "input_schema_json:") {
+		t.Fatalf("generated manifest should not include input_schema_json:\n%s", manifest)
+	}
+	metadata := readCodeFirstToolMetadata(t, contents)
+	_ = metadataTool(t, metadata, "tools/repo_search")
 }
 
 func TestBuildCompletesPartialCodeFirstToolManifestEntry(t *testing.T) {
@@ -197,8 +166,8 @@ func TestBuildCompletesPartialCodeFirstToolManifestEntry(t *testing.T) {
 		t.Skip(err)
 	}
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "dari.yml"), "name: test\nharness: pi\ncustom_tools:\n  - name: repo_search\n    path: tools/repo_search.ts\n    timeout_seconds: 20\n", 0o644)
-	writeFile(t, filepath.Join(dir, "tools", "repo_search.ts"), `export const description = "Search.";
+	writeFile(t, filepath.Join(dir, "dari.yml"), "name: test\nharness: pi\ncustom_tools:\n  - name: repo_search\n    path: tools/repo_search\n    timeout_seconds: 20\n", 0o644)
+	writeFile(t, filepath.Join(dir, "tools", "repo_search", "tool.ts"), `export const description = "Search.";
 export const inputSchema = { type: "object", properties: { query: { type: "string" } } };
 export function handler(input: { query: string }) { return { query: input.query }; }
 `, 0o644)
@@ -207,21 +176,28 @@ export function handler(input: { query: string }) { return { query: input.query 
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	manifest := readTarContents(t, archive.Content)["dari.yml"]
+	contents := readTarContents(t, archive.Content)
+	manifest := contents["dari.yml"]
 	for _, want := range []string{
 		"name: repo_search",
-		"path: tools/repo_search.ts",
+		"path: tools/repo_search",
 		"kind: main",
 		"runtime: typescript",
-		"handler: tools/repo_search.ts:handler",
+		"handler: tools/repo_search/tool.ts:handler",
 		"description: Search.",
-		"input_schema_json:",
 		"timeout_seconds: 20",
 	} {
 		if !strings.Contains(manifest, want) {
 			t.Fatalf("generated manifest missing %q:\n%s", want, manifest)
 		}
 	}
+	for _, notWant := range []string{"input_schema_json:", "output_schema_json:"} {
+		if strings.Contains(manifest, notWant) {
+			t.Fatalf("generated manifest should not include %q:\n%s", notWant, manifest)
+		}
+	}
+	metadata := readCodeFirstToolMetadata(t, contents)
+	_ = metadataTool(t, metadata, "tools/repo_search")
 }
 
 type member struct {
@@ -286,6 +262,38 @@ func readTarContents(t *testing.T, data []byte) map[string]string {
 		out[hdr.Name] = string(content)
 	}
 	return out
+}
+
+func readCodeFirstToolMetadata(t *testing.T, contents map[string]string) map[string]any {
+	t.Helper()
+	raw, ok := contents[codeFirstToolMetadataPath]
+	if !ok {
+		t.Fatalf("missing %s; got %v", codeFirstToolMetadataPath, keys(contents))
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
+		t.Fatalf("parse %s: %v\n%s", codeFirstToolMetadataPath, err, raw)
+	}
+	return metadata
+}
+
+func metadataTool(t *testing.T, metadata map[string]any, path string) map[string]any {
+	t.Helper()
+	tools, ok := metadata["tools"].([]any)
+	if !ok {
+		t.Fatalf("metadata tools must be a list: %#v", metadata)
+	}
+	for _, item := range tools {
+		tool, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if tool["path"] == path {
+			return tool
+		}
+	}
+	t.Fatalf("metadata missing tool path %s: %#v", path, metadata)
+	return nil
 }
 
 func keys(m map[string]string) []string {
