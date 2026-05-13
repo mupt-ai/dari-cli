@@ -62,9 +62,7 @@ type fileSpec struct {
 var defaultFileSpecs = []fileSpec{
 	{"templates/dari.yml.tmpl", "dari.yml"},
 	{"templates/system.md.tmpl", "prompts/system.md"},
-	{"templates/tool.yml", "tools/repo_search/tool.yml"},
-	{"templates/input.schema.json", "tools/repo_search/input.schema.json"},
-	{"templates/handler.ts", "tools/repo_search/handler.ts"},
+	{"templates/repo_search.ts", "tools/repo_search.ts"},
 	{"templates/SKILL.md.tmpl", "skills/{{.SkillName}}/SKILL.md"},
 	{"templates/README.md.tmpl", "README.md"},
 	{"templates/gitignore", ".gitignore"},
@@ -73,9 +71,7 @@ var defaultFileSpecs = []fileSpec{
 var recursiveFileSpecs = []fileSpec{
 	{"templates/recursive/dari.yml.tmpl", "dari.yml"},
 	{"templates/recursive/system.md.tmpl", "prompts/system.md"},
-	{"templates/tool.yml", "tools/repo_search/tool.yml"},
-	{"templates/input.schema.json", "tools/repo_search/input.schema.json"},
-	{"templates/handler.ts", "tools/repo_search/handler.ts"},
+	{"templates/repo_search.ts", "tools/repo_search.ts"},
 	{"templates/recursive/dari-skill.md.tmpl", "skills/dari/SKILL.md"},
 	{"templates/recursive/SKILL.md.tmpl", "skills/{{.SkillName}}/SKILL.md"},
 	{"templates/recursive/README.md.tmpl", "README.md"},

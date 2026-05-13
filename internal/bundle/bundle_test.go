@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -95,6 +96,134 @@ func TestBuildRejectsSymlink(t *testing.T) {
 	}
 }
 
+func TestBuildAddsCodeFirstTypeScriptToolToManifest(t *testing.T) {
+	if _, _, err := codeFirstToolExtractorCommand("helper.mjs", "tool.ts"); err != nil {
+		t.Skip(err)
+	}
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "dari.yml"), "name: test\nharness: pi\ninstructions:\n  system: prompts/system.md\n", 0o644)
+	writeFile(t, filepath.Join(dir, "prompts", "system.md"), "hello", 0o644)
+	writeFile(t, filepath.Join(dir, "tools", "repo_search.ts"), `export const description = "Search the repository.";
+export const inputSchema = {
+  type: "object",
+  properties: { query: { type: "string" } },
+  required: ["query"]
+};
+export const outputSchema = {
+  type: "object",
+  properties: { matches: { type: "array", items: { type: "string" } } }
+};
+export async function handler(input: { query: string }) {
+  return { matches: [input.query] };
+}
+`, 0o644)
+
+	archive, err := Build(dir)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	contents := readTarContents(t, archive.Content)
+	for _, name := range []string{
+		"dari.yml",
+		"tools/repo_search.ts",
+	} {
+		if _, ok := contents[name]; !ok {
+			t.Fatalf("missing path %s; got %v", name, keys(contents))
+		}
+	}
+	for _, generated := range []string{
+		"tools/repo_search/tool.yml",
+		"tools/repo_search/input.schema.json",
+		"tools/repo_search/output.schema.json",
+		"tools/repo_search/handler.ts",
+	} {
+		if _, ok := contents[generated]; ok {
+			t.Fatalf("unexpected generated compatibility file %s", generated)
+		}
+	}
+	manifest := contents["dari.yml"]
+	for _, want := range []string{
+		"custom_tools:",
+		"name: repo_search",
+		"path: tools/repo_search.ts",
+		"runtime: typescript",
+		"handler: tools/repo_search.ts:handler",
+		"description: Search the repository.",
+		"input_schema_json:",
+		"output_schema_json:",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("generated manifest missing %q:\n%s", want, manifest)
+		}
+	}
+}
+
+func TestBuildSupportsFolderCodeFirstTypeScriptTool(t *testing.T) {
+	if _, _, err := codeFirstToolExtractorCommand("helper.mjs", "tool.ts"); err != nil {
+		t.Skip(err)
+	}
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "dari.yml"), "name: test\nharness: pi\n", 0o644)
+	writeFile(t, filepath.Join(dir, "tools", "repo_search", "tool.ts"), `import { normalize } from "./helpers.ts";
+export const description = "Search.";
+export const inputSchema = { type: "object", properties: { query: { type: "string" } } };
+export function handler(input: { query: string }) { return { query: normalize(input.query) }; }
+`, 0o644)
+	writeFile(t, filepath.Join(dir, "tools", "repo_search", "helpers.ts"), `export function normalize(value: string) { return value.trim(); }
+`, 0o644)
+
+	archive, err := Build(dir)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	contents := readTarContents(t, archive.Content)
+	if _, ok := contents["tools/repo_search/helpers.ts"]; !ok {
+		t.Fatalf("helper file should stay in uploaded bundle; got %v", keys(contents))
+	}
+	manifest := contents["dari.yml"]
+	for _, want := range []string{
+		"path: tools/repo_search",
+		"handler: tools/repo_search/tool.ts:handler",
+		"input_schema_json:",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("generated manifest missing %q:\n%s", want, manifest)
+		}
+	}
+}
+
+func TestBuildCompletesPartialCodeFirstToolManifestEntry(t *testing.T) {
+	if _, _, err := codeFirstToolExtractorCommand("helper.mjs", "tool.ts"); err != nil {
+		t.Skip(err)
+	}
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "dari.yml"), "name: test\nharness: pi\ncustom_tools:\n  - name: repo_search\n    path: tools/repo_search.ts\n    timeout_seconds: 20\n", 0o644)
+	writeFile(t, filepath.Join(dir, "tools", "repo_search.ts"), `export const description = "Search.";
+export const inputSchema = { type: "object", properties: { query: { type: "string" } } };
+export function handler(input: { query: string }) { return { query: input.query }; }
+`, 0o644)
+
+	archive, err := Build(dir)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	manifest := readTarContents(t, archive.Content)["dari.yml"]
+	for _, want := range []string{
+		"name: repo_search",
+		"path: tools/repo_search.ts",
+		"kind: main",
+		"runtime: typescript",
+		"handler: tools/repo_search.ts:handler",
+		"description: Search.",
+		"input_schema_json:",
+		"timeout_seconds: 20",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("generated manifest missing %q:\n%s", want, manifest)
+		}
+	}
+}
+
 type member struct {
 	mode    int64
 	modTime int64
@@ -130,6 +259,39 @@ func readTar(t *testing.T, data []byte) map[string]member {
 			gname:   hdr.Gname,
 			size:    hdr.Size,
 		}
+	}
+	return out
+}
+
+func readTarContents(t *testing.T, data []byte) map[string]string {
+	t.Helper()
+	gzr, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("gzip: %v", err)
+	}
+	tr := tar.NewReader(gzr)
+	out := map[string]string{}
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("tar: %v", err)
+		}
+		content, err := io.ReadAll(tr)
+		if err != nil {
+			t.Fatalf("read %s: %v", hdr.Name, err)
+		}
+		out[hdr.Name] = string(content)
+	}
+	return out
+}
+
+func keys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for key := range m {
+		out = append(out, key)
 	}
 	return out
 }
