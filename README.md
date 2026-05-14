@@ -106,7 +106,7 @@ dari org invite <email> [--role owner|admin|member]   # default: member
 dari deploy [repo_root]
 ```
 
-Packages the checkout and publishes an agent version. Agent names are unique within an organization: deploying a bundle whose `dari.yml` name already exists creates a new version of that existing agent. If legacy duplicates make the name ambiguous, re-run with `--agent-id`.
+Packages the checkout and publishes a new agent version.
 
 | Flag | Description |
 | --- | --- |

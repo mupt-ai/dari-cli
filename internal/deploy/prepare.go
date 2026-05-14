@@ -27,8 +27,8 @@ type PreparedFlow struct {
 	IsNewAgent      bool
 }
 
-// BuildPublishEndpoint returns the publish URL for deploy-by-name or an
-// explicitly targeted existing agent.
+// BuildPublishEndpoint returns the publish URL for a new agent or an
+// existing one.
 func BuildPublishEndpoint(agentID string) string {
 	if agentID == "" {
 		return "/v1/agents"
@@ -85,7 +85,7 @@ func Prepare(deployRoot, apiURL, agentID string) (*PreparedFlow, error) {
 func (p *PreparedFlow) DryRunPayload() map[string]any {
 	action := "publish_agent_version"
 	if p.IsNewAgent {
-		action = "create_or_version_agent_by_name"
+		action = "create_agent"
 	}
 	return map[string]any{
 		"bundle": map[string]any{
