@@ -147,6 +147,7 @@ dari agent delete <agent_id> [--yes]         # soft-delete
 dari session list --agent <agent_id>
 dari session create --agent <agent_id>
 dari session create --agent <agent_id> --secret-env INTERNAL_API_TOKEN
+dari session create --agent <agent_id> --llm claude
 dari session create --agent <agent_id> --llm-api-key-env OPENROUTER_API_KEY
 dari session create --agent <agent_id> --internet-access
 dari session get <session_id>
@@ -156,7 +157,8 @@ dari session events <session_id> [--limit N]
 ```
 
 `--secret NAME=VALUE` and `--secret-env NAME` pass session-scoped secrets to
-the sandbox for names declared in `sandbox.secrets`. `--llm-api-key` and
+the sandbox for names declared in `sandbox.secrets`. `--llm` selects a named
+`llm.options` entry from the deployed manifest. `--llm-api-key` and
 `--llm-api-key-env` override the LLM provider key for the session only; that
 key is not exposed to sandbox code. `--internet-access` and
 `--no-internet-access` override whether the execution sandbox can reach the

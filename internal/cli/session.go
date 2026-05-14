@@ -58,6 +58,7 @@ func newSessionCreateCmd(gf *globalFlags) *cobra.Command {
 	var sessionName string
 	var secretAssignments []string
 	var secretEnvNames []string
+	var llmID string
 	var llmAPIKey string
 	var llmAPIKeyEnv string
 	var internetAccess bool
@@ -79,6 +80,7 @@ func newSessionCreateCmd(gf *globalFlags) *cobra.Command {
 				sessionName,
 				secretAssignments,
 				secretEnvNames,
+				llmID,
 				llmAPIKey,
 				llmAPIKeyEnv,
 				internetAccess,
@@ -99,6 +101,7 @@ func newSessionCreateCmd(gf *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&sessionName, "name", "", "Optional user-visible session name")
 	cmd.Flags().StringArrayVar(&secretAssignments, "secret", nil, "Runtime secret as NAME=VALUE (repeatable)")
 	cmd.Flags().StringArrayVar(&secretEnvNames, "secret-env", nil, "Read runtime secret NAME from the local environment (repeatable)")
+	cmd.Flags().StringVar(&llmID, "llm", "", "LLM option id from the deployed manifest")
 	cmd.Flags().StringVar(&llmAPIKey, "llm-api-key", "", "Override the session LLM provider API key")
 	cmd.Flags().StringVar(&llmAPIKeyEnv, "llm-api-key-env", "", "Read the session LLM provider API key from this local environment variable")
 	cmd.Flags().BoolVar(&internetAccess, "internet-access", false, "Allow public internet access from the execution sandbox")
@@ -112,6 +115,7 @@ func buildCreateSessionRequestBody(
 	sessionName string,
 	secretAssignments []string,
 	secretEnvNames []string,
+	llmID string,
 	llmAPIKey string,
 	llmAPIKeyEnv string,
 	internetAccess bool,
@@ -136,6 +140,9 @@ func buildCreateSessionRequestBody(
 	}
 	if len(secrets) > 0 {
 		body["secrets"] = secrets
+	}
+	if strings.TrimSpace(llmID) != "" {
+		body["llm_id"] = strings.TrimSpace(llmID)
 	}
 	if resolvedLLMAPIKey != "" {
 		body["llm_api_key"] = resolvedLLMAPIKey
@@ -229,6 +236,7 @@ func newSessionSendCmd(gf *globalFlags) *cobra.Command {
 	var sessionName string
 	var secretAssignments []string
 	var secretEnvNames []string
+	var llmID string
 	var llmAPIKey string
 	var llmAPIKeyEnv string
 	var internetAccess bool
@@ -253,6 +261,7 @@ func newSessionSendCmd(gf *globalFlags) *cobra.Command {
 					sessionName,
 					secretAssignments,
 					secretEnvNames,
+					llmID,
 					llmAPIKey,
 					llmAPIKeyEnv,
 					internetAccess,
@@ -301,6 +310,7 @@ func newSessionSendCmd(gf *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&sessionName, "name", "", "Optional name for an auto-created session")
 	cmd.Flags().StringArrayVar(&secretAssignments, "secret", nil, "Runtime secret as NAME=VALUE for an auto-created session (repeatable)")
 	cmd.Flags().StringArrayVar(&secretEnvNames, "secret-env", nil, "Read runtime secret NAME from the local environment for an auto-created session (repeatable)")
+	cmd.Flags().StringVar(&llmID, "llm", "", "LLM option id from the deployed manifest for an auto-created session")
 	cmd.Flags().StringVar(&llmAPIKey, "llm-api-key", "", "Override the session LLM provider API key for an auto-created session")
 	cmd.Flags().StringVar(&llmAPIKeyEnv, "llm-api-key-env", "", "Read the session LLM provider API key from this local environment variable for an auto-created session")
 	cmd.Flags().BoolVar(&internetAccess, "internet-access", false, "Allow public internet access from the execution sandbox for an auto-created session")
@@ -390,6 +400,7 @@ func usesCreateOnlyFlags(cmd *cobra.Command) bool {
 		"name",
 		"secret",
 		"secret-env",
+		"llm",
 		"llm-api-key",
 		"llm-api-key-env",
 		"internet-access",
