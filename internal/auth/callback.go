@@ -19,6 +19,7 @@ import (
 // callbackResult is the data we extract from the OAuth redirect.
 type callbackResult struct {
 	Code  string
+	State string
 	Error string
 }
 
@@ -58,6 +59,7 @@ func startCallbackServer() (*callbackServer, error) {
 		q := r.URL.Query()
 		res := callbackResult{
 			Code:  q.Get("code"),
+			State: q.Get("state"),
 			Error: cmp.Or(q.Get("error_description"), q.Get("error")),
 		}
 		body := "Dari CLI login complete. You can close this tab.\n"
@@ -106,13 +108,13 @@ func (cb *callbackServer) Close() {
 }
 
 // WaitOrInput blocks until either the local callback fires or the user pastes
-// the redirected callback URL/code. The paste path makes `dari auth login`
-// work from remote VMs without requiring a separate command or flag.
+// the redirected callback URL. The paste path makes `dari auth login` work
+// from remote VMs without requiring a separate command or flag.
 func (cb *callbackServer) WaitOrInput(ctx context.Context, r io.Reader, timeout time.Duration) (callbackResult, error) {
 	if r == nil {
 		r = os.Stdin
 	}
-	fmt.Fprint(os.Stderr, "Paste callback URL or code: ")
+	fmt.Fprint(os.Stderr, "Paste callback URL: ")
 
 	lineCh := make(chan string, 1)
 	errCh := make(chan error, 1)
@@ -156,22 +158,30 @@ func (cb *callbackServer) WaitOrInput(ctx context.Context, r io.Reader, timeout 
 func parseManualCallback(raw string) (callbackResult, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return callbackResult{}, errors.New("empty callback URL or code")
+		return callbackResult{}, errors.New("empty callback URL")
 	}
-	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
-		u, err := url.Parse(raw)
-		if err != nil {
-			return callbackResult{}, fmt.Errorf("parse callback URL: %w", err)
-		}
-		q := u.Query()
-		res := callbackResult{
-			Code:  q.Get("code"),
-			Error: cmp.Or(q.Get("error_description"), q.Get("error")),
-		}
-		if res.Code == "" && res.Error == "" {
-			return res, errors.New("callback URL did not include a code")
-		}
-		return res, nil
+	u, err := url.Parse(raw)
+	if err != nil {
+		return callbackResult{}, fmt.Errorf("parse callback URL: %w", err)
 	}
-	return callbackResult{Code: raw}, nil
+	if u.Scheme == "" || u.Host == "" {
+		return callbackResult{}, errors.New("paste the full localhost callback URL, not just the code")
+	}
+	if scheme := strings.ToLower(u.Scheme); scheme != "http" && scheme != "https" {
+		return callbackResult{}, errors.New("callback URL must use http or https")
+	}
+
+	q := u.Query()
+	res := callbackResult{
+		Code:  q.Get("code"),
+		State: q.Get("state"),
+		Error: cmp.Or(q.Get("error_description"), q.Get("error")),
+	}
+	if res.Code == "" && res.Error == "" {
+		return res, errors.New("callback URL did not include a code")
+	}
+	if res.Code != "" && res.State == "" {
+		return res, errors.New("callback URL did not include state")
+	}
+	return res, nil
 }

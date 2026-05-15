@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -20,17 +19,18 @@ const supabaseTimeout = 15 * time.Second
 type authConfig struct {
 	SupabaseURL            string `json:"supabase_url"`
 	SupabasePublishableKey string `json:"supabase_publishable_key"`
+	WebAppURL              string `json:"web_app_url"`
 }
 
 // supabaseSession mirrors the shape gotrue returns on /token exchanges.
 // Extra fields from the server are ignored.
 type supabaseSession struct {
-	AccessToken  string        `json:"access_token"`
-	RefreshToken string        `json:"refresh_token"`
-	ExpiresIn    int64         `json:"expires_in"`
-	ExpiresAt    int64         `json:"expires_at"`
-	TokenType    string        `json:"token_type"`
-	User         supabaseUser  `json:"user"`
+	AccessToken  string       `json:"access_token"`
+	RefreshToken string       `json:"refresh_token"`
+	ExpiresIn    int64        `json:"expires_in"`
+	ExpiresAt    int64        `json:"expires_at"`
+	TokenType    string       `json:"token_type"`
+	User         supabaseUser `json:"user"`
 }
 
 type supabaseUser struct {
@@ -42,9 +42,9 @@ type supabaseUser struct {
 // supabaseClient wraps the three gotrue REST calls we use: PKCE exchange,
 // refresh, and logout. It holds the apikey header that every call needs.
 type supabaseClient struct {
-	url     string
-	apikey  string
-	http    *http.Client
+	url    string
+	apikey string
+	http   *http.Client
 }
 
 func newSupabaseClient(cfg authConfig) *supabaseClient {
@@ -53,19 +53,6 @@ func newSupabaseClient(cfg authConfig) *supabaseClient {
 		apikey: cfg.SupabasePublishableKey,
 		http:   &http.Client{Timeout: supabaseTimeout},
 	}
-}
-
-// buildAuthorizeURL returns the hosted provider-authorize URL that the user
-// opens in their browser. Supabase redirects to redirectURL with ?code=... on
-// completion.
-func (c *supabaseClient) buildAuthorizeURL(provider, redirectURL, challenge string) string {
-	q := url.Values{}
-	q.Set("provider", provider)
-	q.Set("redirect_to", redirectURL)
-	q.Set("code_challenge", challenge)
-	q.Set("code_challenge_method", "S256")
-	q.Set("flow_type", "pkce")
-	return c.url + "/auth/v1/authorize?" + q.Encode()
 }
 
 // exchangeCode redeems the PKCE auth code for a session.

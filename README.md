@@ -85,7 +85,7 @@ Homebrew-managed installs are upgraded through `brew update` and `brew upgrade d
 ### auth
 
 ```bash
-dari auth login      # browser login, caches org key locally; paste callback code/URL if redirect fails
+dari auth login      # opens the Dari web login page, caches org key locally; paste callback URL if redirect fails
 dari auth logout     # clear local login state
 dari auth status     # show current login and org
 ```

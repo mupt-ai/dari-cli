@@ -1,7 +1,7 @@
 // Package auth implements Dari's browser login, session refresh, and
-// authenticated API request flow. It owns the Supabase gotrue PKCE dance and
-// the local OAuth callback server; the HTTP client itself lives in
-// internal/api.
+// authenticated API request flow. It owns the web-assisted Supabase PKCE login,
+// refresh/logout calls, and the local OAuth callback server; the HTTP client
+// itself lives in internal/api.
 package auth
 
 import (
@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -18,13 +19,15 @@ import (
 )
 
 const (
-	loginTimeout         = 5 * time.Minute
+	loginTimeout         = 10 * time.Minute
 	sessionRefreshLeeway = 60 * time.Second
 
 	// EnvAPIKey is a bearer token that bypasses `dari auth login` entirely.
 	// When set, all CLI commands authenticate with it in place of the cached
 	// Supabase JWT / managed org key.
 	EnvAPIKey = "DARI_API_KEY"
+
+	urlTokenEntropyBytes = 32
 
 	// EnvOrgID names the organization for commands that build paths like
 	// /v1/organizations/{id}/... while running headless with EnvAPIKey.
@@ -63,8 +66,8 @@ type Status struct {
 	SessionMode string              `json:"session_mode"`
 }
 
-// Login runs the full browser login flow: PKCE + callback + Supabase token
-// exchange + /v1/me/bootstrap + /v1/organizations/{id}/managed-cli-key/ensure.
+// Login runs the full browser login flow: web-assisted Supabase PKCE login
+// + /v1/me/bootstrap + /v1/organizations/{id}/managed-cli-key/ensure.
 // The resulting state is persisted to disk.
 //
 // Login is a no-op when DARI_API_KEY is set: headless auth does not need
@@ -83,8 +86,14 @@ func LoginWithOptions(ctx context.Context, apiURL string, opts LoginOptions) (*s
 	if err != nil {
 		return nil, fmt.Errorf("fetch CLI auth configuration: %w", err)
 	}
-	sb := newSupabaseClient(cfg)
+	if strings.TrimSpace(cfg.WebAppURL) == "" {
+		return nil, errors.New("CLI browser login requires DARI_WEB_APP_URL to be configured on the API")
+	}
 
+	cliState, err := randomURLToken(urlTokenEntropyBytes)
+	if err != nil {
+		return nil, err
+	}
 	pkce, err := newPKCEPair()
 	if err != nil {
 		return nil, err
@@ -95,11 +104,14 @@ func LoginWithOptions(ctx context.Context, apiURL string, opts LoginOptions) (*s
 	}
 	defer server.Close()
 
-	authorizeURL := sb.buildAuthorizeURL("google", server.RedirectURL, pkce.Challenge)
-	if openBrowser(authorizeURL) {
-		fmt.Fprintf(os.Stderr, "Waiting for browser login. If it doesn't complete automatically, open this URL:\n  %s\n\nAfter signing in, paste the localhost callback URL or code below.\n", authorizeURL)
+	loginURL, err := buildWebLoginURL(cfg.WebAppURL, server.RedirectURL, cliState, pkce.Challenge)
+	if err != nil {
+		return nil, err
+	}
+	if openBrowser(loginURL) {
+		fmt.Fprintf(os.Stderr, "Waiting for browser login. If it doesn't complete automatically, open this URL:\n  %s\n\nAfter signing in, paste the localhost callback URL below.\n", loginURL)
 	} else {
-		fmt.Fprintf(os.Stderr, "Open this URL in a browser to continue login:\n  %s\n\nAfter signing in, paste the localhost callback URL or code below.\n", authorizeURL)
+		fmt.Fprintf(os.Stderr, "Open this URL in a browser to continue login:\n  %s\n\nAfter signing in, paste the localhost callback URL below.\n", loginURL)
 	}
 
 	cb, err := server.WaitOrInput(ctx, opts.Stdin, loginTimeout)
@@ -110,9 +122,13 @@ func LoginWithOptions(ctx context.Context, apiURL string, opts LoginOptions) (*s
 		return nil, fmt.Errorf("browser login failed: %s", cb.Error)
 	}
 
-	sess, err := sb.exchangeCode(ctx, cb.Code, pkce.Verifier)
+	if cb.State != cliState {
+		return nil, errors.New("browser login returned an invalid state")
+	}
+
+	sess, err := newSupabaseClient(cfg).exchangeCode(ctx, cb.Code, pkce.Verifier)
 	if err != nil {
-		return nil, fmt.Errorf("exchange auth code: %w", err)
+		return nil, fmt.Errorf("exchange Supabase auth code: %w", err)
 	}
 
 	s := &state.CliState{
@@ -290,6 +306,22 @@ func translateAuthError(err error) error {
 		return fmt.Errorf("%w: %s", ErrNotLoggedIn, strings.TrimSpace(he.Detail))
 	}
 	return api.HumanError(err)
+}
+
+func buildWebLoginURL(webAppURL, callbackURL, state, codeChallenge string) (string, error) {
+	u, err := url.Parse(strings.TrimRight(webAppURL, "/") + "/login")
+	if err != nil {
+		return "", fmt.Errorf("parse web app URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("web app URL must be http(s)")
+	}
+	q := u.Query()
+	q.Set("cli_callback", callbackURL)
+	q.Set("cli_state", state)
+	q.Set("cli_code_challenge", codeChallenge)
+	u.RawQuery = q.Encode()
+	return u.String(), nil
 }
 
 // OrgKeyClient returns an api.Client authenticated with the cached managed
