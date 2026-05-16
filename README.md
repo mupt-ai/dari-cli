@@ -97,7 +97,7 @@ dari org list
 dari org create <name>
 dari org switch <organization>               # slug or id
 dari org members
-dari org invite <email> [--role owner|admin|member]   # default: member
+dari org invite <email> [--role owner|admin|member]   # emails an invite; default: member
 ```
 
 ### deploy
