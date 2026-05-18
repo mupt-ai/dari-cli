@@ -234,9 +234,10 @@ func newAgentWebhookGetCmd(gf *globalFlags) *cobra.Command {
 }
 
 func newAgentWebhookSetCmd(gf *globalFlags) *cobra.Command {
-	return &cobra.Command{
+	var eventTypes []string
+	cmd := &cobra.Command{
 		Use:   "set <agent> <webhook_url>",
-		Short: "Set an agent webhook URL for external tool requests.",
+		Short: "Set an agent webhook URL.",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			agentID, err := resolveAgentRef(cmd, gf, args[0])
@@ -244,6 +245,9 @@ func newAgentWebhookSetCmd(gf *globalFlags) *cobra.Command {
 				return err
 			}
 			body := map[string]any{"webhook_url": args[1]}
+			if cmd.Flags().Changed("event") {
+				body["event_types"] = eventTypes
+			}
 			var resp map[string]any
 			if err := orgKeyRequest(cmd, gf, http.MethodPut, "/v1/agents/"+agentID+"/webhook", body, &resp); err != nil {
 				return err
@@ -251,6 +255,8 @@ func newAgentWebhookSetCmd(gf *globalFlags) *cobra.Command {
 			return printJSON(resp)
 		},
 	}
+	cmd.Flags().StringArrayVar(&eventTypes, "event", nil, "Webhook event type to subscribe to (repeatable)")
+	return cmd
 }
 
 func newAgentWebhookClearCmd(gf *globalFlags) *cobra.Command {
