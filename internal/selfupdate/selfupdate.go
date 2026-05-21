@@ -14,7 +14,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -224,15 +223,6 @@ func Update(ctx context.Context, currentVersion string, opts UpdateOptions) (Upd
 	}
 	result.Path = target
 
-	if IsHomebrewManaged(target) {
-		result.Method = "homebrew"
-		if err := runHomebrewUpdate(ctx, opts.Force, opts.Stdout, opts.Stderr); err != nil {
-			return result, err
-		}
-		result.Updated = true
-		return result, nil
-	}
-
 	goos, goarch := opts.GOOS, opts.GOARCH
 	if goos == "" {
 		goos = runtime.GOOS
@@ -316,12 +306,6 @@ func CompareVersions(a, b string) int {
 		return -1
 	}
 	return strings.Compare(av.pre, bv.pre)
-}
-
-// IsHomebrewManaged reports whether target appears to be a Homebrew-managed binary.
-func IsHomebrewManaged(target string) bool {
-	p := filepath.ToSlash(target)
-	return strings.Contains(p, "/Cellar/dari/") || strings.Contains(p, "/homebrew/opt/dari/") || strings.Contains(p, "/linuxbrew/.linuxbrew/opt/dari/")
 }
 
 func (c *Client) download(ctx context.Context, url string) ([]byte, error) {
@@ -481,26 +465,6 @@ func resolveTargetPath(path string) (string, error) {
 		path = resolved
 	}
 	return path, nil
-}
-
-func runHomebrewUpdate(ctx context.Context, force bool, stdout, stderr io.Writer) error {
-	brew, err := exec.LookPath("brew")
-	if err != nil {
-		return errors.New("detected Homebrew-managed dari binary, but `brew` was not found in PATH; run `brew upgrade dari` manually")
-	}
-	installArgs := []string{"upgrade", "dari"}
-	if force {
-		installArgs = []string{"reinstall", "dari"}
-	}
-	for _, args := range [][]string{{"update"}, installArgs} {
-		cmd := exec.CommandContext(ctx, brew, args...)
-		cmd.Stdout = stdout
-		cmd.Stderr = stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("brew %s failed: %w", strings.Join(args, " "), err)
-		}
-	}
-	return nil
 }
 
 type parsedVersion struct {

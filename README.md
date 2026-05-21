@@ -16,13 +16,7 @@ This installs the native macOS/Linux binary for your CPU. To choose a destinatio
 curl -fsSL https://raw.githubusercontent.com/mupt-ai/dari-cli/main/install.sh | DARI_INSTALL_DIR="$HOME/bin" bash
 ```
 
-Homebrew is also supported:
-
-```bash
-brew install mupt-ai/tap/dari
-```
-
-Or download a release archive from [Releases](https://github.com/mupt-ai/dari-cli/releases).
+Or download a native release archive from [Releases](https://github.com/mupt-ai/dari-cli/releases).
 
 Update later with:
 
@@ -80,7 +74,7 @@ dari update           # install the latest release
 dari update --check   # report whether an update is available
 ```
 
-Homebrew-managed installs are upgraded through `brew update` and `brew upgrade dari`; release-archive installs replace the current binary after verifying the release checksum.
+Native installs replace the current binary after verifying the release checksum.
 
 ### auth
 

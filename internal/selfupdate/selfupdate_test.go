@@ -77,15 +77,6 @@ func TestExtractDariBinary(t *testing.T) {
 	}
 }
 
-func TestIsHomebrewManaged(t *testing.T) {
-	if !IsHomebrewManaged("/opt/homebrew/Cellar/dari/1.2.3/bin/dari") {
-		t.Fatal("expected Cellar path to be Homebrew-managed")
-	}
-	if IsHomebrewManaged("/usr/local/bin/dari") {
-		t.Fatal("expected plain binary path not to be Homebrew-managed")
-	}
-}
-
 func makeArchive(t *testing.T, files map[string]string) []byte {
 	t.Helper()
 	var buf bytes.Buffer

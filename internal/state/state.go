@@ -1,6 +1,6 @@
 // Package state loads and persists the CLI's local auth + organization state.
-// The on-disk format is intentionally identical to the Python CLI's so that
-// users can upgrade from pip to Homebrew without re-authenticating.
+// The on-disk format is intentionally identical to the Python CLI's so users
+// can move between installers without re-authenticating.
 package state
 
 import (
