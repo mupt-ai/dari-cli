@@ -167,7 +167,7 @@ The repo root must contain:
 - code-first TypeScript tools as `tools/<name>/tool.ts`
 - `Dockerfile` only if `dari.yml` sets `sandbox.dockerfile`; otherwise the default E2B base image is used.
 
-Supported `harness` values: `pi`.
+Supported `harness.kind` values: `pi`.
 
 Minimal `dari.yml`:
 
