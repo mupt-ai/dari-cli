@@ -65,14 +65,17 @@ func registerCommands(root *cobra.Command, gf *globalFlags) {
 	}
 }
 
-// resolveAPIURL implements the flag → env → state → default precedence the
-// Python CLI uses. Mirrors management.resolve_api_url.
+// resolveAPIURL implements flag → env → state → default precedence.
+// DARI_API_KEY mode skips cached browser-login state.
 func (gf *globalFlags) resolveAPIURL() (string, error) {
 	if v := strings.TrimSpace(gf.apiURL); v != "" {
 		return api.NormalizeURL(v), nil
 	}
 	if v := strings.TrimSpace(os.Getenv("DARI_API_URL")); v != "" {
 		return api.NormalizeURL(v), nil
+	}
+	if auth.EnvAPIKeyValue() != "" {
+		return api.DefaultAPIURL, nil
 	}
 	s, err := state.Load()
 	if err != nil {
