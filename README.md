@@ -50,6 +50,8 @@ export DARI_API_KEY=dari_...
 ```
 
 Create a key from a logged-in shell via `dari api-keys create --name ci`.
+Add `--scope routing` for a router-traffic key, or repeat/comma-separate
+`--scope` for a dual-scope key.
 
 What works under `DARI_API_KEY`:
 
@@ -114,7 +116,7 @@ Packages the checkout and publishes an agent version. Agent names are unique wit
 
 ```bash
 dari api-keys list
-dari api-keys create --name <name>           # plaintext key returned once
+dari api-keys create --name <name> [--scope platform|routing]
 dari api-keys revoke <key_id>
 ```
 

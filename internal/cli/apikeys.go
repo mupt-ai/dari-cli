@@ -36,7 +36,10 @@ func newAPIKeysListCmd(gf *globalFlags) *cobra.Command {
 }
 
 func newAPIKeysCreateCmd(gf *globalFlags) *cobra.Command {
-	var name string
+	var (
+		name   string
+		scopes []string
+	)
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create a new manual API key for the current org",
@@ -44,13 +47,14 @@ func newAPIKeysCreateCmd(gf *globalFlags) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			var resp map[string]any
 			if err := orgJWTRequest(cmd, gf, http.MethodPost, "/api-keys",
-				map[string]string{"label": name}, &resp); err != nil {
+				map[string]any{"label": name, "scopes": scopes}, &resp); err != nil {
 				return err
 			}
 			return printJSON(resp)
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "Key label")
+	cmd.Flags().StringSliceVar(&scopes, "scope", []string{"platform"}, "Key scope (platform or routing); may be repeated or comma-separated")
 	_ = cmd.MarkFlagRequired("name")
 	return cmd
 }
