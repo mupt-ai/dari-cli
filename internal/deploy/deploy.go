@@ -29,6 +29,7 @@ type Config struct {
 	APIURL   string
 	APIKey   string
 	AgentID  string // optional; empty means create a new agent
+	RouterID string // optional; publishes a router-backed model backend
 	Progress Progress
 }
 
@@ -52,7 +53,10 @@ func Execute(ctx context.Context, deployRoot string, cfg Config) (map[string]any
 	}
 
 	emit("package:start", nil)
-	prepared, err := Prepare(deployRoot, cfg.APIURL, cfg.AgentID)
+	prepared, err := PrepareWithOptions(deployRoot, cfg.APIURL, PrepareOptions{
+		AgentID:  cfg.AgentID,
+		RouterID: cfg.RouterID,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +113,7 @@ func Execute(ctx context.Context, deployRoot string, cfg Config) (map[string]any
 	emit("publish:start", map[string]any{"is_new_agent": prepared.IsNewAgent})
 	var response map[string]any
 	if err := client.Do(ctx, http.MethodPost, prepared.PublishEndpoint,
-		map[string]any{"source_snapshot_id": reserve.SourceSnapshotID}, &response); err != nil {
+		prepared.publishPayload(reserve.SourceSnapshotID), &response); err != nil {
 		cleanupErr := deleteSnapshotBestEffort(ctx, client, reserve.SourceSnapshotID)
 		if cleanupErr != nil {
 			return nil, fmt.Errorf("publish failed after snapshot finalize and cleanup also failed for snapshot %s: %w; cleanup error: %v",

@@ -106,6 +106,7 @@ Packages the checkout and publishes an agent version. Agent names are unique wit
 | --- | --- |
 | `--api-key` | Override the cached org key |
 | `--agent-id` | Publish to a specific agent instead of resolving by name |
+| `--router-id` | Publish this version with a Dari Router model backend; falls back to `$DARI_ROUTER_ID` |
 | `--dry-run` | Build the local bundle and print the publish flow without uploading |
 | `--quiet` | Suppress per-stage progress on stderr |
 
@@ -169,7 +170,7 @@ The repo root must contain:
 
 Supported `harness.kind` values: `pi`.
 
-Minimal `dari.yml`:
+Minimal direct-model `dari.yml`:
 
 ```yaml
 name: support-agent
@@ -180,6 +181,20 @@ instructions:
 
 llm:
   model: openai/gpt-5.5
+```
+
+Router-backed agents can put the router selection in source instead of defining
+an `llm` block:
+
+```yaml
+name: support-agent
+harness: pi
+
+instructions:
+  system: prompts/system.md
+
+model_backend:
+  router_id: rtr_...
 ```
 
 Full schema: https://docs.dari.dev/manifest.

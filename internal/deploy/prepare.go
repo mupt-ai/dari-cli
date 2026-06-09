@@ -5,6 +5,8 @@
 package deploy
 
 import (
+	"strings"
+
 	"github.com/mupt-ai/dari-cli/internal/bundle"
 )
 
@@ -18,12 +20,19 @@ const (
 	uploadHeadersPlaceholder    = "<upload_headers from reserve step>"
 )
 
+// PrepareOptions controls optional publish-time deploy behavior.
+type PrepareOptions struct {
+	AgentID  string
+	RouterID string
+}
+
 // PreparedFlow is what `dari deploy --dry-run` prints.
 type PreparedFlow struct {
 	Bundle          *bundle.Archive
 	BundleMetadata  bundle.Metadata
 	PublishEndpoint string
 	AgentID         string
+	RouterID        string
 	IsNewAgent      bool
 }
 
@@ -56,7 +65,16 @@ func deleteSnapshotEndpoint(snapshotID string) string {
 // making any network calls. Used by `--dry-run` and as the first step of a
 // live deploy.
 func Prepare(deployRoot, apiURL, agentID string) (*PreparedFlow, error) {
-	resolvedAgentID := agentID
+	return PrepareWithOptions(deployRoot, apiURL, PrepareOptions{AgentID: agentID})
+}
+
+// PrepareWithOptions builds the local deploy flow with optional publish-time
+// overrides such as the agent model backend.
+func PrepareWithOptions(
+	deployRoot, apiURL string,
+	options PrepareOptions,
+) (*PreparedFlow, error) {
+	resolvedAgentID := options.AgentID
 	if resolvedAgentID == "" && apiURL != "" {
 		// Remember the last-published agent ID for this API URL.
 		if id, err := readDeployState(deployRoot, apiURL); err != nil {
@@ -76,6 +94,7 @@ func Prepare(deployRoot, apiURL, agentID string) (*PreparedFlow, error) {
 		BundleMetadata:  metadata,
 		PublishEndpoint: BuildPublishEndpoint(resolvedAgentID),
 		AgentID:         resolvedAgentID,
+		RouterID:        strings.TrimSpace(options.RouterID),
 		IsNewAgent:      resolvedAgentID == "",
 	}, nil
 }
@@ -123,10 +142,25 @@ func (p *PreparedFlow) DryRunPayload() map[string]any {
 				"action":   action,
 				"method":   "POST",
 				"endpoint": p.PublishEndpoint,
-				"payload":  map[string]any{"source_snapshot_id": sourceSnapshotIDPlaceholder},
+				"payload":  p.publishPayload(sourceSnapshotIDPlaceholder),
 			},
 		},
 	}
+}
+
+func (p *PreparedFlow) publishPayload(sourceSnapshotID string) map[string]any {
+	payload := map[string]any{"source_snapshot_id": sourceSnapshotID}
+	if p.RouterID != "" {
+		payload["runtime_metadata"] = map[string]any{
+			"agent_host": map[string]any{
+				"model_backend": map[string]any{
+					"kind":      "router",
+					"router_id": p.RouterID,
+				},
+			},
+		}
+	}
+	return payload
 }
 
 func (p *PreparedFlow) reservationPayload() map[string]any {

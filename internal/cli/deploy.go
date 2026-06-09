@@ -23,10 +23,11 @@ func init() {
 
 func newDeployCmd(gf *globalFlags) *cobra.Command {
 	var (
-		apiKey  string
-		agentID string
-		dryRun  bool
-		quiet   bool
+		apiKey   string
+		agentID  string
+		routerID string
+		dryRun   bool
+		quiet    bool
 	)
 	cmd := &cobra.Command{
 		Use:   "deploy [repo_root]",
@@ -43,7 +44,11 @@ func newDeployCmd(gf *globalFlags) *cobra.Command {
 			}
 
 			if dryRun {
-				prepared, err := deploy.Prepare(repoRoot, apiURL, agentID)
+				prepared, err := deploy.PrepareWithOptions(
+					repoRoot,
+					apiURL,
+					deploy.PrepareOptions{AgentID: agentID, RouterID: routerID},
+				)
 				if err != nil {
 					return err
 				}
@@ -85,9 +90,10 @@ func newDeployCmd(gf *globalFlags) *cobra.Command {
 				}
 			}
 			cfg := deploy.Config{
-				APIURL:  apiURL,
-				APIKey:  resolvedKey,
-				AgentID: resolvedAgentID,
+				APIURL:   apiURL,
+				APIKey:   resolvedKey,
+				AgentID:  resolvedAgentID,
+				RouterID: routerID,
 			}
 			if !quiet {
 				cfg.Progress = deploy.NewConsoleProgress(os.Stderr).Handle
@@ -101,6 +107,7 @@ func newDeployCmd(gf *globalFlags) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&apiKey, "api-key", "", "Bearer token for the Dari API (falls back to $DARI_API_KEY or the cached CLI login)")
 	cmd.Flags().StringVar(&agentID, "agent-id", os.Getenv("DARI_AGENT_ID"), "Existing agent ID or name to publish a new version for")
+	cmd.Flags().StringVar(&routerID, "router-id", os.Getenv("DARI_ROUTER_ID"), "Router ID to use as this agent's model backend (falls back to $DARI_ROUTER_ID)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the prepared publish request instead of sending it")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress per-stage deploy progress on stderr")
 	return cmd
