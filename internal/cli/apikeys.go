@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -45,18 +47,48 @@ func newAPIKeysCreateCmd(gf *globalFlags) *cobra.Command {
 		Short: "Create a new manual API key for the current org",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			normalizedScopes, err := normalizeAPIKeyScopes(scopes)
+			if err != nil {
+				return err
+			}
 			var resp map[string]any
 			if err := orgJWTRequest(cmd, gf, http.MethodPost, "/api-keys",
-				map[string]any{"label": name, "scopes": scopes}, &resp); err != nil {
+				map[string]any{"label": name, "scopes": normalizedScopes}, &resp); err != nil {
 				return err
 			}
 			return printJSON(resp)
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "Key label")
-	cmd.Flags().StringSliceVar(&scopes, "scope", []string{"platform"}, "Key scope (platform or routing); may be repeated or comma-separated")
+	cmd.Flags().StringSliceVar(&scopes, "scope", []string{"platform"}, "Key scope (platform for CLI/API use, routing for router traffic); may be repeated or comma-separated")
 	_ = cmd.MarkFlagRequired("name")
 	return cmd
+}
+
+func normalizeAPIKeyScopes(scopes []string) ([]string, error) {
+	allowed := map[string]bool{"platform": true, "routing": true}
+	normalized := make([]string, 0, len(scopes))
+	seen := map[string]bool{}
+	for _, raw := range scopes {
+		for _, part := range strings.Split(raw, ",") {
+			scope := strings.ToLower(strings.TrimSpace(part))
+			if scope == "" {
+				continue
+			}
+			if !allowed[scope] {
+				return nil, fmt.Errorf("unsupported API key scope %q (supported: platform, routing)", scope)
+			}
+			if seen[scope] {
+				continue
+			}
+			seen[scope] = true
+			normalized = append(normalized, scope)
+		}
+	}
+	if len(normalized) == 0 {
+		return nil, fmt.Errorf("at least one API key scope is required (supported: platform, routing)")
+	}
+	return normalized, nil
 }
 
 func newAPIKeysRevokeCmd(gf *globalFlags) *cobra.Command {

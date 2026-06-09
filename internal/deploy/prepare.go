@@ -4,11 +4,7 @@
 // output.
 package deploy
 
-import (
-	"strings"
-
-	"github.com/mupt-ai/dari-cli/internal/bundle"
-)
+import "github.com/mupt-ai/dari-cli/internal/bundle"
 
 const (
 	sourceSnapshotsEndpoint = "/v1/source-snapshots"
@@ -84,6 +80,11 @@ func PrepareWithOptions(
 		}
 	}
 
+	normalizedRouterID, err := NormalizeRouterID(options.RouterID)
+	if err != nil {
+		return nil, err
+	}
+
 	metadata := bundle.CollectMetadata(deployRoot)
 	archive, err := bundle.Build(deployRoot)
 	if err != nil {
@@ -94,7 +95,7 @@ func PrepareWithOptions(
 		BundleMetadata:  metadata,
 		PublishEndpoint: BuildPublishEndpoint(resolvedAgentID),
 		AgentID:         resolvedAgentID,
-		RouterID:        strings.TrimSpace(options.RouterID),
+		RouterID:        normalizedRouterID,
 		IsNewAgent:      resolvedAgentID == "",
 	}, nil
 }

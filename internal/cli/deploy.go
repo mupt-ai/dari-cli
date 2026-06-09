@@ -105,9 +105,9 @@ func newDeployCmd(gf *globalFlags) *cobra.Command {
 			return printJSON(response)
 		},
 	}
-	cmd.Flags().StringVar(&apiKey, "api-key", "", "Bearer token for the Dari API (falls back to $DARI_API_KEY or the cached CLI login)")
+	cmd.Flags().StringVar(&apiKey, "api-key", "", "Platform-scoped bearer token for the Dari API (falls back to $DARI_API_KEY or the cached CLI login)")
 	cmd.Flags().StringVar(&agentID, "agent-id", os.Getenv("DARI_AGENT_ID"), "Existing agent ID or name to publish a new version for")
-	cmd.Flags().StringVar(&routerID, "router-id", os.Getenv("DARI_ROUTER_ID"), "Router ID to use as this agent's model backend (falls back to $DARI_ROUTER_ID)")
+	cmd.Flags().StringVar(&routerID, "router-id", os.Getenv("DARI_ROUTER_ID"), "Router ID or endpoint URL to use as this agent's model backend (falls back to $DARI_ROUTER_ID)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the prepared publish request instead of sending it")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress per-stage deploy progress on stderr")
 	return cmd

@@ -42,16 +42,18 @@ dari init recursive-agent --recursive
 
 ### Headless auth (CI, scripts)
 
-Set `DARI_API_KEY` to bypass browser login. When set, the CLI uses it as the
-bearer for every request and skips cached state entirely.
+Set `DARI_API_KEY` to a platform-scoped key to bypass browser login. When set,
+the CLI uses it as the bearer for every request and skips cached state entirely.
 
 ```bash
 export DARI_API_KEY=dari_...
 ```
 
-Create a key from a logged-in shell via `dari api-keys create --name ci`.
-Add `--scope routing` for a router-traffic key, or repeat/comma-separate
-`--scope` for a dual-scope key.
+Create a platform key for CLI/API use from a logged-in shell via
+`dari api-keys create --name ci`. Add `--scope routing` for a router-traffic
+key used against `https://routing.dari.dev/...`, or repeat/comma-separate
+`--scope` for a dual-scope key that works for both management API calls and
+router traffic.
 
 What works under `DARI_API_KEY`:
 
@@ -66,6 +68,8 @@ these routes):
 - `dari org list|create|switch|members|invite`
 - `dari api-keys list|create|revoke`
 - `dari credentials list|add|remove`
+- `dari router list|get`
+- `dari eval list|get`
 
 For those, run an interactive `dari auth login` first.
 
@@ -108,7 +112,7 @@ Packages the checkout and publishes an agent version. Agent names are unique wit
 | --- | --- |
 | `--api-key` | Override the cached org key |
 | `--agent-id` | Publish to a specific agent instead of resolving by name |
-| `--router-id` | Publish this version with a Dari Router model backend; falls back to `$DARI_ROUTER_ID` |
+| `--router-id` | Publish this version with a Dari Router model backend; accepts an `rtr_...` ID or copied router endpoint URL and falls back to `$DARI_ROUTER_ID` |
 | `--dry-run` | Build the local bundle and print the publish flow without uploading |
 | `--quiet` | Suppress per-stage progress on stderr |
 
@@ -118,6 +122,29 @@ Packages the checkout and publishes an agent version. Agent names are unique wit
 dari api-keys list
 dari api-keys create --name <name> [--scope platform|routing]
 dari api-keys revoke <key_id>
+```
+
+`platform` keys authenticate CLI/management API commands. `routing` keys
+authenticate router traffic such as
+`curl https://routing.dari.dev/rtr_.../chat/completions`. Use
+`--scope platform,routing` when one key needs both.
+
+### router
+
+```bash
+dari router list
+dari router get <router_id_or_endpoint>
+```
+
+Routers and eval scorecards are created in the Dari dashboard today; these
+commands help scripts discover IDs for `dari deploy --router-id` or
+`model_backend.router_id`.
+
+### eval
+
+```bash
+dari eval list
+dari eval get <eval_id>
 ```
 
 ### credentials

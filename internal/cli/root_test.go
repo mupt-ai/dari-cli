@@ -1,11 +1,16 @@
 package cli
 
 import (
+	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/mupt-ai/dari-cli/internal/api"
+	"github.com/mupt-ai/dari-cli/internal/auth"
 	"github.com/mupt-ai/dari-cli/internal/state"
 )
 
@@ -52,7 +57,17 @@ func TestResolveAPIURLWithAPIKeyKeepsFlagAndEnvPrecedence(t *testing.T) {
 	}
 }
 
+func TestOrgJWTRequestRejectsAPIKeyMode(t *testing.T) {
+	t.Setenv("DARI_API_KEY", "dari_test")
+
+	err := orgJWTRequest(&cobra.Command{}, &globalFlags{apiURL: "https://api.example.test"}, http.MethodGet, "/api-keys", nil, nil)
+	if !errors.Is(err, auth.ErrNeedsUserLogin) {
+		t.Fatalf("orgJWTRequest error = %v, want ErrNeedsUserLogin", err)
+	}
+}
+
 func TestResolveAPIURLWithoutAPIKeyStillReadsCachedState(t *testing.T) {
+	t.Setenv("DARI_API_KEY", "")
 	configDir := t.TempDir()
 	t.Setenv("DARI_CONFIG_DIR", configDir)
 	if err := os.WriteFile(filepath.Join(configDir, state.Filename), []byte("not-json"), 0o600); err != nil {

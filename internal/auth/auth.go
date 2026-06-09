@@ -23,7 +23,7 @@ const (
 	sessionRefreshLeeway = 60 * time.Second
 
 	// EnvAPIKey is a bearer token that bypasses `dari auth login` entirely.
-	// When set, all CLI commands authenticate with it in place of the cached
+	// Commands that support headless auth use it in place of the cached
 	// Supabase JWT / managed org key.
 	EnvAPIKey = "DARI_API_KEY"
 
@@ -39,7 +39,7 @@ const (
 var (
 	ErrNotLoggedIn    = errors.New("no CLI login is available for this API URL. Run `dari auth login` first, or set DARI_API_KEY")
 	ErrNoCurrentOrg   = errors.New("no current organization is selected. Run `dari org switch <org>`, or set DARI_ORG_ID")
-	ErrNeedsUserLogin = errors.New("this command manages user/org membership and requires `dari auth login`; DARI_API_KEY cannot be used here")
+	ErrNeedsUserLogin = errors.New("this command requires `dari auth login`; DARI_API_KEY cannot be used here")
 )
 
 // EnvAPIKeyValue returns the DARI_API_KEY env var, trimmed. Empty means unset.

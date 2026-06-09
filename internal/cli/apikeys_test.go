@@ -40,6 +40,11 @@ func TestAPIKeysCreateScopes(t *testing.T) {
 			scopeArgs: []string{"--scope", "platform,routing"},
 			want:      []string{"platform", "routing"},
 		},
+		{
+			name:      "normalizes and deduplicates scopes",
+			scopeArgs: []string{"--scope", " Platform ", "--scope", "routing", "--scope", "platform"},
+			want:      []string{"platform", "routing"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -55,6 +60,12 @@ func TestAPIKeysCreateScopes(t *testing.T) {
 	}
 }
 
+func TestNormalizeAPIKeyScopesRejectsUnsupportedScope(t *testing.T) {
+	if _, err := normalizeAPIKeyScopes([]string{"route"}); err == nil {
+		t.Fatal("normalizeAPIKeyScopes accepted unsupported scope")
+	}
+}
+
 func runAPIKeysCreate(t *testing.T, scopeArgs []string) apiKeyCreateRequest {
 	t.Helper()
 
@@ -66,7 +77,7 @@ func runAPIKeysCreate(t *testing.T, scopeArgs []string) apiKeyCreateRequest {
 		if r.URL.Path != "/v1/organizations/org_123/api-keys" {
 			t.Fatalf("path = %s", r.URL.Path)
 		}
-		if auth := r.Header.Get("Authorization"); auth != "Bearer dak_test" {
+		if auth := r.Header.Get("Authorization"); auth != "Bearer jwt_test" {
 			t.Fatalf("Authorization = %q", auth)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
@@ -83,8 +94,7 @@ func runAPIKeysCreate(t *testing.T, scopeArgs []string) apiKeyCreateRequest {
 	}))
 	defer srv.Close()
 
-	t.Setenv("DARI_API_KEY", "dak_test")
-	t.Setenv("DARI_ORG_ID", "org_123")
+	saveTestUserLogin(t, srv.URL)
 
 	cmd := newRootCmd("dev")
 	args := []string{"--api-url", srv.URL, "api-keys", "create", "--name", "Router client"}

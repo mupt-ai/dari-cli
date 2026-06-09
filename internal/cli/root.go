@@ -106,6 +106,9 @@ func orgJWTRequest(cmd *cobra.Command, gf *globalFlags, method, subpath string, 
 	if err != nil {
 		return err
 	}
+	if auth.EnvAPIKeyValue() != "" {
+		return auth.ErrNeedsUserLogin
+	}
 	orgID, err := requireCurrentOrgID()
 	if err != nil {
 		return err
