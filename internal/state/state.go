@@ -111,18 +111,6 @@ func Save(s *CliState) error {
 	return nil
 }
 
-// Clear removes the on-disk state, if any.
-func Clear() error {
-	path, err := Path()
-	if err != nil {
-		return err
-	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove state: %w", err)
-	}
-	return nil
-}
-
 // Path resolves the CLI state file path, honoring DARI_CONFIG_DIR, then
 // XDG_CONFIG_HOME, then APPDATA (Windows), falling back to ~/.config/dari.
 func Path() (string, error) {

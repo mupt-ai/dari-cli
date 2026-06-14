@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -89,9 +90,12 @@ func (gf *globalFlags) resolveAPIURL() (string, error) {
 
 // printJSON writes a pretty-printed JSON document to stdout, matching the
 // Python CLI's `json.dumps(..., indent=2, sort_keys=True)` layout closely
-// enough that consumers parsing stdout don't break.
+// enough that consumers parsing stdout don't break. Go's encoder already
+// sorts map keys alphabetically, so only indent setup is needed.
 func printJSON(v any) error {
-	enc := newIndentEncoder(os.Stdout)
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
 	if err := enc.Encode(v); err != nil {
 		return fmt.Errorf("encode json: %w", err)
 	}

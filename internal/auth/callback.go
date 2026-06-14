@@ -23,7 +23,7 @@ type callbackResult struct {
 	Error string
 }
 
-// runCallbackServer binds to 127.0.0.1 on an ephemeral port and blocks on a
+// callbackServer binds to 127.0.0.1 on an ephemeral port and blocks on a
 // single GET /callback request. The returned redirect URL is what gets
 // threaded into the Supabase authorize URL.
 //
@@ -31,15 +31,14 @@ type callbackResult struct {
 //
 //	server, err := startCallbackServer()
 //	// ... open browser with server.RedirectURL ...
-//	result, err := server.Wait(ctx, 5*time.Minute)
+//	result, err := server.WaitOrInput(ctx, nil, 5*time.Minute)
 //	server.Close()
 type callbackServer struct {
 	RedirectURL string
 
-	listener net.Listener
-	srv      *http.Server
-	result   chan callbackResult
-	once     sync.Once
+	srv    *http.Server
+	result chan callbackResult
+	once   sync.Once
 }
 
 func startCallbackServer() (*callbackServer, error) {
@@ -50,7 +49,6 @@ func startCallbackServer() (*callbackServer, error) {
 	addr := lis.Addr().(*net.TCPAddr)
 	cb := &callbackServer{
 		RedirectURL: fmt.Sprintf("http://127.0.0.1:%d/callback", addr.Port),
-		listener:    lis,
 		result:      make(chan callbackResult, 1),
 	}
 
@@ -81,23 +79,6 @@ func startCallbackServer() (*callbackServer, error) {
 	cb.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = cb.srv.Serve(lis) }()
 	return cb, nil
-}
-
-// Wait blocks until the callback fires or the context/timeout expires.
-func (cb *callbackServer) Wait(ctx context.Context, timeout time.Duration) (callbackResult, error) {
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
-	select {
-	case res := <-cb.result:
-		if res.Code == "" && res.Error == "" {
-			return res, errors.New("browser callback did not include a code")
-		}
-		return res, nil
-	case <-deadline.C:
-		return callbackResult{}, errors.New("timed out waiting for browser login to complete")
-	case <-ctx.Done():
-		return callbackResult{}, ctx.Err()
-	}
 }
 
 // Close tears down the callback listener. Safe to call multiple times.

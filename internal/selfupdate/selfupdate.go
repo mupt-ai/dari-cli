@@ -48,7 +48,6 @@ type CheckResult struct {
 	LatestVersion   string
 	UpdateAvailable bool
 	ReleaseURL      string
-	FromCache       bool
 }
 
 // UpdateOptions controls binary replacement. Zero values are suitable for the real CLI.
@@ -98,24 +97,14 @@ func (c *Client) Latest(ctx context.Context) (Release, error) {
 		defer cancel()
 	}
 
-	latestURL := c.LatestURL
-	if latestURL == "" {
-		latestURL = latestReleaseURL
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, latestURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.LatestURL, nil)
 	if err != nil {
 		return Release{}, fmt.Errorf("build latest-release request: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	if c.UserAgent != "" {
-		req.Header.Set("User-Agent", c.UserAgent)
-	}
+	req.Header.Set("User-Agent", c.UserAgent)
 
-	hc := c.HTTPClient
-	if hc == nil {
-		hc = http.DefaultClient
-	}
-	resp, err := hc.Do(req)
+	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return Release{}, fmt.Errorf("fetch latest release: %w", err)
 	}
@@ -158,7 +147,6 @@ func Check(ctx context.Context, currentVersion string, maxAge time.Duration) (Ch
 	if cached, ok := readFreshCache(maxAge); ok {
 		result.LatestVersion = cached.LatestVersion
 		result.ReleaseURL = cached.ReleaseURL
-		result.FromCache = true
 		result.UpdateAvailable = IsNewerVersion(cached.LatestVersion, currentVersion)
 		return result, nil
 	}
@@ -168,7 +156,6 @@ func Check(ctx context.Context, currentVersion string, maxAge time.Duration) (Ch
 		if cached, ok := readAnyCache(); ok {
 			result.LatestVersion = cached.LatestVersion
 			result.ReleaseURL = cached.ReleaseURL
-			result.FromCache = true
 			result.UpdateAvailable = IsNewerVersion(cached.LatestVersion, currentVersion)
 		}
 		return result, err
@@ -313,14 +300,8 @@ func (c *Client) download(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if c.UserAgent != "" {
-		req.Header.Set("User-Agent", c.UserAgent)
-	}
-	hc := c.HTTPClient
-	if hc == nil {
-		hc = http.DefaultClient
-	}
-	resp, err := hc.Do(req)
+	req.Header.Set("User-Agent", c.UserAgent)
+	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

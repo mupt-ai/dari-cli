@@ -179,7 +179,7 @@ func formatBytes(size int) string {
 	value := float64(size)
 	units := []string{"B", "KB", "MB", "GB"}
 	for i, unit := range units {
-		if abs(value) < 1024 || i == len(units)-1 {
+		if value < 1024 || i == len(units)-1 {
 			if unit == "B" {
 				return fmt.Sprintf("%d %s", int(value), unit)
 			}
@@ -188,11 +188,4 @@ func formatBytes(size int) string {
 		value /= 1024
 	}
 	return fmt.Sprintf("%.1f GB", value)
-}
-
-func abs(f float64) float64 {
-	if f < 0 {
-		return -f
-	}
-	return f
 }

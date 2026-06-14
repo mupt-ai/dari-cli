@@ -18,11 +18,9 @@ type OrgRecord struct {
 	Role string `json:"role"`
 }
 
-type bootstrapResponse struct {
-	Organizations []OrgRecord `json:"organizations"`
-}
-
-type orgsListResponse struct {
+// organizationsResponse is the shared payload of /v1/me/bootstrap and
+// GET /v1/organizations.
+type organizationsResponse struct {
 	Organizations []OrgRecord `json:"organizations"`
 }
 
@@ -37,7 +35,7 @@ func bootstrapAndSelectOrg(ctx context.Context, s *state.CliState, apiURL, prefe
 	if s.SupabaseSession == nil {
 		return ErrNotLoggedIn
 	}
-	var resp bootstrapResponse
+	var resp organizationsResponse
 	client := api.New(apiURL).WithBearer(s.SupabaseSession.AccessToken)
 	if err := client.Do(ctx, http.MethodPost, "/v1/me/bootstrap", map[string]any{}, &resp); err != nil {
 		return fmt.Errorf("bootstrap user: %w", err)
@@ -117,7 +115,7 @@ func ListOrganizations(ctx context.Context, apiURL string) (*state.CliState, []O
 	if EnvAPIKeyValue() != "" {
 		return nil, nil, ErrNeedsUserLogin
 	}
-	var resp orgsListResponse
+	var resp organizationsResponse
 	s, err := DoAuthenticated(ctx, apiURL, http.MethodGet, "/v1/organizations", nil, &resp)
 	if err != nil {
 		return nil, nil, err
@@ -141,13 +139,12 @@ func CreateOrganization(ctx context.Context, apiURL, name string) (*state.CliSta
 		return nil, err
 	}
 	// Upsert manually (not a full sync — we haven't refetched the list).
-	existing, ok := s.Organizations[created.ID]
 	s.Organizations[created.ID] = state.Organization{
 		ID:     created.ID,
 		Name:   created.Name,
 		Slug:   created.Slug,
 		Role:   created.Role,
-		APIKey: existingKey(existing, ok),
+		APIKey: s.Organizations[created.ID].APIKey,
 	}
 	if err := ensureCurrentOrgKey(ctx, s, apiURL, created.ID); err != nil {
 		return nil, err
@@ -168,15 +165,9 @@ func SwitchOrganization(ctx context.Context, apiURL, identifier string) (*state.
 	if err != nil {
 		return nil, err
 	}
-	var matched *OrgRecord
-	for i := range orgs {
-		if orgs[i].ID == identifier || orgs[i].Slug == identifier {
-			matched = &orgs[i]
-			break
-		}
-	}
-	if matched == nil {
-		return nil, fmt.Errorf("unknown organization %q", identifier)
+	matched, err := findOrgRecord(orgs, identifier)
+	if err != nil {
+		return nil, err
 	}
 	if err := ensureCurrentOrgKey(ctx, s, apiURL, matched.ID); err != nil {
 		return nil, err
@@ -197,15 +188,9 @@ func DeleteOrganization(ctx context.Context, apiURL, identifier string) (*state.
 	if err != nil {
 		return nil, OrgRecord{}, err
 	}
-	var matched *OrgRecord
-	for i := range orgs {
-		if orgs[i].ID == identifier || orgs[i].Slug == identifier {
-			matched = &orgs[i]
-			break
-		}
-	}
-	if matched == nil {
-		return nil, OrgRecord{}, fmt.Errorf("unknown organization %q", identifier)
+	matched, err := findOrgRecord(orgs, identifier)
+	if err != nil {
+		return nil, OrgRecord{}, err
 	}
 	var deleted OrgRecord
 	if _, err := DoAuthenticated(ctx, apiURL, http.MethodDelete, "/v1/organizations/"+matched.ID, nil, &deleted); err != nil {
@@ -222,12 +207,15 @@ func DeleteOrganization(ctx context.Context, apiURL, identifier string) (*state.
 	if err := state.Save(s); err != nil {
 		return nil, OrgRecord{}, err
 	}
-	return s, *matched, nil
+	return s, matched, nil
 }
 
-func existingKey(org state.Organization, ok bool) string {
-	if !ok {
-		return ""
+// findOrgRecord matches identifier against an org's id or slug.
+func findOrgRecord(orgs []OrgRecord, identifier string) (OrgRecord, error) {
+	for _, org := range orgs {
+		if org.ID == identifier || org.Slug == identifier {
+			return org, nil
+		}
 	}
-	return org.APIKey
+	return OrgRecord{}, fmt.Errorf("unknown organization %q", identifier)
 }

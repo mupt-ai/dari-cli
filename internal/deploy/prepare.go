@@ -73,11 +73,11 @@ func PrepareWithOptions(
 	resolvedAgentID := options.AgentID
 	if resolvedAgentID == "" && apiURL != "" {
 		// Remember the last-published agent ID for this API URL.
-		if id, err := readDeployState(deployRoot, apiURL); err != nil {
+		id, err := readDeployState(deployRoot, apiURL)
+		if err != nil {
 			return nil, err
-		} else {
-			resolvedAgentID = id
 		}
+		resolvedAgentID = id
 	}
 
 	normalizedRouterID, err := NormalizeRouterID(options.RouterID)

@@ -366,15 +366,7 @@ func resolveNewSessionText(args []string, useStdin bool) (string, error) {
 		if len(args) > 0 {
 			return "", errors.New("pass either TEXT or --stdin, not both")
 		}
-		raw, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return "", fmt.Errorf("read stdin: %w", err)
-		}
-		text := strings.TrimRight(string(raw), "\r\n")
-		if text == "" {
-			return "", errors.New("message body must be non-empty")
-		}
-		return text, nil
+		return readStdinMessage()
 	}
 	if len(args) == 0 {
 		return "", errors.New("message text is required (pass as an argument or use --stdin)")
@@ -421,15 +413,7 @@ func resolveSessionText(args []string, useStdin bool) (string, error) {
 		return "", errors.New("pass either TEXT or --stdin, not both")
 	}
 	if useStdin {
-		raw, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return "", fmt.Errorf("read stdin: %w", err)
-		}
-		text := strings.TrimRight(string(raw), "\r\n")
-		if text == "" {
-			return "", errors.New("message body must be non-empty")
-		}
-		return text, nil
+		return readStdinMessage()
 	}
 	if !explicit {
 		return "", errors.New("message text is required (pass as second argument or use --stdin)")
@@ -438,4 +422,18 @@ func resolveSessionText(args []string, useStdin bool) (string, error) {
 		return "", errors.New("message body must be non-empty")
 	}
 	return args[1], nil
+}
+
+// readStdinMessage reads a non-empty message body from stdin, trimming the
+// trailing newline.
+func readStdinMessage() (string, error) {
+	raw, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return "", fmt.Errorf("read stdin: %w", err)
+	}
+	text := strings.TrimRight(string(raw), "\r\n")
+	if text == "" {
+		return "", errors.New("message body must be non-empty")
+	}
+	return text, nil
 }

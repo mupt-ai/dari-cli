@@ -66,16 +66,9 @@ type Status struct {
 	SessionMode string              `json:"session_mode"`
 }
 
-// Login runs the full browser login flow: web-assisted Supabase PKCE login
-// + /v1/me/bootstrap + /v1/organizations/{id}/managed-cli-key/ensure.
+// LoginWithOptions runs the full browser login flow: web-assisted Supabase
+// PKCE login + /v1/me/bootstrap + /v1/organizations/{id}/managed-cli-key/ensure.
 // The resulting state is persisted to disk.
-//
-// Login is a no-op when DARI_API_KEY is set: headless auth does not need
-// cached state.
-func Login(ctx context.Context, apiURL string) (*state.CliState, error) {
-	return LoginWithOptions(ctx, apiURL, LoginOptions{})
-}
-
 func LoginWithOptions(ctx context.Context, apiURL string, opts LoginOptions) (*state.CliState, error) {
 	if EnvAPIKeyValue() != "" {
 		return nil, errors.New("DARI_API_KEY is set; `dari auth login` is not needed (unset the env var to use a browser login)")

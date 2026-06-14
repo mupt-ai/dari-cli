@@ -108,6 +108,5 @@ func findStorageBindingByName(cmd *cobra.Command, gf *globalFlags, name string) 
 }
 
 func storageCredentialName(name string) string {
-	replacer := strings.NewReplacer("-", "_")
-	return "GCS_STORAGE_" + strings.ToUpper(replacer.Replace(name)) + "_KEY"
+	return "GCS_STORAGE_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_")) + "_KEY"
 }

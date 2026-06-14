@@ -34,14 +34,9 @@ func resolveAgentRef(cmd *cobra.Command, gf *globalFlags, ref string) (string, e
 	return matchAgentRef(ref, agents)
 }
 
+// matchAgentRef resolves a non-empty, non-"agt_" ref against a fetched agent
+// list by exact ID, then unique name.
 func matchAgentRef(ref string, agents []agentReferenceSummary) (string, error) {
-	ref = strings.TrimSpace(ref)
-	if ref == "" {
-		return "", fmt.Errorf("agent reference must be non-empty")
-	}
-	if strings.HasPrefix(ref, "agt_") {
-		return ref, nil
-	}
 	for _, agent := range agents {
 		if agent.ID == ref {
 			return agent.ID, nil
