@@ -74,10 +74,10 @@ func runAPIKeysCreate(t *testing.T, scopeArgs []string) apiKeyCreateRequest {
 		if r.Method != http.MethodPost {
 			t.Fatalf("method = %s, want POST", r.Method)
 		}
-		if r.URL.Path != "/v1/organizations/org_123/api-keys" {
+		if r.URL.Path != "/v1/organizations/current/api-keys" {
 			t.Fatalf("path = %s", r.URL.Path)
 		}
-		if auth := r.Header.Get("Authorization"); auth != "Bearer jwt_test" {
+		if auth := r.Header.Get("Authorization"); auth != "Bearer dari_test" {
 			t.Fatalf("Authorization = %q", auth)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
@@ -94,7 +94,7 @@ func runAPIKeysCreate(t *testing.T, scopeArgs []string) apiKeyCreateRequest {
 	}))
 	defer srv.Close()
 
-	saveTestUserLogin(t, srv.URL)
+	useTestAPIKey(t)
 
 	cmd := newRootCmd("dev")
 	args := []string{"--api-url", srv.URL, "api-keys", "create", "--name", "Router client"}

@@ -123,7 +123,7 @@ func newOrgMembersCmd(gf *globalFlags) *cobra.Command {
 			var resp struct {
 				Members []any `json:"members"`
 			}
-			if err := orgJWTRequest(cmd, gf, http.MethodGet, "/members", nil, &resp); err != nil {
+			if err := orgKeyRequest(cmd, gf, http.MethodGet, "/v1/organizations/current/members", nil, &resp); err != nil {
 				return err
 			}
 			return printJSON(map[string]any{"members": resp.Members})
@@ -142,7 +142,7 @@ func newOrgInviteCmd(gf *globalFlags) *cobra.Command {
 				return fmt.Errorf("invalid role %q: expected owner, admin, or member", role)
 			}
 			var resp map[string]any
-			if err := orgJWTRequest(cmd, gf, http.MethodPost, "/invitations",
+			if err := orgKeyRequest(cmd, gf, http.MethodPost, "/v1/organizations/current/invitations",
 				map[string]string{"email": args[0], "role": role}, &resp); err != nil {
 				return err
 			}
@@ -171,23 +171,4 @@ func orgCreateOrSwitchOutput(s *state.CliState) map[string]any {
 		out["organization"] = orgToMap(*org)
 	}
 	return out
-}
-
-// requireCurrentOrgID loads state and asserts a current org is selected.
-// Does no network calls — bails early if the user needs to run `dari org switch`.
-//
-// DARI_ORG_ID takes precedence, enabling headless use together with
-// DARI_API_KEY.
-func requireCurrentOrgID() (string, error) {
-	if id := auth.EnvOrgIDValue(); id != "" {
-		return id, nil
-	}
-	s, err := state.Load()
-	if err != nil {
-		return "", err
-	}
-	if s.CurrentOrgID == "" {
-		return "", auth.ErrNoCurrentOrg
-	}
-	return s.CurrentOrgID, nil
 }

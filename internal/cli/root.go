@@ -102,27 +102,8 @@ func printJSON(v any) error {
 	return nil
 }
 
-// orgJWTRequest issues a user-JWT-authenticated request against
-// /v1/organizations/{currentOrgID}{subpath}. Used by org-admin commands
-// (api-keys, credentials, members, invitations) that Supabase gates.
-func orgJWTRequest(cmd *cobra.Command, gf *globalFlags, method, subpath string, body, out any) error {
-	apiURL, err := gf.resolveAPIURL()
-	if err != nil {
-		return err
-	}
-	if auth.EnvAPIKeyValue() != "" {
-		return auth.ErrNeedsUserLogin
-	}
-	orgID, err := requireCurrentOrgID()
-	if err != nil {
-		return err
-	}
-	_, err = auth.DoAuthenticated(cmd.Context(), apiURL, method, "/v1/organizations/"+orgID+subpath, body, out)
-	return err
-}
-
-// orgKeyRequest issues a managed-CLI-key-authenticated request against the
-// data plane. Used by agent and session commands.
+// orgKeyRequest issues a request authenticated with the current org API key.
+// If DARI_API_KEY is set, that key is used instead of cached CLI state.
 func orgKeyRequest(cmd *cobra.Command, gf *globalFlags, method, path string, body, out any) error {
 	apiURL, err := gf.resolveAPIURL()
 	if err != nil {

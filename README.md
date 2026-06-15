@@ -58,20 +58,19 @@ router traffic.
 What works under `DARI_API_KEY`:
 
 - `dari deploy`
-- `dari agent list` / `dari agent delete`
-- `dari session list|create|get|send|events`
-
-What does **not** work today (server currently enforces Supabase user JWT on
-these routes):
-
-- `dari auth login|logout` (by design — no login needed)
-- `dari org list|create|switch|members|invite`
+- `dari agent list|versions|version|status|webhook|delete`
 - `dari api-keys list|create|revoke`
 - `dari credentials list|add|remove`
-- `dari router list|get`
 - `dari eval list|get`
+- `dari org members|invite`
+- `dari router list|get|models|create|update|delete`
+- `dari session list|create|get|send|events`
+- `dari storage connect gcs`
 
-For those, run an interactive `dari auth login` first.
+What does **not** work under `DARI_API_KEY`:
+
+- `dari auth login|logout` (by design — no login needed)
+- `dari org list|create|switch|delete` (these operate on the browser-login org list rather than the API key's current org)
 
 ### update
 
@@ -134,11 +133,28 @@ authenticate router traffic such as
 ```bash
 dari router list
 dari router get <router_id_or_endpoint>
+dari router models                           # model catalog grouped by provider
+dari router create <name> --model <model_id> [--model <model_id> ...] \
+  [--provider-key provider=KEY | --provider-key-env provider=ENV_VAR | --managed-key provider] \
+  [--eval <eval_id> ...] \
+  [--strategy slm|heuristic] \
+  [--performance-weight 0.7 --price-weight 0.3 --eval-weight <eval_id>=1.0]
+dari router update <router_id_or_endpoint> [--name <name>] [--model ...] \
+  [--provider-key ...] [--managed-key ...] [--eval ...] [--clear-evals] \
+  [--strategy ...] [--performance-weight ... --price-weight ... --eval-weight ...]
+dari router delete <router_id_or_endpoint> [--yes]
 ```
 
-Routers and eval scorecards are created in the Dari dashboard today; these
-commands help scripts discover IDs for `dari deploy --router-id` or
-`model_backend.router_id`.
+Router commands accept either an `rtr_...` ID or a copied router endpoint URL.
+`router update` only changes the flags you pass; everything else keeps its
+current value. Stored provider keys are write-only — pass `--provider-key-env`
+(preferred) or `--provider-key` to replace one, or `--managed-key <provider>`
+to switch that provider to Dari-managed billing. With `--strategy heuristic`,
+pass `--performance-weight` and `--price-weight` together (they must sum
+to 1), plus a repeatable `--eval-weight eval_id=WEIGHT` for every imported
+eval (those must also sum to 1). Eval
+scorecards themselves are still created in the dashboard; `dari eval list`
+discovers IDs for `--eval`.
 
 ### eval
 
@@ -158,12 +174,36 @@ dari credentials add <name> --value-stdin < secret.txt
 dari credentials remove <name>
 ```
 
+### storage
+
+```bash
+dari storage connect gcs <name> \
+  --bucket <bucket> \
+  --base-prefix <prefix> \
+  --service-account-key ./service-account.json
+```
+
+This stores the service account JSON as a runtime credential and prints the
+`sandbox.storage_binding` manifest snippet to use in `dari.yml`.
+
 ### agent
 
 ```bash
-dari agent list                              # list deployed agents
-dari agent delete <agent_id> [--yes]         # soft-delete
+dari agent list
+dari agent versions <agent>
+dari agent version show <agent> <version_id>
+dari agent version files <agent> <version_id>
+dari agent version cat <agent> <version_id> <path>
+dari agent status [repo_root] [--agent-id <agent>]
+dari agent webhook get <agent>
+dari agent webhook set <agent> <webhook_url> [--event <event_type> ...]
+dari agent webhook clear <agent>
+dari agent webhook rotate-secret <agent>
+dari agent delete <agent> [--yes]
 ```
+
+`<agent>` can be an agent ID or an unambiguous agent name. `agent delete` hides
+the agent and stops new sessions; published versions are preserved.
 
 ### session
 

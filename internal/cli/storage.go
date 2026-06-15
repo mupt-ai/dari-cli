@@ -52,8 +52,8 @@ func newStorageConnectGCSCmd(gf *globalFlags) *cobra.Command {
 			}
 			credentialName := storageCredentialName(name)
 			var credentialResp map[string]any
-			if err := orgJWTRequest(cmd, gf, http.MethodPut,
-				"/credentials/"+credentialName,
+			if err := orgKeyRequest(cmd, gf, http.MethodPut,
+				"/v1/organizations/current/credentials/"+credentialName,
 				map[string]string{"value": string(keyBytes)}, &credentialResp); err != nil {
 				return err
 			}
@@ -64,7 +64,7 @@ func newStorageConnectGCSCmd(gf *globalFlags) *cobra.Command {
 			}
 			if bindingResp == nil {
 				bindingResp = map[string]any{}
-				if err := orgJWTRequest(cmd, gf, http.MethodPost, "/storage-bindings",
+				if err := orgKeyRequest(cmd, gf, http.MethodPost, "/v1/organizations/current/storage-bindings",
 					map[string]string{
 						"provider":                            "gcs",
 						"name":                                name,
@@ -96,7 +96,7 @@ func findStorageBindingByName(cmd *cobra.Command, gf *globalFlags, name string) 
 	var listResp struct {
 		StorageBindings []map[string]any `json:"storage_bindings"`
 	}
-	if err := orgJWTRequest(cmd, gf, http.MethodGet, "/storage-bindings", nil, &listResp); err != nil {
+	if err := orgKeyRequest(cmd, gf, http.MethodGet, "/v1/organizations/current/storage-bindings", nil, &listResp); err != nil {
 		return nil, err
 	}
 	for _, binding := range listResp.StorageBindings {

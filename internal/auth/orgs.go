@@ -121,6 +121,11 @@ func ListOrganizations(ctx context.Context, apiURL string) (*state.CliState, []O
 		return nil, nil, err
 	}
 	syncOrganizations(s, resp.Organizations)
+	if org := s.CurrentOrg(); org != nil && org.APIKey == "" {
+		if err := ensureCurrentOrgKey(ctx, s, apiURL, org.ID); err != nil {
+			return nil, nil, err
+		}
+	}
 	if err := state.Save(s); err != nil {
 		return nil, nil, err
 	}

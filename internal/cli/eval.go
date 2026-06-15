@@ -29,7 +29,7 @@ func newEvalListCmd(gf *globalFlags) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			var resp map[string]any
-			if err := orgJWTRequest(cmd, gf, http.MethodGet, "/evals", nil, &resp); err != nil {
+			if err := orgKeyRequest(cmd, gf, http.MethodGet, "/v1/organizations/current/evals", nil, &resp); err != nil {
 				return err
 			}
 			return printJSON(resp)
@@ -44,7 +44,7 @@ func newEvalGetCmd(gf *globalFlags) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var resp map[string]any
-			if err := orgJWTRequest(cmd, gf, http.MethodGet, "/evals/"+url.PathEscape(args[0]), nil, &resp); err != nil {
+			if err := orgKeyRequest(cmd, gf, http.MethodGet, "/v1/organizations/current/evals/"+url.PathEscape(args[0]), nil, &resp); err != nil {
 				return err
 			}
 			return printJSON(resp)

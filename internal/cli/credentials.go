@@ -35,7 +35,7 @@ func newCredentialsListCmd(gf *globalFlags) *cobra.Command {
 			var resp struct {
 				Credentials []any `json:"credentials"`
 			}
-			if err := orgJWTRequest(cmd, gf, http.MethodGet, "/credentials", nil, &resp); err != nil {
+			if err := orgKeyRequest(cmd, gf, http.MethodGet, "/v1/organizations/current/credentials", nil, &resp); err != nil {
 				return err
 			}
 			return printJSON(map[string]any{"credentials": resp.Credentials})
@@ -61,8 +61,8 @@ func newCredentialsAddCmd(gf *globalFlags) *cobra.Command {
 				return err
 			}
 			var resp map[string]any
-			if err := orgJWTRequest(cmd, gf, http.MethodPut,
-				"/credentials/"+url.PathEscape(name),
+			if err := orgKeyRequest(cmd, gf, http.MethodPut,
+				"/v1/organizations/current/credentials/"+url.PathEscape(name),
 				map[string]string{"value": value}, &resp); err != nil {
 				return err
 			}
@@ -80,8 +80,8 @@ func newCredentialsRemoveCmd(gf *globalFlags) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var resp map[string]any
-			if err := orgJWTRequest(cmd, gf, http.MethodDelete,
-				"/credentials/"+url.PathEscape(args[0]), nil, &resp); err != nil {
+			if err := orgKeyRequest(cmd, gf, http.MethodDelete,
+				"/v1/organizations/current/credentials/"+url.PathEscape(args[0]), nil, &resp); err != nil {
 				return err
 			}
 			return printJSON(resp)

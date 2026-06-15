@@ -29,7 +29,7 @@ func newAPIKeysListCmd(gf *globalFlags) *cobra.Command {
 			var resp struct {
 				APIKeys []any `json:"api_keys"`
 			}
-			if err := orgJWTRequest(cmd, gf, http.MethodGet, "/api-keys", nil, &resp); err != nil {
+			if err := orgKeyRequest(cmd, gf, http.MethodGet, "/v1/organizations/current/api-keys", nil, &resp); err != nil {
 				return err
 			}
 			return printJSON(map[string]any{"api_keys": resp.APIKeys})
@@ -52,7 +52,7 @@ func newAPIKeysCreateCmd(gf *globalFlags) *cobra.Command {
 				return err
 			}
 			var resp map[string]any
-			if err := orgJWTRequest(cmd, gf, http.MethodPost, "/api-keys",
+			if err := orgKeyRequest(cmd, gf, http.MethodPost, "/v1/organizations/current/api-keys",
 				map[string]any{"label": name, "scopes": normalizedScopes}, &resp); err != nil {
 				return err
 			}
@@ -98,7 +98,7 @@ func newAPIKeysRevokeCmd(gf *globalFlags) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var resp map[string]any
-			if err := orgJWTRequest(cmd, gf, http.MethodDelete, "/api-keys/"+args[0], nil, &resp); err != nil {
+			if err := orgKeyRequest(cmd, gf, http.MethodDelete, "/v1/organizations/current/api-keys/"+args[0], nil, &resp); err != nil {
 				return err
 			}
 			return printJSON(resp)
