@@ -1,5 +1,4 @@
-// Package scaffold generates a new Dari agent project from the embedded
-// templates in templates/.
+// Package scaffold generates a new Flue project from the embedded templates in templates/.
 package scaffold
 
 import (
@@ -9,15 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"text/template"
 )
 
-const (
-	defaultSkillName          = "review"
-	defaultRecursiveSkillName = "recursive-delegation"
-	defaultProjectName        = "my-agent"
-)
+const defaultProjectName = "my-agent"
 
 var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
@@ -28,32 +24,23 @@ var templatesFS embed.FS
 type Options struct {
 	TargetDir string
 	Name      string // optional; inferred from TargetDir when empty
-	Skill     string // defaults to "review", or "recursive-delegation" in recursive mode
 	Force     bool
-	Recursive bool
-	APIURL    string // optional; embedded into sandbox.env as DARI_API_URL in recursive mode
 }
 
 // Result is what `dari init` prints.
 type Result struct {
 	ProjectRoot  string
 	ProjectName  string
-	SkillName    string
-	Recursive    bool
 	WrittenFiles []string // relative to ProjectRoot, POSIX-separator, sorted
 }
 
 // templateData is what every template in templates/ renders against.
 type templateData struct {
 	ProjectName string
-	SkillName   string
-	SkillTitle  string
-	APIURL      string
 }
 
 // fileSpec maps an embedded source template to its output path. Both the
-// source and the output path are rendered through text/template so the skill
-// directory name can depend on SkillName.
+// source and the output path are rendered through text/template.
 type fileSpec struct {
 	source     string // path inside templatesFS
 	outputPath string // POSIX path relative to ProjectRoot; may contain template actions
@@ -61,21 +48,9 @@ type fileSpec struct {
 
 var defaultFileSpecs = []fileSpec{
 	{"templates/dari.yml.tmpl", "dari.yml"},
-	{"templates/system.md.tmpl", "prompts/system.md"},
-	{"templates/tool.ts", "tools/repo_search/tool.ts"},
-	{"templates/SKILL.md.tmpl", "skills/{{.SkillName}}/SKILL.md"},
+	{"templates/package.json.tmpl", "package.json"},
+	{"templates/agent.ts.tmpl", "agents/{{.ProjectName}}.ts"},
 	{"templates/README.md.tmpl", "README.md"},
-	{"templates/gitignore", ".gitignore"},
-}
-
-var recursiveFileSpecs = []fileSpec{
-	{"templates/recursive/dari.yml.tmpl", "dari.yml"},
-	{"templates/recursive/system.md.tmpl", "prompts/system.md"},
-	{"templates/tool.ts", "tools/repo_search/tool.ts"},
-	{"templates/recursive/dari-skill.md.tmpl", "skills/dari/SKILL.md"},
-	{"templates/recursive/SKILL.md.tmpl", "skills/{{.SkillName}}/SKILL.md"},
-	{"templates/recursive/README.md.tmpl", "README.md"},
-	{"templates/recursive/install-dari.sh", "scripts/install-dari.sh"},
 	{"templates/gitignore", ".gitignore"},
 }
 
@@ -89,23 +64,9 @@ func Run(opts Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	skillName, err := resolveSkillName(opts.Skill, opts.Recursive)
-	if err != nil {
-		return nil, err
-	}
-	if opts.Recursive {
-		if skillName == "dari" {
-			return nil, fmt.Errorf("skill name %q is reserved by recursive scaffold", skillName)
-		}
-	}
 
-	data := templateData{
-		ProjectName: projectName,
-		SkillName:   skillName,
-		SkillTitle:  titleCase(strings.ReplaceAll(skillName, "-", " ")),
-		APIURL:      strings.TrimSpace(opts.APIURL),
-	}
-	files, err := renderFiles(data, specsForOptions(opts))
+	data := templateData{ProjectName: projectName}
+	files, err := renderFiles(data, defaultFileSpecs)
 	if err != nil {
 		return nil, err
 	}
@@ -123,8 +84,6 @@ func Run(opts Options) (*Result, error) {
 	return &Result{
 		ProjectRoot:  projectRoot,
 		ProjectName:  projectName,
-		SkillName:    skillName,
-		Recursive:    opts.Recursive,
 		WrittenFiles: written,
 	}, nil
 }
@@ -161,29 +120,9 @@ func resolveProjectName(explicit, projectRoot string) (string, error) {
 	return candidate, nil
 }
 
-func resolveSkillName(explicit string, recursive bool) (string, error) {
-	if explicit == "" {
-		if recursive {
-			return defaultRecursiveSkillName, nil
-		}
-		return defaultSkillName, nil
-	}
-	if !namePattern.MatchString(explicit) {
-		return "", fmt.Errorf("skill name must match [a-z0-9][a-z0-9-]* (got %q)", explicit)
-	}
-	return explicit, nil
-}
-
 type renderedFile struct {
 	path    string
 	content []byte
-}
-
-func specsForOptions(opts Options) []fileSpec {
-	if opts.Recursive {
-		return recursiveFileSpecs
-	}
-	return defaultFileSpecs
 }
 
 func renderFiles(data templateData, specs []fileSpec) ([]renderedFile, error) {
@@ -215,9 +154,7 @@ func renderString(s string, data templateData) (string, error) {
 }
 
 func renderTemplate(name, body string, data templateData) ([]byte, error) {
-	t, err := template.New(name).Funcs(template.FuncMap{
-		"yamlQuote": yamlQuote,
-	}).Option("missingkey=error").Parse(body)
+	t, err := template.New(name).Option("missingkey=error").Parse(body)
 	if err != nil {
 		return nil, fmt.Errorf("parse template %s: %w", name, err)
 	}
@@ -253,6 +190,7 @@ func writeAll(projectRoot string, files []renderedFile) ([]string, error) {
 		}
 		written = append(written, f.path)
 	}
+	sort.Strings(written)
 	return written, nil
 }
 
@@ -260,39 +198,4 @@ func slugify(v string) string {
 	lowered := strings.ToLower(strings.TrimSpace(v))
 	re := regexp.MustCompile(`[^a-z0-9]+`)
 	return strings.Trim(re.ReplaceAllString(lowered, "-"), "-")
-}
-
-// titleCase mirrors Python's str.title(): uppercases the first character of
-// each whitespace-delimited word, lowercases the rest.
-func titleCase(s string) string {
-	parts := strings.Fields(s)
-	for i, p := range parts {
-		if len(p) == 0 {
-			continue
-		}
-		parts[i] = strings.ToUpper(p[:1]) + strings.ToLower(p[1:])
-	}
-	return strings.Join(parts, " ")
-}
-
-func yamlQuote(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	for _, r := range s {
-		switch r {
-		case '\\', '"':
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		case '\n':
-			b.WriteString(`\n`)
-		case '\r':
-			b.WriteString(`\r`)
-		case '\t':
-			b.WriteString(`\t`)
-		default:
-			b.WriteRune(r)
-		}
-	}
-	b.WriteByte('"')
-	return b.String()
 }

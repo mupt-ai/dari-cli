@@ -1,6 +1,6 @@
 # Dari CLI
 
-`dari` packages and publishes agent projects to Dari.
+`dari` packages and publishes Flue projects to Dari.
 
 Full docs: https://docs.dari.dev
 
@@ -33,27 +33,27 @@ Most commands require `dari auth login` first. The CLI talks to `https://api.dar
 ### init
 
 ```bash
-dari init my-agent
-dari credentials add DARI_API_KEY
-dari init recursive-agent --recursive
+dari init chat
 ```
 
-`--recursive` scaffolds an agent with the Dari CLI and a `skills/dari` playbook so it can deploy copies of itself and start child sessions. The recursive manifest references a stored runtime credential named `DARI_API_KEY`; the key is not written to `dari.yml`.
+Creates a normal Flue project with `package.json`, `agents/chat.ts`, and a small Dari deploy file. The generated OpenRouter example declares the provider key it reads at runtime:
+
+```yaml
+name: chat
+sandbox:
+  secrets:
+    - OPENROUTER_API_KEY
+```
 
 ### Headless auth (CI, scripts)
 
-Set `DARI_API_KEY` to a platform-scoped key to bypass browser login. When set,
-the CLI uses it as the bearer for every request and skips cached state entirely.
+Set `DARI_API_KEY` to a platform-scoped key to bypass browser login. When set, the CLI uses it as the bearer for every request and skips cached state entirely.
 
 ```bash
 export DARI_API_KEY=dari_...
 ```
 
-Create a platform key for CLI/API use from a logged-in shell via
-`dari api-keys create --name ci`. Add `--scope routing` for a router-traffic
-key used against `https://routing.dari.dev/...`, or repeat/comma-separate
-`--scope` for a dual-scope key that works for both management API calls and
-router traffic.
+Create a platform key for CLI/API use from a logged-in shell via `dari api-keys create --name ci`. Add `--scope routing` for a router-traffic key used against `https://routing.dari.dev/...`, or repeat/comma-separate `--scope` for a dual-scope key that works for both management API calls and router traffic.
 
 What works under `DARI_API_KEY`:
 
@@ -65,7 +65,6 @@ What works under `DARI_API_KEY`:
 - `dari org members|invite`
 - `dari router list|get|models|create|update|delete`
 - `dari session list|create|get|send|events`
-- `dari storage connect gcs`
 
 What does **not** work under `DARI_API_KEY`:
 
@@ -111,7 +110,6 @@ Packages the checkout and publishes an agent version. Agent names are unique wit
 | --- | --- |
 | `--api-key` | Override the cached org key |
 | `--agent-id` | Publish to a specific agent instead of resolving by name |
-| `--router-id` | Publish this version with a Dari Router model backend; accepts an `rtr_...` ID or copied router endpoint URL and falls back to `$DARI_ROUTER_ID` |
 | `--dry-run` | Build the local bundle and print the publish flow without uploading |
 | `--quiet` | Suppress per-stage progress on stderr |
 
@@ -123,10 +121,7 @@ dari api-keys create --name <name> [--scope platform|routing]
 dari api-keys revoke <key_id>
 ```
 
-`platform` keys authenticate CLI/management API commands. `routing` keys
-authenticate router traffic such as
-`curl https://routing.dari.dev/rtr_.../chat/completions`. Use
-`--scope platform,routing` when one key needs both.
+`platform` keys authenticate CLI/management API commands. `routing` keys authenticate router traffic such as `curl https://routing.dari.dev/rtr_.../chat/completions`. Use `--scope platform,routing` when one key needs both.
 
 ### router
 
@@ -145,16 +140,7 @@ dari router update <router_id_or_endpoint> [--name <name>] [--model ...] \
 dari router delete <router_id_or_endpoint> [--yes]
 ```
 
-Router commands accept either an `rtr_...` ID or a copied router endpoint URL.
-`router update` only changes the flags you pass; everything else keeps its
-current value. Stored provider keys are write-only — pass `--provider-key-env`
-(preferred) or `--provider-key` to replace one, or `--managed-key <provider>`
-to switch that provider to Dari-managed billing. With `--strategy heuristic`,
-pass `--performance-weight` and `--price-weight` together (they must sum
-to 1), plus a repeatable `--eval-weight eval_id=WEIGHT` for every imported
-eval (those must also sum to 1). Eval
-scorecards themselves are still created in the dashboard; `dari eval list`
-discovers IDs for `--eval`.
+Router commands accept either an `rtr_...` ID or a copied router endpoint URL. `router update` only changes the flags you pass; everything else keeps its current value. Stored provider keys are write-only — pass `--provider-key-env` (preferred) or `--provider-key` to replace one, or `--managed-key <provider>` to switch that provider to Dari-managed billing.
 
 ### eval
 
@@ -165,26 +151,14 @@ dari eval get <eval_id>
 
 ### credentials
 
-Stored secrets referenced by name from `dari.yml`. You only need these for explicit BYOK fields (`llm.api_key_secret`, `sandbox.provider_api_key_secret`) or names listed under `sandbox.secrets`; omitted provider key fields use Dari-managed defaults.
+Stored credentials are named secrets for values your Flue project needs at runtime, such as a provider key for a model API.
 
 ```bash
 dari credentials list
-dari credentials add <name> [value]          # prompts if value omitted
+dari credentials add OPENROUTER_API_KEY      # prompts if value omitted
 dari credentials add <name> --value-stdin < secret.txt
 dari credentials remove <name>
 ```
-
-### storage
-
-```bash
-dari storage connect gcs <name> \
-  --bucket <bucket> \
-  --base-prefix <prefix> \
-  --service-account-key ./service-account.json
-```
-
-This stores the service account JSON as a runtime credential and prints the
-`sandbox.storage_binding` manifest snippet to use in `dari.yml`.
 
 ### agent
 
@@ -202,8 +176,7 @@ dari agent webhook rotate-secret <agent>
 dari agent delete <agent> [--yes]
 ```
 
-`<agent>` can be an agent ID or an unambiguous agent name. `agent delete` hides
-the agent and stops new sessions; published versions are preserved.
+`<agent>` can be an agent ID or an unambiguous agent name. `agent delete` hides the agent and stops new sessions; published versions are preserved.
 
 ### session
 
@@ -211,8 +184,6 @@ the agent and stops new sessions; published versions are preserved.
 dari session list --agent <agent_id>
 dari session create --agent <agent_id>
 dari session create --agent <agent_id> --secret-env INTERNAL_API_TOKEN
-dari session create --agent <agent_id> --llm claude
-dari session create --agent <agent_id> --llm-api-key-env BASETEN_API_KEY
 dari session create --agent <agent_id> --internet-access
 dari session get <session_id>
 dari session send <session_id> <text>        # or --stdin < message.txt
@@ -220,55 +191,19 @@ dari session send --agent <agent_id> <text>  # creates a new session first
 dari session events <session_id> [--limit N]
 ```
 
-`--secret NAME=VALUE` and `--secret-env NAME` pass session-scoped secrets to
-the sandbox for names declared in `sandbox.secrets`. `--llm` selects a named
-`llm.options` entry from the deployed manifest. `--llm-api-key` and
-`--llm-api-key-env` override the LLM provider key for the session only; that
-key is not exposed to sandbox code. `--internet-access` and
-`--no-internet-access` override whether the execution sandbox can reach the
-public internet for the session.
+## Bundle Shape
 
-## Bundle shape
+The repo root must contain `dari.yml` and a Flue project with `agents/<name>.ts`.
 
-The repo root must contain:
-
-- `dari.yml`
-- any prompt files referenced by `instructions`
-- code-first TypeScript tools as `tools/<name>/tool.ts`
-- `Dockerfile` only if `dari.yml` sets `sandbox.dockerfile`; otherwise the default E2B base image is used.
-
-Supported `harness.kind` values: `pi`.
-
-Minimal direct-model `dari.yml`:
+Minimal `dari.yml`:
 
 ```yaml
-name: support-agent
-harness: pi
-
-instructions:
-  system: prompts/system.md
-
-llm:
-  model: openai/gpt-5.5
+name: chat
 ```
 
-Router-backed agents can put the router selection in source instead of defining
-an `llm` block:
+If your Flue code reads runtime secrets, declare their names under `sandbox.secrets` and store them with `dari credentials add` before deploy. Prompts, models, tools, and agent behavior live in Flue code.
 
-```yaml
-name: support-agent
-harness: pi
-
-instructions:
-  system: prompts/system.md
-
-model_backend:
-  router_id: rtr_...
-```
-
-Full schema: https://docs.dari.dev/manifest.
-
-## Local development
+## Local Development
 
 ```bash
 go test ./...

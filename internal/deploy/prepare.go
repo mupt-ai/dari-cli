@@ -18,8 +18,7 @@ const (
 
 // PrepareOptions controls optional publish-time deploy behavior.
 type PrepareOptions struct {
-	AgentID  string
-	RouterID string
+	AgentID string
 }
 
 // PreparedFlow is what `dari deploy --dry-run` prints.
@@ -28,7 +27,6 @@ type PreparedFlow struct {
 	BundleMetadata  bundle.Metadata
 	PublishEndpoint string
 	AgentID         string
-	RouterID        string
 	IsNewAgent      bool
 }
 
@@ -65,7 +63,7 @@ func Prepare(deployRoot, apiURL, agentID string) (*PreparedFlow, error) {
 }
 
 // PrepareWithOptions builds the local deploy flow with optional publish-time
-// overrides such as the agent model backend.
+// options.
 func PrepareWithOptions(
 	deployRoot, apiURL string,
 	options PrepareOptions,
@@ -80,11 +78,6 @@ func PrepareWithOptions(
 		resolvedAgentID = id
 	}
 
-	normalizedRouterID, err := NormalizeRouterID(options.RouterID)
-	if err != nil {
-		return nil, err
-	}
-
 	metadata := bundle.CollectMetadata(deployRoot)
 	archive, err := bundle.Build(deployRoot)
 	if err != nil {
@@ -95,7 +88,6 @@ func PrepareWithOptions(
 		BundleMetadata:  metadata,
 		PublishEndpoint: BuildPublishEndpoint(resolvedAgentID),
 		AgentID:         resolvedAgentID,
-		RouterID:        normalizedRouterID,
 		IsNewAgent:      resolvedAgentID == "",
 	}, nil
 }
@@ -150,18 +142,7 @@ func (p *PreparedFlow) DryRunPayload() map[string]any {
 }
 
 func (p *PreparedFlow) publishPayload(sourceSnapshotID string) map[string]any {
-	payload := map[string]any{"source_snapshot_id": sourceSnapshotID}
-	if p.RouterID != "" {
-		payload["runtime_metadata"] = map[string]any{
-			"agent_host": map[string]any{
-				"model_backend": map[string]any{
-					"kind":      "router",
-					"router_id": p.RouterID,
-				},
-			},
-		}
-	}
-	return payload
+	return map[string]any{"source_snapshot_id": sourceSnapshotID}
 }
 
 func (p *PreparedFlow) reservationPayload() map[string]any {

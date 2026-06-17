@@ -1,15 +1,22 @@
 # {{.ProjectName}}
 
-Scaffolded with `dari init`. Validate and deploy from this directory:
+A normal Flue project with a small Dari deploy file.
 
 ```bash
-dari deploy --dry-run
-dari deploy
+npm install
+dari auth login
+dari credentials add OPENROUTER_API_KEY
+dari deploy .
+dari session send --agent {{.ProjectName}} "hello from Flue"
 ```
 
-## Layout
+`dari.yml` names the hosted agent and declares the runtime secret used by the generated OpenRouter example:
 
-- `dari.yml` — manifest
-- `prompts/system.md` — system prompt
-- `tools/repo_search/tool.ts` — code-first example tool
-- `skills/{{.SkillName}}/SKILL.md` — example skill
+```yaml
+name: {{.ProjectName}}
+sandbox:
+  secrets:
+    - OPENROUTER_API_KEY
+```
+
+The Flue agent lives at `agents/{{.ProjectName}}.ts`. If you switch to code that does not read `OPENROUTER_API_KEY`, remove it from `sandbox.secrets`.

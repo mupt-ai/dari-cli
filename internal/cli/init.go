@@ -8,41 +8,28 @@ import (
 
 func init() {
 	commandRegistrars = append(commandRegistrars, func(root *cobra.Command, gf *globalFlags) {
-		root.AddCommand(newInitCmd(gf))
+		root.AddCommand(newInitCmd())
 	})
 }
 
-func newInitCmd(gf *globalFlags) *cobra.Command {
+func newInitCmd() *cobra.Command {
 	var (
-		name      string
-		skill     string
-		force     bool
-		recursive bool
+		name  string
+		force bool
 	)
 	cmd := &cobra.Command{
 		Use:   "init [directory]",
-		Short: "Scaffold a new Dari agent project in the target directory.",
+		Short: "Scaffold a new Flue project in the target directory.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := "."
 			if len(args) == 1 {
 				target = args[0]
 			}
-			apiURL := ""
-			if recursive {
-				var err error
-				apiURL, err = gf.resolveAPIURL()
-				if err != nil {
-					return err
-				}
-			}
 			result, err := scaffold.Run(scaffold.Options{
 				TargetDir: target,
 				Name:      name,
-				Skill:     skill,
 				Force:     force,
-				Recursive: recursive,
-				APIURL:    apiURL,
 			})
 			if err != nil {
 				return err
@@ -50,15 +37,11 @@ func newInitCmd(gf *globalFlags) *cobra.Command {
 			return printJSON(map[string]any{
 				"project_root":  result.ProjectRoot,
 				"project_name":  result.ProjectName,
-				"skill_name":    result.SkillName,
-				"recursive":     result.Recursive,
 				"written_files": result.WrittenFiles,
 			})
 		},
 	}
-	cmd.Flags().StringVar(&name, "name", "", "Project name for dari.yml (defaults to the directory name)")
-	cmd.Flags().StringVar(&skill, "skill", "", "Name of the example skill to create under skills/ (default: review, or recursive-delegation with --recursive)")
+	cmd.Flags().StringVar(&name, "name", "", "Agent name for dari.yml (defaults to the directory name)")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing files in the target directory")
-	cmd.Flags().BoolVar(&recursive, "recursive", false, "Scaffold an agent that can deploy and start recursive child Dari agents")
 	return cmd
 }

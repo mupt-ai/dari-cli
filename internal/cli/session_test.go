@@ -1,10 +1,6 @@
 package cli
 
-import (
-	"testing"
-
-	"github.com/spf13/cobra"
-)
+import "testing"
 
 func TestShouldCreateSessionForSend(t *testing.T) {
 	if !shouldCreateSessionForSend([]string{"hello"}, false, "agt_123") {
@@ -51,58 +47,5 @@ func TestResolveSessionSecretsRejectsDuplicates(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("expected duplicate secret error")
-	}
-}
-
-func TestBuildCreateSessionRequestBodyIncludesLLMSelection(t *testing.T) {
-	cmd := &cobra.Command{}
-	cmd.Flags().String("name", "", "")
-	cmd.Flags().Bool("internet-access", false, "")
-	cmd.Flags().Bool("no-internet-access", false, "")
-
-	body, err := buildCreateSessionRequestBody(
-		cmd,
-		"",
-		nil,
-		nil,
-		"claude",
-		"",
-		"",
-		false,
-		false,
-	)
-	if err != nil {
-		t.Fatalf("buildCreateSessionRequestBody returned error: %v", err)
-	}
-	if body["llm_id"] != "claude" {
-		t.Fatalf("llm_id = %v", body["llm_id"])
-	}
-}
-
-func TestResolveSessionLLMAPIKeyReadsEnv(t *testing.T) {
-	t.Setenv("BASETEN_API_KEY", "sk-runtime")
-
-	value, err := resolveSessionLLMAPIKey("", "BASETEN_API_KEY")
-	if err != nil {
-		t.Fatalf("resolveSessionLLMAPIKey returned error: %v", err)
-	}
-	if value != "sk-runtime" {
-		t.Fatalf("llm api key = %q", value)
-	}
-}
-
-func TestResolveSessionLLMAPIKeyRejectsAmbiguousInput(t *testing.T) {
-	t.Setenv("BASETEN_API_KEY", "sk-runtime")
-
-	_, err := resolveSessionLLMAPIKey("sk-inline", "BASETEN_API_KEY")
-	if err == nil {
-		t.Fatal("expected ambiguous llm api key error")
-	}
-}
-
-func TestResolveSessionLLMAPIKeyRejectsMissingEnv(t *testing.T) {
-	_, err := resolveSessionLLMAPIKey("", "BASETEN_API_KEY")
-	if err == nil {
-		t.Fatal("expected missing environment variable error")
 	}
 }

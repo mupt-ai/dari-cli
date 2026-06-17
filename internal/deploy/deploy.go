@@ -29,7 +29,6 @@ type Config struct {
 	APIURL   string
 	APIKey   string
 	AgentID  string // optional; empty means create a new agent
-	RouterID string // optional; publishes a router-backed model backend
 	Progress Progress
 }
 
@@ -54,8 +53,7 @@ func Execute(ctx context.Context, deployRoot string, cfg Config) (map[string]any
 
 	emit("package:start", nil)
 	prepared, err := PrepareWithOptions(deployRoot, cfg.APIURL, PrepareOptions{
-		AgentID:  cfg.AgentID,
-		RouterID: cfg.RouterID,
+		AgentID: cfg.AgentID,
 	})
 	if err != nil {
 		return nil, err
