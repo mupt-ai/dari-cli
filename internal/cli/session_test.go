@@ -80,9 +80,9 @@ func TestBuildCreateSessionRequestBodyIncludesLLMSelection(t *testing.T) {
 }
 
 func TestResolveSessionLLMAPIKeyReadsEnv(t *testing.T) {
-	t.Setenv("OPENROUTER_API_KEY", "sk-runtime")
+	t.Setenv("BASETEN_API_KEY", "sk-runtime")
 
-	value, err := resolveSessionLLMAPIKey("", "OPENROUTER_API_KEY")
+	value, err := resolveSessionLLMAPIKey("", "BASETEN_API_KEY")
 	if err != nil {
 		t.Fatalf("resolveSessionLLMAPIKey returned error: %v", err)
 	}
@@ -92,16 +92,16 @@ func TestResolveSessionLLMAPIKeyReadsEnv(t *testing.T) {
 }
 
 func TestResolveSessionLLMAPIKeyRejectsAmbiguousInput(t *testing.T) {
-	t.Setenv("OPENROUTER_API_KEY", "sk-runtime")
+	t.Setenv("BASETEN_API_KEY", "sk-runtime")
 
-	_, err := resolveSessionLLMAPIKey("sk-inline", "OPENROUTER_API_KEY")
+	_, err := resolveSessionLLMAPIKey("sk-inline", "BASETEN_API_KEY")
 	if err == nil {
 		t.Fatal("expected ambiguous llm api key error")
 	}
 }
 
 func TestResolveSessionLLMAPIKeyRejectsMissingEnv(t *testing.T) {
-	_, err := resolveSessionLLMAPIKey("", "OPENROUTER_API_KEY")
+	_, err := resolveSessionLLMAPIKey("", "BASETEN_API_KEY")
 	if err == nil {
 		t.Fatal("expected missing environment variable error")
 	}

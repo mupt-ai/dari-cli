@@ -212,7 +212,7 @@ dari session list --agent <agent_id>
 dari session create --agent <agent_id>
 dari session create --agent <agent_id> --secret-env INTERNAL_API_TOKEN
 dari session create --agent <agent_id> --llm claude
-dari session create --agent <agent_id> --llm-api-key-env OPENROUTER_API_KEY
+dari session create --agent <agent_id> --llm-api-key-env BASETEN_API_KEY
 dari session create --agent <agent_id> --internet-access
 dari session get <session_id>
 dari session send <session_id> <text>        # or --stdin < message.txt
