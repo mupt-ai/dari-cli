@@ -52,6 +52,7 @@ chmod +x node_modules/.bin/flue
 	contents := readRuntimeArchive(t, runtimeArchive.Content)
 	for _, name := range []string{
 		".dari-built",
+		".dari-source.tar.gz",
 		"db.ts",
 		"dist/server.mjs",
 		"node_modules/.bin/flue",
@@ -60,6 +61,9 @@ chmod +x node_modules/.bin/flue
 		if _, ok := contents[name]; !ok {
 			t.Fatalf("runtime archive missing %s; got %v", name, mapKeys(contents))
 		}
+	}
+	if !archiveIncludes(t, []byte(contents[".dari-source.tar.gz"]), "agents/chat.ts") {
+		t.Fatalf("embedded source archive missing agents/chat.ts")
 	}
 }
 
@@ -103,6 +107,27 @@ func readRuntimeArchive(t *testing.T, data []byte) map[string]string {
 		out[hdr.Name] = string(content)
 	}
 	return out
+}
+
+func archiveIncludes(t *testing.T, data []byte, name string) bool {
+	t.Helper()
+	gzr, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("source gzip: %v", err)
+	}
+	tr := tar.NewReader(gzr)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return false
+		}
+		if err != nil {
+			t.Fatalf("source tar: %v", err)
+		}
+		if hdr.Name == name {
+			return true
+		}
+	}
 }
 
 func mapKeys(m map[string]string) []string {

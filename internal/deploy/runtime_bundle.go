@@ -18,7 +18,10 @@ import (
 	"github.com/mupt-ai/dari-cli/internal/bundle"
 )
 
-const runtimeArchiveMarker = ".dari-built"
+const (
+	runtimeArchiveMarker = ".dari-built"
+	sourceArchivePath    = ".dari-source.tar.gz"
+)
 
 // buildRuntimeArchive returns a prebuilt Flue runtime archive when deployRoot
 // looks like a Flue project with a package.json. The archive still contains the
@@ -62,6 +65,9 @@ func buildRuntimeArchive(deployRoot string, sourceArchive *bundle.Archive, build
 		return nil, false, err
 	}
 	if err := os.WriteFile(filepath.Join(workDir, runtimeArchiveMarker), []byte("prebuilt\n"), 0o644); err != nil {
+		return nil, false, err
+	}
+	if err := os.WriteFile(filepath.Join(workDir, sourceArchivePath), sourceArchive.Content, 0o644); err != nil {
 		return nil, false, err
 	}
 
