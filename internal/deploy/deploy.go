@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -26,10 +27,11 @@ type Progress func(event string, data map[string]any)
 // Config holds the per-deploy inputs. The caller owns the API URL and key
 // resolution (flag → env → cached managed key).
 type Config struct {
-	APIURL   string
-	APIKey   string
-	AgentID  string // optional; empty means create a new agent
-	Progress Progress
+	APIURL      string
+	APIKey      string
+	AgentID     string // optional; empty means create a new agent
+	Progress    Progress
+	BuildOutput io.Writer
 }
 
 type reserveResponse struct {
@@ -53,7 +55,9 @@ func Execute(ctx context.Context, deployRoot string, cfg Config) (map[string]any
 
 	emit("package:start", nil)
 	prepared, err := PrepareWithOptions(deployRoot, cfg.APIURL, PrepareOptions{
-		AgentID: cfg.AgentID,
+		AgentID:      cfg.AgentID,
+		BuildRuntime: true,
+		BuildOutput:  cfg.BuildOutput,
 	})
 	if err != nil {
 		return nil, err

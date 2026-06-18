@@ -13,7 +13,7 @@ import (
 var (
 	stageOrder = []string{"package", "reserve", "upload", "finalize", "validate", "publish"}
 	startLabel = map[string]string{
-		"package":  "Packaging source bundle",
+		"package":  "Packaging deployment bundle",
 		"reserve":  "Reserving source snapshot",
 		"upload":   "Uploading bundle",
 		"finalize": "Finalizing snapshot",
@@ -21,7 +21,7 @@ var (
 		"publish":  "Publishing",
 	}
 	doneLabel = map[string]string{
-		"package":  "Packaged source bundle",
+		"package":  "Packaged deployment bundle",
 		"reserve":  "Reserved source snapshot",
 		"upload":   "Uploaded bundle",
 		"finalize": "Finalized snapshot",

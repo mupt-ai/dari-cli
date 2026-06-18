@@ -4,7 +4,11 @@
 // output.
 package deploy
 
-import "github.com/mupt-ai/dari-cli/internal/bundle"
+import (
+	"io"
+
+	"github.com/mupt-ai/dari-cli/internal/bundle"
+)
 
 const (
 	sourceSnapshotsEndpoint = "/v1/source-snapshots"
@@ -18,7 +22,9 @@ const (
 
 // PrepareOptions controls optional publish-time deploy behavior.
 type PrepareOptions struct {
-	AgentID string
+	AgentID      string
+	BuildRuntime bool
+	BuildOutput  io.Writer
 }
 
 // PreparedFlow is what `dari deploy --dry-run` prints.
@@ -82,6 +88,15 @@ func PrepareWithOptions(
 	archive, err := bundle.Build(deployRoot)
 	if err != nil {
 		return nil, err
+	}
+	if options.BuildRuntime {
+		runtimeArchive, built, err := buildRuntimeArchive(deployRoot, archive, options.BuildOutput)
+		if err != nil {
+			return nil, err
+		}
+		if built {
+			archive = runtimeArchive
+		}
 	}
 	return &PreparedFlow{
 		Bundle:          archive,

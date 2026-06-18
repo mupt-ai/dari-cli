@@ -95,6 +95,7 @@ func newDeployCmd(gf *globalFlags) *cobra.Command {
 			}
 			if !quiet {
 				cfg.Progress = deploy.NewConsoleProgress(os.Stderr).Handle
+				cfg.BuildOutput = os.Stderr
 			}
 			response, err := deploy.Execute(cmd.Context(), repoRoot, cfg)
 			if err != nil {

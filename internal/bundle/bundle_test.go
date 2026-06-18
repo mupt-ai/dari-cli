@@ -80,6 +80,30 @@ func TestBuildIncludesFilesAndIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestBuildWithOptionsCanIncludeNodeModules(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "dari.yml"), "name: test\n", 0o644)
+	writeFile(t, filepath.Join(dir, "node_modules", "runtime-dep", "index.js"), "export {};\n", 0o644)
+	if err := os.MkdirAll(filepath.Join(dir, "node_modules", ".bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../runtime-dep/index.js", filepath.Join(dir, "node_modules", ".bin", "runtime-dep")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	archive, err := BuildWithOptions(dir, Options{IncludeNodeModules: true, AllowSymlinks: true})
+	if err != nil {
+		t.Fatalf("BuildWithOptions: %v", err)
+	}
+	contents := readTarContents(t, archive.Content)
+	if _, ok := contents["node_modules/runtime-dep/index.js"]; !ok {
+		t.Fatalf("node_modules missing from runtime archive; got %v", keys(contents))
+	}
+	if _, ok := contents["node_modules/.bin/runtime-dep"]; !ok {
+		t.Fatalf("node_modules symlink missing from runtime archive; got %v", keys(contents))
+	}
+}
+
 func TestBuildRejectsSymlink(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "dari.yml"), "name: t\n", 0o644)

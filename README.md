@@ -104,13 +104,13 @@ dari org invite <email> [--role owner|admin|member]   # emails an invite; defaul
 dari deploy [repo_root]
 ```
 
-Packages the checkout and publishes an agent version. Agent names are unique within an organization: deploying a bundle whose `dari.yml` name already exists creates a new version of that existing agent. If legacy duplicates make the name ambiguous, re-run with `--agent-id`.
+Packages the checkout and publishes an agent version. For Flue projects with `package.json`, live deploy installs dependencies and runs the Flue build locally once, then uploads a prebuilt runtime archive so hosted message workers only extract and run it. From non-Linux/x64 machines, commit `package-lock.json` so the CLI can reinstall runtime dependencies for the hosted Linux target before upload. Agent names are unique within an organization: deploying a bundle whose `dari.yml` name already exists creates a new version of that existing agent. If legacy duplicates make the name ambiguous, re-run with `--agent-id`.
 
 | Flag | Description |
 | --- | --- |
 | `--api-key` | Override the cached org key |
 | `--agent-id` | Publish to a specific agent instead of resolving by name |
-| `--dry-run` | Build the local bundle and print the publish flow without uploading |
+| `--dry-run` | Package the source bundle and print the publish flow without installing dependencies, building, or uploading |
 | `--quiet` | Suppress per-stage progress on stderr |
 
 ### api-keys

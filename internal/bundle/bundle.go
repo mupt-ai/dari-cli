@@ -36,6 +36,17 @@ var (
 	}
 )
 
+// Options controls deterministic archive file selection.
+type Options struct {
+	// IncludeNodeModules allows runtime archives to carry already-installed
+	// dependencies. Source bundles should leave this false.
+	IncludeNodeModules bool
+	// AllowSymlinks preserves symlinks that resolve inside the archive root.
+	// Source bundles should leave this false; node_modules archives need it for
+	// package-manager bin links and pnpm-style dependency layouts.
+	AllowSymlinks bool
+}
+
 // Archive is a built source bundle.
 type Archive struct {
 	Content       []byte
@@ -52,6 +63,10 @@ func (a *Archive) SizeBytes() int { return len(a.Content) }
 // Build returns a deterministic tar.gz for deployRoot. The deploy root must
 // exist, must be a directory, and must contain a top-level dari.yml.
 func Build(deployRoot string) (*Archive, error) {
+	return BuildWithOptions(deployRoot, Options{})
+}
+
+func BuildWithOptions(deployRoot string, options Options) (*Archive, error) {
 	resolved, err := filepath.Abs(deployRoot)
 	if err != nil {
 		return nil, err
@@ -64,7 +79,7 @@ func Build(deployRoot string) (*Archive, error) {
 		return nil, fmt.Errorf("%s is not a directory", deployRoot)
 	}
 
-	paths, err := selectPaths(resolved)
+	paths, err := selectPaths(resolved, options)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +99,7 @@ func Build(deployRoot string) (*Archive, error) {
 
 	tw := tar.NewWriter(gzw)
 	for _, rel := range paths {
-		if err := addFile(tw, resolved, rel); err != nil {
+		if err := addFile(tw, resolved, rel, options); err != nil {
 			_ = tw.Close()
 			_ = gzw.Close()
 			return nil, err
@@ -106,13 +121,15 @@ func Build(deployRoot string) (*Archive, error) {
 	}, nil
 }
 
-func selectPaths(root string) ([]string, error) {
-	if paths, ok, err := gitSelectedPaths(root); err != nil {
-		return nil, err
-	} else if ok {
-		return paths, nil
+func selectPaths(root string, options Options) ([]string, error) {
+	if !options.IncludeNodeModules {
+		if paths, ok, err := gitSelectedPaths(root); err != nil {
+			return nil, err
+		} else if ok {
+			return paths, nil
+		}
 	}
-	return fallbackSelectedPaths(root)
+	return fallbackSelectedPaths(root, options)
 }
 
 // gitSelectedPaths uses `git ls-files` so ignored/unindexed files aren't
@@ -163,7 +180,7 @@ func gitSelectedPaths(root string) ([]string, bool, error) {
 			p = trimmed
 		}
 		full := filepath.Join(root, filepath.FromSlash(p))
-		if err := ensureAllowedSnapshotPath(full, p); err != nil {
+		if err := ensureAllowedSnapshotPath(root, full, p, Options{}); err != nil {
 			return nil, false, err
 		}
 		selected = append(selected, p)
@@ -172,7 +189,15 @@ func gitSelectedPaths(root string) ([]string, bool, error) {
 	return selected, true, nil
 }
 
-func fallbackSelectedPaths(root string) ([]string, error) {
+func fallbackSelectedPaths(root string, options Options) ([]string, error) {
+	excludedDirs := make(map[string]struct{}, len(excludedFallbackDirs))
+	for name := range excludedFallbackDirs {
+		excludedDirs[name] = struct{}{}
+	}
+	if options.IncludeNodeModules {
+		delete(excludedDirs, "node_modules")
+	}
+
 	var paths []string
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -183,7 +208,7 @@ func fallbackSelectedPaths(root string) ([]string, error) {
 		}
 		name := d.Name()
 		if d.IsDir() {
-			if _, ok := excludedFallbackDirs[name]; ok {
+			if _, ok := excludedDirs[name]; ok {
 				return fs.SkipDir
 			}
 			return nil
@@ -196,7 +221,7 @@ func fallbackSelectedPaths(root string) ([]string, error) {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		if err := ensureAllowedSnapshotPath(path, rel); err != nil {
+		if err := ensureAllowedSnapshotPath(root, path, rel, options); err != nil {
 			return err
 		}
 		paths = append(paths, rel)
@@ -209,14 +234,29 @@ func fallbackSelectedPaths(root string) ([]string, error) {
 	return paths, nil
 }
 
-func addFile(tw *tar.Writer, root, rel string) error {
+func addFile(tw *tar.Writer, root, rel string, options Options) error {
 	full := filepath.Join(root, filepath.FromSlash(rel))
 	info, err := os.Lstat(full)
 	if err != nil {
 		return err
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("source bundle cannot include symlink %s", rel)
+		if !options.AllowSymlinks {
+			return fmt.Errorf("source bundle cannot include symlink %s", rel)
+		}
+		linkTarget, err := safeSymlinkTarget(root, full, rel)
+		if err != nil {
+			return err
+		}
+		hdr := &tar.Header{
+			Name:     rel,
+			Typeflag: tar.TypeSymlink,
+			Mode:     0o777,
+			Linkname: linkTarget,
+			ModTime:  time.Unix(0, 0),
+			Format:   tar.FormatPAX,
+		}
+		return tw.WriteHeader(hdr)
 	}
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("source bundle can only include regular files, found %s", rel)
@@ -247,7 +287,7 @@ func addFile(tw *tar.Writer, root, rel string) error {
 	return nil
 }
 
-func ensureAllowedSnapshotPath(full, rel string) error {
+func ensureAllowedSnapshotPath(root, full, rel string, options Options) error {
 	if filepath.IsAbs(rel) {
 		return fmt.Errorf("invalid source bundle path %s", rel)
 	}
@@ -261,12 +301,38 @@ func ensureAllowedSnapshotPath(full, rel string) error {
 		return err
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("source bundle cannot include symlink %s", rel)
+		if !options.AllowSymlinks {
+			return fmt.Errorf("source bundle cannot include symlink %s", rel)
+		}
+		_, err := safeSymlinkTarget(root, full, rel)
+		return err
 	}
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("source bundle can only include regular files, found %s", rel)
 	}
 	return nil
+}
+
+func safeSymlinkTarget(root, full, rel string) (string, error) {
+	linkTarget, err := os.Readlink(full)
+	if err != nil {
+		return "", err
+	}
+	if filepath.IsAbs(linkTarget) {
+		return "", fmt.Errorf("source bundle symlink %s points outside the archive root", rel)
+	}
+	resolved, err := filepath.EvalSymlinks(full)
+	if err != nil {
+		return "", err
+	}
+	rootResolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	if resolved != rootResolved && !strings.HasPrefix(resolved, rootResolved+string(filepath.Separator)) {
+		return "", fmt.Errorf("source bundle symlink %s points outside the archive root", rel)
+	}
+	return filepath.ToSlash(linkTarget), nil
 }
 
 func isExecutable(mode fs.FileMode) bool {
