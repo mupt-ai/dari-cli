@@ -11,22 +11,24 @@ import (
 )
 
 var (
-	stageOrder = []string{"package", "reserve", "upload", "finalize", "validate", "publish"}
+	stageOrder = []string{"package", "reserve", "upload", "finalize", "validate", "publish", "model_backend"}
 	startLabel = map[string]string{
-		"package":  "Packaging deployment bundle",
-		"reserve":  "Reserving source snapshot",
-		"upload":   "Uploading bundle",
-		"finalize": "Finalizing snapshot",
-		"validate": "Validating manifest",
-		"publish":  "Publishing",
+		"package":       "Packaging deployment bundle",
+		"reserve":       "Reserving source snapshot",
+		"upload":        "Uploading bundle",
+		"finalize":      "Finalizing snapshot",
+		"validate":      "Validating manifest",
+		"publish":       "Publishing",
+		"model_backend": "Configuring model backend",
 	}
 	doneLabel = map[string]string{
-		"package":  "Packaged deployment bundle",
-		"reserve":  "Reserved source snapshot",
-		"upload":   "Uploaded bundle",
-		"finalize": "Finalized snapshot",
-		"validate": "Validated manifest",
-		"publish":  "Published",
+		"package":       "Packaged deployment bundle",
+		"reserve":       "Reserved source snapshot",
+		"upload":        "Uploaded bundle",
+		"finalize":      "Finalized snapshot",
+		"validate":      "Validated manifest",
+		"publish":       "Published",
+		"model_backend": "Configured model backend",
 	}
 )
 
@@ -108,6 +110,10 @@ func (c *ConsoleProgress) completeDetail(stage string, data map[string]any) stri
 	case "publish":
 		if s, ok := data["agent_id"].(string); ok && strings.TrimSpace(s) != "" {
 			return "(agent_id=" + s + ")"
+		}
+	case "model_backend":
+		if s, ok := data["router_id"].(string); ok && strings.TrimSpace(s) != "" {
+			return "(router_id=" + s + ")"
 		}
 	}
 	return ""

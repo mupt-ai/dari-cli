@@ -23,6 +23,7 @@ const (
 // PrepareOptions controls optional publish-time deploy behavior.
 type PrepareOptions struct {
 	AgentID      string
+	RouterID     string
 	BuildRuntime bool
 	BuildOutput  io.Writer
 }
@@ -33,6 +34,7 @@ type PreparedFlow struct {
 	BundleMetadata  bundle.Metadata
 	PublishEndpoint string
 	AgentID         string
+	RouterID        string
 	IsNewAgent      bool
 }
 
@@ -84,6 +86,11 @@ func PrepareWithOptions(
 		resolvedAgentID = id
 	}
 
+	normalizedRouterID, err := NormalizeRouterID(options.RouterID)
+	if err != nil {
+		return nil, err
+	}
+
 	metadata := bundle.CollectMetadata(deployRoot)
 	archive, err := bundle.Build(deployRoot)
 	if err != nil {
@@ -103,6 +110,7 @@ func PrepareWithOptions(
 		BundleMetadata:  metadata,
 		PublishEndpoint: BuildPublishEndpoint(resolvedAgentID),
 		AgentID:         resolvedAgentID,
+		RouterID:        normalizedRouterID,
 		IsNewAgent:      resolvedAgentID == "",
 	}, nil
 }
@@ -114,6 +122,49 @@ func (p *PreparedFlow) DryRunPayload() map[string]any {
 	if p.IsNewAgent {
 		action = "create_or_version_agent_by_name"
 	}
+	steps := []any{
+		map[string]any{
+			"action":   "reserve_source_snapshot",
+			"method":   "POST",
+			"endpoint": sourceSnapshotsEndpoint,
+			"payload":  p.reservationPayload(),
+		},
+		map[string]any{
+			"action":     "upload_source_bundle",
+			"method":     "PUT",
+			"upload_url": signedUploadURLPlaceholder,
+			"headers":    uploadHeadersPlaceholder,
+			"size_bytes": p.Bundle.SizeBytes(),
+			"sha256":     p.Bundle.SHA256,
+		},
+		map[string]any{
+			"action":   "finalize_source_snapshot",
+			"method":   "POST",
+			"endpoint": finalizeEndpoint(sourceSnapshotIDPlaceholder),
+		},
+		map[string]any{
+			"action":   "validate_source_snapshot_manifest",
+			"method":   "GET",
+			"endpoint": manifestEndpoint(sourceSnapshotIDPlaceholder),
+		},
+		map[string]any{
+			"action":   action,
+			"method":   "POST",
+			"endpoint": p.PublishEndpoint,
+			"payload":  p.publishPayload(sourceSnapshotIDPlaceholder),
+		},
+	}
+	if p.RouterID != "" {
+		steps = append(steps, map[string]any{
+			"action":   "set_model_backend",
+			"method":   "PUT",
+			"endpoint": "/v1/agents/{agent_id}/model-backend",
+			"payload": map[string]any{
+				"kind":      "router",
+				"router_id": p.RouterID,
+			},
+		})
+	}
 	return map[string]any{
 		"bundle": map[string]any{
 			"file_count": p.Bundle.FileCount(),
@@ -121,38 +172,7 @@ func (p *PreparedFlow) DryRunPayload() map[string]any {
 			"size_bytes": p.Bundle.SizeBytes(),
 			"metadata":   nilIfEmpty(p.BundleMetadata),
 		},
-		"steps": []any{
-			map[string]any{
-				"action":   "reserve_source_snapshot",
-				"method":   "POST",
-				"endpoint": sourceSnapshotsEndpoint,
-				"payload":  p.reservationPayload(),
-			},
-			map[string]any{
-				"action":     "upload_source_bundle",
-				"method":     "PUT",
-				"upload_url": signedUploadURLPlaceholder,
-				"headers":    uploadHeadersPlaceholder,
-				"size_bytes": p.Bundle.SizeBytes(),
-				"sha256":     p.Bundle.SHA256,
-			},
-			map[string]any{
-				"action":   "finalize_source_snapshot",
-				"method":   "POST",
-				"endpoint": finalizeEndpoint(sourceSnapshotIDPlaceholder),
-			},
-			map[string]any{
-				"action":   "validate_source_snapshot_manifest",
-				"method":   "GET",
-				"endpoint": manifestEndpoint(sourceSnapshotIDPlaceholder),
-			},
-			map[string]any{
-				"action":   action,
-				"method":   "POST",
-				"endpoint": p.PublishEndpoint,
-				"payload":  p.publishPayload(sourceSnapshotIDPlaceholder),
-			},
-		},
+		"steps": steps,
 	}
 }
 

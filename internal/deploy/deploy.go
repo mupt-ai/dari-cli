@@ -21,7 +21,7 @@ const deployRequestTimeout = 5 * time.Minute
 
 // Progress receives event/data tuples describing deploy stage transitions.
 // Event names are "{stage}:start" or "{stage}:complete" for stages in order:
-// package, reserve, upload, finalize, validate, publish.
+// package, reserve, upload, finalize, validate, publish, model_backend.
 type Progress func(event string, data map[string]any)
 
 // Config holds the per-deploy inputs. The caller owns the API URL and key
@@ -30,6 +30,7 @@ type Config struct {
 	APIURL      string
 	APIKey      string
 	AgentID     string // optional; empty means create a new agent
+	RouterID    string // optional; sets a router-backed model backend after publish
 	Progress    Progress
 	BuildOutput io.Writer
 }
@@ -56,6 +57,7 @@ func Execute(ctx context.Context, deployRoot string, cfg Config) (map[string]any
 	emit("package:start", nil)
 	prepared, err := PrepareWithOptions(deployRoot, cfg.APIURL, PrepareOptions{
 		AgentID:      cfg.AgentID,
+		RouterID:     cfg.RouterID,
 		BuildRuntime: true,
 		BuildOutput:  cfg.BuildOutput,
 	})
@@ -124,10 +126,7 @@ func Execute(ctx context.Context, deployRoot string, cfg Config) (map[string]any
 		return nil, deployAPIError("publish agent", err)
 	}
 
-	agentID, _ := response["agent_id"].(string)
-	if agentID == "" {
-		agentID, _ = response["id"].(string)
-	}
+	agentID := publishAgentID(response, prepared.AgentID)
 	if agentID != "" {
 		if werr := writeDeployState(deployRoot, cfg.APIURL, agentID); werr != nil {
 			// Non-fatal — publish already succeeded.
@@ -135,11 +134,36 @@ func Execute(ctx context.Context, deployRoot string, cfg Config) (map[string]any
 		}
 	}
 	emit("publish:complete", map[string]any{"agent_id": agentID})
+	if agentID != "" && prepared.RouterID != "" {
+		emit("model_backend:start", map[string]any{"agent_id": agentID, "router_id": prepared.RouterID})
+		var backendResponse map[string]any
+		if err := client.Do(ctx, http.MethodPut, fmt.Sprintf("/v1/agents/%s/model-backend", agentID), map[string]any{
+			"kind":      "router",
+			"router_id": prepared.RouterID,
+		}, &backendResponse); err != nil {
+			return nil, deployAPIError("set model backend", err)
+		}
+		if activeVersionID, _ := backendResponse["active_version_id"].(string); activeVersionID != "" {
+			response["active_version_id"] = activeVersionID
+			response["version_id"] = activeVersionID
+		}
+		emit("model_backend:complete", map[string]any{"agent_id": agentID, "router_id": prepared.RouterID})
+	}
 	return response, nil
 }
 
 func deleteSnapshotBestEffort(ctx context.Context, client *api.Client, snapshotID string) error {
 	return client.Do(ctx, http.MethodDelete, deleteSnapshotEndpoint(snapshotID), nil, nil)
+}
+
+func publishAgentID(response map[string]any, fallback string) string {
+	if agentID, _ := response["agent_id"].(string); agentID != "" {
+		return agentID
+	}
+	if agentID, _ := response["id"].(string); agentID != "" {
+		return agentID
+	}
+	return fallback
 }
 
 // deployAPIError formats an API error with a context label. HTTP errors keep
