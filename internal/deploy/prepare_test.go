@@ -8,7 +8,7 @@ import (
 
 func TestDryRunPayloadOmitsRuntimeMetadataWithRouter(t *testing.T) {
 	dir := t.TempDir()
-	writeDeployFile(t, filepath.Join(dir, "dari.yml"), "name: test\nharness: pi\n")
+	writeDeployFile(t, filepath.Join(dir, "dari.yml"), "name: test\n")
 
 	prepared, err := PrepareWithOptions(dir, "https://api.example", PrepareOptions{
 		RouterID: " rtr_123 ",
