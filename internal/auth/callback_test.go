@@ -42,7 +42,7 @@ func TestParseManualCallbackURLWithoutState(t *testing.T) {
 
 func TestBuildWebLoginURL(t *testing.T) {
 	got, err := buildWebLoginURL(
-		"https://deploy.dari.dev/",
+		"https://app.dari.dev/",
 		"http://127.0.0.1:12345/callback",
 		"state123",
 		"challenge123",
@@ -50,7 +50,7 @@ func TestBuildWebLoginURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildWebLoginURL: %v", err)
 	}
-	want := "https://deploy.dari.dev/login?cli_callback=http%3A%2F%2F127.0.0.1%3A12345%2Fcallback&cli_code_challenge=challenge123&cli_state=state123"
+	want := "https://app.dari.dev/login?cli_callback=http%3A%2F%2F127.0.0.1%3A12345%2Fcallback&cli_code_challenge=challenge123&cli_state=state123"
 	if got != want {
 		t.Fatalf("unexpected URL:\n got: %s\nwant: %s", got, want)
 	}
