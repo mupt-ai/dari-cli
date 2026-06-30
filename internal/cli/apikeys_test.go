@@ -6,67 +6,56 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"slices"
 	"testing"
 )
 
 type apiKeyCreateRequest struct {
-	Label  string   `json:"label"`
-	Scopes []string `json:"scopes"`
+	Label   string `json:"label"`
+	KeyType string `json:"key_type"`
 }
 
-func TestAPIKeysCreateScopes(t *testing.T) {
+func TestAPIKeysCreateType(t *testing.T) {
 	tests := []struct {
-		name      string
-		scopeArgs []string
-		want      []string
+		name     string
+		typeArgs []string
+		want     string
 	}{
 		{
-			name: "default platform scope",
-			want: []string{"platform"},
+			name: "default management type",
+			want: "management",
 		},
 		{
-			name:      "routing scope",
-			scopeArgs: []string{"--scope", "routing"},
-			want:      []string{"routing"},
+			name:     "routing type",
+			typeArgs: []string{"--type", "routing"},
+			want:     "routing",
 		},
 		{
-			name:      "repeated scopes",
-			scopeArgs: []string{"--scope", "platform", "--scope", "routing"},
-			want:      []string{"platform", "routing"},
-		},
-		{
-			name:      "comma-separated scopes",
-			scopeArgs: []string{"--scope", "platform,routing"},
-			want:      []string{"platform", "routing"},
-		},
-		{
-			name:      "normalizes and deduplicates scopes",
-			scopeArgs: []string{"--scope", " Platform ", "--scope", "routing", "--scope", "platform"},
-			want:      []string{"platform", "routing"},
+			name:     "normalizes type",
+			typeArgs: []string{"--type", " Management "},
+			want:     "management",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := runAPIKeysCreate(t, tt.scopeArgs)
+			got := runAPIKeysCreate(t, tt.typeArgs)
 			if got.Label != "Router client" {
 				t.Fatalf("label = %q", got.Label)
 			}
-			if !slices.Equal(got.Scopes, tt.want) {
-				t.Fatalf("scopes = %#v, want %#v", got.Scopes, tt.want)
+			if got.KeyType != tt.want {
+				t.Fatalf("key_type = %q, want %q", got.KeyType, tt.want)
 			}
 		})
 	}
 }
 
-func TestNormalizeAPIKeyScopesRejectsUnsupportedScope(t *testing.T) {
-	if _, err := normalizeAPIKeyScopes([]string{"route"}); err == nil {
-		t.Fatal("normalizeAPIKeyScopes accepted unsupported scope")
+func TestNormalizeAPIKeyTypeRejectsUnsupportedType(t *testing.T) {
+	if _, err := normalizeAPIKeyType("platform"); err == nil {
+		t.Fatal("normalizeAPIKeyType accepted unsupported type")
 	}
 }
 
-func runAPIKeysCreate(t *testing.T, scopeArgs []string) apiKeyCreateRequest {
+func runAPIKeysCreate(t *testing.T, typeArgs []string) apiKeyCreateRequest {
 	t.Helper()
 
 	var got apiKeyCreateRequest
@@ -85,9 +74,9 @@ func runAPIKeysCreate(t *testing.T, scopeArgs []string) apiKeyCreateRequest {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{
-			"id":     "key_123",
-			"label":  got.Label,
-			"scopes": got.Scopes,
+			"id":       "key_123",
+			"label":    got.Label,
+			"key_type": got.KeyType,
 		}); err != nil {
 			t.Fatalf("encode response: %v", err)
 		}
@@ -98,7 +87,7 @@ func runAPIKeysCreate(t *testing.T, scopeArgs []string) apiKeyCreateRequest {
 
 	cmd := newRootCmd("dev")
 	args := []string{"--api-url", srv.URL, "api-keys", "create", "--name", "Router client"}
-	args = append(args, scopeArgs...)
+	args = append(args, typeArgs...)
 	cmd.SetArgs(args)
 
 	if err := captureStdout(t, func() error { return cmd.Execute() }); err != nil {

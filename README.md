@@ -47,13 +47,13 @@ sandbox:
 
 ### Headless auth (CI, scripts)
 
-Set `DARI_API_KEY` to a platform-scoped key to bypass browser login. When set, the CLI uses it as the bearer for every request and skips cached state entirely.
+Set `DARI_API_KEY` to a Management key to bypass browser login. When set, the CLI uses it as the bearer for every request and skips cached state entirely.
 
 ```bash
 export DARI_API_KEY=dari_...
 ```
 
-Create a platform key for CLI/API use from a logged-in shell via `dari api-keys create --name ci`. Add `--scope routing` for a router-traffic key used against `https://routing.dari.dev/...`, or repeat/comma-separate `--scope` for a dual-scope key that works for both management API calls and router traffic.
+Create a Management key for CLI/API use from a logged-in shell via `dari api-keys create --name ci`. Create a separate Routing key for traffic to `https://routing.dari.dev/...` with `dari api-keys create --name router-client --type routing`.
 
 What works under `DARI_API_KEY`:
 
@@ -117,11 +117,11 @@ Packages the checkout and publishes an agent version. For Flue projects with `pa
 
 ```bash
 dari api-keys list
-dari api-keys create --name <name> [--scope platform|routing]
+dari api-keys create --name <name> [--type management|routing]
 dari api-keys revoke <key_id>
 ```
 
-`platform` keys authenticate CLI/management API commands. `routing` keys authenticate router traffic such as `curl https://routing.dari.dev/rtr_.../chat/completions`. Use `--scope platform,routing` when one key needs both.
+Management keys authenticate CLI and management API commands. Routing keys authenticate router traffic such as `curl https://routing.dari.dev/rtr_.../chat/completions`. Use separate keys when a backend needs both surfaces.
 
 ### router
 
