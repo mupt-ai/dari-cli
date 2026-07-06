@@ -136,7 +136,7 @@ type routerConfigFlags struct {
 
 func (rf *routerConfigFlags) register(cmd *cobra.Command) {
 	cmd.Flags().StringSliceVar(&rf.models, "model", nil, "Enabled model ID (repeatable or comma-separated); run 'dari router models' for the catalog")
-	cmd.Flags().StringArrayVar(&rf.providerKeyPairs, "provider-key", nil, "Provider API key as provider=KEY, e.g. baseten=sk-... (repeatable)")
+	cmd.Flags().StringArrayVar(&rf.providerKeyPairs, "provider-key", nil, "Provider API key as provider=KEY, e.g. fireworks=sk-... (repeatable)")
 	cmd.Flags().StringArrayVar(&rf.providerKeyEnvs, "provider-key-env", nil, "Read a provider API key from the local environment as provider=ENV_VAR (repeatable)")
 	cmd.Flags().StringSliceVar(&rf.managedKeyProvider, "managed-key", nil, "Use the Dari-managed key for this provider (repeatable or comma-separated)")
 	cmd.Flags().StringSliceVar(&rf.evalIDs, "eval", nil, "Eval scorecard ID to import (repeatable or comma-separated); run 'dari eval list' for IDs")

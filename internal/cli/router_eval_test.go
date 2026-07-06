@@ -74,7 +74,7 @@ func TestRouterModelsUsesModelCatalogRoute(t *testing.T) {
 }
 
 func TestRouterCreateSendsPayload(t *testing.T) {
-	t.Setenv("TEST_BASETEN_KEY", "sk-baseten-env")
+	t.Setenv("TEST_FIREWORKS_KEY", "sk-fireworks-env")
 	var body map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if auth := r.Header.Get("Authorization"); auth != "Bearer dari_test" {
@@ -96,8 +96,8 @@ func TestRouterCreateSendsPayload(t *testing.T) {
 	cmd := newRootCmd("dev")
 	cmd.SetArgs([]string{
 		"--api-url", srv.URL, "router", "create", "Production Router",
-		"--model", "baseten/deepseek-ai/DeepSeek-V4-Pro,baseten/moonshotai/Kimi-K2.6",
-		"--provider-key-env", "baseten=TEST_BASETEN_KEY",
+		"--model", "fireworks/deepseek-ai/DeepSeek-V4-Pro,fireworks/deepseek-ai/DeepSeek-V4-Flash",
+		"--provider-key-env", "fireworks=TEST_FIREWORKS_KEY",
 		"--eval", "eval_123",
 		"--strategy", "heuristic",
 		"--performance-weight", "0.7",
@@ -110,8 +110,8 @@ func TestRouterCreateSendsPayload(t *testing.T) {
 
 	want := map[string]any{
 		"name":             "Production Router",
-		"enabled_models":   []any{"baseten/deepseek-ai/DeepSeek-V4-Pro", "baseten/moonshotai/Kimi-K2.6"},
-		"provider_keys":    map[string]any{"baseten": "sk-baseten-env"},
+		"enabled_models":   []any{"fireworks/deepseek-ai/DeepSeek-V4-Pro", "fireworks/deepseek-ai/DeepSeek-V4-Flash"},
+		"provider_keys":    map[string]any{"fireworks": "sk-fireworks-env"},
 		"eval_ids":         []any{"eval_123"},
 		"routing_strategy": "heuristic",
 		"heuristic_config": map[string]any{
@@ -144,8 +144,8 @@ func TestRouterCreateInfersHeuristicStrategyFromWeights(t *testing.T) {
 	cmd := newRootCmd("dev")
 	cmd.SetArgs([]string{
 		"--api-url", srv.URL, "router", "create", "Heuristic Router",
-		"--model", "baseten/deepseek-ai/DeepSeek-V4-Pro",
-		"--managed-key", "baseten",
+		"--model", "fireworks/deepseek-ai/DeepSeek-V4-Pro",
+		"--managed-key", "fireworks",
 		"--eval", "eval_123",
 		"--performance-weight", "0.7",
 		"--price-weight", "0.3",
@@ -174,7 +174,7 @@ func TestRouterCreateRejectsInvalidHeuristicWeights(t *testing.T) {
 	cmd := newRootCmd("dev")
 	cmd.SetArgs([]string{
 		"router", "create", "BadWeights",
-		"--model", "baseten/deepseek-ai/DeepSeek-V4-Pro",
+		"--model", "fireworks/deepseek-ai/DeepSeek-V4-Pro",
 		"--performance-weight", "0.7",
 		"--price-weight", "0.3",
 		"--eval-weight", "eval_123=1abc",
@@ -190,8 +190,8 @@ func TestRouterCreateRequiresHeuristicConfigForHeuristicStrategy(t *testing.T) {
 	cmd := newRootCmd("dev")
 	cmd.SetArgs([]string{
 		"router", "create", "MissingConfig",
-		"--model", "baseten/deepseek-ai/DeepSeek-V4-Pro",
-		"--managed-key", "baseten",
+		"--model", "fireworks/deepseek-ai/DeepSeek-V4-Pro",
+		"--managed-key", "fireworks",
 		"--strategy", "heuristic",
 	})
 	cmd.SetErr(io.Discard)
@@ -205,8 +205,8 @@ func TestRouterCreateRejectsEvalWeightsThatDoNotSum(t *testing.T) {
 	cmd := newRootCmd("dev")
 	cmd.SetArgs([]string{
 		"router", "create", "BadEvalWeights",
-		"--model", "baseten/deepseek-ai/DeepSeek-V4-Pro",
-		"--managed-key", "baseten",
+		"--model", "fireworks/deepseek-ai/DeepSeek-V4-Pro",
+		"--managed-key", "fireworks",
 		"--eval", "eval_1,eval_2",
 		"--performance-weight", "0.7",
 		"--price-weight", "0.3",
@@ -231,7 +231,7 @@ func TestRouterUpdateOverlaysCurrentConfig(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":             "rtr_123",
 				"name":           "Production",
-				"enabled_models": []string{"baseten/deepseek-ai/DeepSeek-V4-Pro"},
+				"enabled_models": []string{"fireworks/deepseek-ai/DeepSeek-V4-Pro"},
 			})
 		case "PUT /v1/organizations/current/routers/rtr_123":
 			raw, _ := io.ReadAll(r.Body)
@@ -250,7 +250,7 @@ func TestRouterUpdateOverlaysCurrentConfig(t *testing.T) {
 	cmd.SetArgs([]string{
 		"--api-url", srv.URL, "router", "update", "rtr_123",
 		"--name", "Staging",
-		"--managed-key", "baseten",
+		"--managed-key", "fireworks",
 		"--clear-evals",
 	})
 	if err := captureStdout(t, func() error { return cmd.Execute() }); err != nil {
@@ -259,8 +259,8 @@ func TestRouterUpdateOverlaysCurrentConfig(t *testing.T) {
 
 	want := map[string]any{
 		"name":                 "Staging",
-		"enabled_models":       []any{"baseten/deepseek-ai/DeepSeek-V4-Pro"},
-		"provider_key_sources": map[string]any{"baseten": "managed"},
+		"enabled_models":       []any{"fireworks/deepseek-ai/DeepSeek-V4-Pro"},
+		"provider_key_sources": map[string]any{"fireworks": "managed"},
 		"eval_ids":             []any{},
 	}
 	if !reflect.DeepEqual(body, want) {
@@ -277,7 +277,7 @@ func TestRouterUpdatePreservesHeuristicEvalWeights(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":               "rtr_123",
 				"name":             "Production",
-				"enabled_models":   []string{"baseten/deepseek-ai/DeepSeek-V4-Pro"},
+				"enabled_models":   []string{"fireworks/deepseek-ai/DeepSeek-V4-Pro"},
 				"routing_strategy": "heuristic",
 				"evals":            []map[string]any{{"id": "eval_123"}},
 				"heuristic_config": map[string]any{
@@ -327,7 +327,7 @@ func TestRouterUpdateRequiresHeuristicConfigWhenEvalsChange(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":               "rtr_123",
 				"name":             "Production",
-				"enabled_models":   []string{"baseten/deepseek-ai/DeepSeek-V4-Pro"},
+				"enabled_models":   []string{"fireworks/deepseek-ai/DeepSeek-V4-Pro"},
 				"routing_strategy": "heuristic",
 				"evals":            []map[string]any{{"id": "eval_123"}},
 				"heuristic_config": map[string]any{
