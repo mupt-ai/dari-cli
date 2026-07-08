@@ -134,6 +134,8 @@ dari router create <name> --model <model_id> [--model <model_id> ...] \
   [--eval <eval_id> ...] \
   [--strategy slm|heuristic] \
   [--performance-weight 0.7 --price-weight 0.3 --eval-weight <eval_id>=1.0]
+dari router create ./router.yml              # or a directory containing router.yml/router.yaml
+dari router create --from-file ./router.yml  # same, via explicit flag (-f)
 dari router update <router_id_or_endpoint> [--name <name>] [--model ...] \
   [--provider-key ...] [--managed-key ...] [--eval ...] [--clear-evals] \
   [--strategy ...] [--performance-weight ... --price-weight ... --eval-weight ...]
@@ -141,6 +143,23 @@ dari router delete <router_id_or_endpoint> [--yes]
 ```
 
 Router commands accept either an `rtr_...` ID or a copied router endpoint URL. `router update` only changes the flags you pass; everything else keeps its current value. Stored provider keys are write-only — pass `--provider-key-env` (preferred) or `--provider-key` to replace one, or `--managed-key <provider>` to switch that provider to Dari-managed billing.
+
+You can keep router configuration in a local YAML file and create it with `dari router create ./router.yml`, `dari router create ./router-dir`, or explicitly with `--from-file`/`-f`. Directory inputs must contain `router.yml` or `router.yaml`. A positional argument is treated as a manifest path when it contains a path separator or ends in `.yml`/`.yaml`; anything else is treated as a router name. For BYOK providers, prefer `provider_key_envs` so secrets stay in local environment variables instead of committed files:
+
+```yaml
+name: Production Router
+enabled_models:
+  - openai/gpt-5.5
+  - baseten/moonshotai/Kimi-K2.7-Code
+provider_key_sources:
+  openai: managed
+  baseten: user
+provider_key_envs:
+  baseten: BASETEN_API_KEY
+routing_strategy: slm
+eval_ids: []
+heuristic_config: null
+```
 
 ### eval
 

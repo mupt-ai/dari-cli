@@ -1,16 +1,21 @@
 package cli
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
 	"github.com/mupt-ai/dari-cli/internal/deploy"
 )
@@ -88,9 +93,9 @@ type routerEval struct {
 }
 
 type routerHeuristicConfig struct {
-	PerformanceWeight float64            `json:"performance_weight"`
-	PriceWeight       float64            `json:"price_weight"`
-	EvalWeights       map[string]float64 `json:"eval_weights"`
+	PerformanceWeight float64            `json:"performance_weight" yaml:"performance_weight"`
+	PriceWeight       float64            `json:"price_weight" yaml:"price_weight"`
+	EvalWeights       map[string]float64 `json:"eval_weights" yaml:"eval_weights"`
 }
 
 type routerCreateRequest struct {
@@ -121,6 +126,17 @@ type routerCurrent struct {
 	HeuristicConfig *routerHeuristicConfig `json:"heuristic_config"`
 }
 
+type routerCreateManifest struct {
+	Name               string                 `yaml:"name"`
+	EnabledModels      []string               `yaml:"enabled_models"`
+	ProviderKeys       map[string]string      `yaml:"provider_keys"`
+	ProviderKeyEnvs    map[string]string      `yaml:"provider_key_envs"`
+	ProviderKeySources map[string]string      `yaml:"provider_key_sources"`
+	EvalIDs            []string               `yaml:"eval_ids"`
+	RoutingStrategy    string                 `yaml:"routing_strategy"`
+	HeuristicConfig    *routerHeuristicConfig `yaml:"heuristic_config"`
+}
+
 type routerConfigFlags struct {
 	models             []string
 	providerKeyPairs   []string
@@ -132,18 +148,29 @@ type routerConfigFlags struct {
 	performanceWeight  float64
 	priceWeight        float64
 	evalWeightPairs    []string
+	flagNames          []string
 }
 
 func (rf *routerConfigFlags) register(cmd *cobra.Command) {
-	cmd.Flags().StringSliceVar(&rf.models, "model", nil, "Enabled model ID (repeatable or comma-separated); run 'dari router models' for the catalog")
-	cmd.Flags().StringArrayVar(&rf.providerKeyPairs, "provider-key", nil, "Provider API key as provider=KEY, e.g. fireworks=sk-... (repeatable)")
-	cmd.Flags().StringArrayVar(&rf.providerKeyEnvs, "provider-key-env", nil, "Read a provider API key from the local environment as provider=ENV_VAR (repeatable)")
-	cmd.Flags().StringSliceVar(&rf.managedKeyProvider, "managed-key", nil, "Use the Dari-managed key for this provider (repeatable or comma-separated)")
-	cmd.Flags().StringSliceVar(&rf.evalIDs, "eval", nil, "Eval scorecard ID to import (repeatable or comma-separated); run 'dari eval list' for IDs")
-	cmd.Flags().StringVar(&rf.strategy, "strategy", "", "Routing strategy: slm or heuristic")
-	cmd.Flags().Float64Var(&rf.performanceWeight, "performance-weight", 0, "Heuristic strategy: weight for model performance (0-1)")
-	cmd.Flags().Float64Var(&rf.priceWeight, "price-weight", 0, "Heuristic strategy: weight for model price (0-1)")
-	cmd.Flags().StringArrayVar(&rf.evalWeightPairs, "eval-weight", nil, "Heuristic strategy: per-eval weight as eval_id=WEIGHT (repeatable)")
+	// name records every registered flag so changed() below cannot drift
+	// from the set of flags this struct owns.
+	name := func(flagName string) string {
+		rf.flagNames = append(rf.flagNames, flagName)
+		return flagName
+	}
+	cmd.Flags().StringSliceVar(&rf.models, name("model"), nil, "Enabled model ID (repeatable or comma-separated); run 'dari router models' for the catalog")
+	cmd.Flags().StringArrayVar(&rf.providerKeyPairs, name("provider-key"), nil, "Provider API key as provider=KEY, e.g. fireworks=sk-... (repeatable)")
+	cmd.Flags().StringArrayVar(&rf.providerKeyEnvs, name("provider-key-env"), nil, "Read a provider API key from the local environment as provider=ENV_VAR (repeatable)")
+	cmd.Flags().StringSliceVar(&rf.managedKeyProvider, name("managed-key"), nil, "Use the Dari-managed key for this provider (repeatable or comma-separated)")
+	cmd.Flags().StringSliceVar(&rf.evalIDs, name("eval"), nil, "Eval scorecard ID to import (repeatable or comma-separated); run 'dari eval list' for IDs")
+	cmd.Flags().StringVar(&rf.strategy, name("strategy"), "", "Routing strategy: slm or heuristic")
+	cmd.Flags().Float64Var(&rf.performanceWeight, name("performance-weight"), 0, "Heuristic strategy: weight for model performance (0-1)")
+	cmd.Flags().Float64Var(&rf.priceWeight, name("price-weight"), 0, "Heuristic strategy: weight for model price (0-1)")
+	cmd.Flags().StringArrayVar(&rf.evalWeightPairs, name("eval-weight"), nil, "Heuristic strategy: per-eval weight as eval_id=WEIGHT (repeatable)")
+}
+
+func (rf *routerConfigFlags) changed(cmd *cobra.Command) bool {
+	return slices.ContainsFunc(rf.flagNames, cmd.Flags().Changed)
 }
 
 func (rf *routerConfigFlags) providerKeys(stderr io.Writer) (map[string]string, error) {
@@ -204,7 +231,7 @@ func (rf *routerConfigFlags) heuristicConfig(cmd *cobra.Command, currentConfig *
 	if err != nil {
 		return nil, err
 	}
-	if err := validateEvalWeights(evalWeights, evalIDs, rf.performanceWeight); err != nil {
+	if err := validateEvalWeights(evalWeights, evalIDs, rf.performanceWeight, evalWeightFlagTerms); err != nil {
 		return nil, err
 	}
 	return &routerHeuristicConfig{
@@ -244,13 +271,27 @@ func currentEvalWeights(config *routerHeuristicConfig) map[string]float64 {
 	return copy
 }
 
-func validateEvalWeights(weights map[string]float64, evalIDs []string, performanceWeight float64) error {
+// evalWeightTerms names the user-facing configuration surface in
+// validateEvalWeights errors: CLI flags for the flag path, YAML fields for
+// the manifest path.
+type evalWeightTerms struct {
+	performanceWeight string
+	eval              string
+	evalWeight        string
+}
+
+var (
+	evalWeightFlagTerms     = evalWeightTerms{"--performance-weight", "--eval", "--eval-weight"}
+	evalWeightManifestTerms = evalWeightTerms{"heuristic_config.performance_weight", "eval_ids entry", "heuristic_config.eval_weights"}
+)
+
+func validateEvalWeights(weights map[string]float64, evalIDs []string, performanceWeight float64, terms evalWeightTerms) error {
 	if len(weights) == 0 {
 		if performanceWeight > 0 && len(evalIDs) == 0 {
-			return fmt.Errorf("heuristic routing with --performance-weight > 0 requires at least one --eval")
+			return fmt.Errorf("heuristic routing with %s > 0 requires at least one %s", terms.performanceWeight, terms.eval)
 		}
 		if performanceWeight > 0 {
-			return fmt.Errorf("heuristic routing with --performance-weight > 0 requires --eval-weight for every imported eval")
+			return fmt.Errorf("heuristic routing with %s > 0 requires %s for every imported eval", terms.performanceWeight, terms.evalWeight)
 		}
 		return nil
 	}
@@ -259,31 +300,49 @@ func validateEvalWeights(weights map[string]float64, evalIDs []string, performan
 		expected[evalID] = true
 	}
 	if len(weights) != len(expected) {
-		return fmt.Errorf("--eval-weight must be provided for exactly the imported eval ids")
+		return fmt.Errorf("%s must be provided for exactly the imported eval ids", terms.evalWeight)
 	}
 	total := 0.0
 	for evalID, weight := range weights {
 		if !expected[evalID] {
-			return fmt.Errorf("--eval-weight %s: eval is not imported by this router", evalID)
+			return fmt.Errorf("%s %s: eval is not imported by this router", terms.evalWeight, evalID)
 		}
 		if !isUnitWeight(weight) {
-			return fmt.Errorf("--eval-weight %s: weight must be a number between 0 and 1", evalID)
+			return fmt.Errorf("%s %s: weight must be a number between 0 and 1", terms.evalWeight, evalID)
 		}
 		total += weight
 	}
 	if math.Abs(total-1) > 1e-6 {
-		return fmt.Errorf("--eval-weight values must sum to 1")
+		return fmt.Errorf("%s values must sum to 1", terms.evalWeight)
 	}
 	return nil
 }
 
 func newRouterCreateCmd(gf *globalFlags) *cobra.Command {
 	rf := &routerConfigFlags{}
+	var manifestPath string
 	cmd := &cobra.Command{
-		Use:   "create <name>",
+		Use:   "create <name_or_manifest_path>",
 		Short: "Create a router for the current org",
-		Args:  cobra.ExactArgs(1),
+		Args: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("from-file") {
+				if len(args) > 0 {
+					return fmt.Errorf("--from-file cannot be combined with a positional name or manifest path")
+				}
+				return nil
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("from-file") {
+				if rf.changed(cmd) {
+					return fmt.Errorf("--from-file cannot be combined with router config flags; put the configuration in the manifest")
+				}
+				return createRouterFromManifest(cmd, gf, manifestPath)
+			}
+			if !rf.changed(cmd) && looksLikeRouterManifestPath(args[0]) {
+				return createRouterFromManifest(cmd, gf, args[0])
+			}
 			if len(rf.models) == 0 {
 				return fmt.Errorf("at least one --model is required; run 'dari router models' for the catalog")
 			}
@@ -324,7 +383,20 @@ func newRouterCreateCmd(gf *globalFlags) *cobra.Command {
 		},
 	}
 	rf.register(cmd)
+	cmd.Flags().StringVarP(&manifestPath, "from-file", "f", "", "Create from a local router.yml/router.yaml file or a directory containing one")
 	return cmd
+}
+
+func createRouterFromManifest(cmd *cobra.Command, gf *globalFlags, path string) error {
+	body, err := loadRouterCreateRequestFromManifest(path)
+	if err != nil {
+		return err
+	}
+	var resp map[string]any
+	if err := orgKeyRequest(cmd, gf, http.MethodPost, "/v1/organizations/current/routers", body, &resp); err != nil {
+		return err
+	}
+	return printJSON(resp)
 }
 
 func newRouterUpdateCmd(gf *globalFlags) *cobra.Command {
@@ -486,4 +558,291 @@ func splitPair(pair, flagName, format string) (string, string, error) {
 		return "", "", fmt.Errorf("invalid %s %q: expected %s", flagName, pair, format)
 	}
 	return key, value, nil
+}
+
+func looksLikeRouterManifestPath(arg string) bool {
+	trimmed := strings.TrimSpace(arg)
+	ext := strings.ToLower(filepath.Ext(trimmed))
+	return trimmed == "." ||
+		trimmed == ".." ||
+		ext == ".yml" ||
+		ext == ".yaml" ||
+		strings.Contains(trimmed, "/") ||
+		strings.Contains(trimmed, string(filepath.Separator))
+}
+
+func resolveRouterManifestPath(rawPath string) (string, error) {
+	path := strings.TrimSpace(rawPath)
+	if path == "" {
+		return "", fmt.Errorf("router manifest path is required")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("router manifest %s: %w", path, err)
+	}
+	if !info.IsDir() {
+		return path, nil
+	}
+	for _, name := range []string{"router.yml", "router.yaml"} {
+		candidate := filepath.Join(path, name)
+		if candidateInfo, err := os.Stat(candidate); err == nil && !candidateInfo.IsDir() {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("router manifest directory %s must contain router.yml or router.yaml", path)
+}
+
+func loadRouterCreateRequestFromManifest(rawPath string) (routerCreateRequest, error) {
+	path, err := resolveRouterManifestPath(rawPath)
+	if err != nil {
+		return routerCreateRequest{}, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return routerCreateRequest{}, fmt.Errorf("read router manifest %s: %w", path, err)
+	}
+	var manifest routerCreateManifest
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	// io.EOF means an empty manifest; let createRequest report the missing
+	// fields instead of surfacing a bare "EOF".
+	if err := decoder.Decode(&manifest); err != nil && !errors.Is(err, io.EOF) {
+		return routerCreateRequest{}, fmt.Errorf("parse router manifest %s: %w", path, err)
+	}
+	return manifest.createRequest(path)
+}
+
+func (manifest routerCreateManifest) createRequest(path string) (routerCreateRequest, error) {
+	name := strings.TrimSpace(manifest.Name)
+	if name == "" {
+		return routerCreateRequest{}, fmt.Errorf("%s: name is required", path)
+	}
+	models, err := cleanRequiredStrings(manifest.EnabledModels, path, "enabled_models")
+	if err != nil {
+		return routerCreateRequest{}, err
+	}
+	if len(models) == 0 {
+		return routerCreateRequest{}, fmt.Errorf("%s: enabled_models must contain at least one model", path)
+	}
+	providerKeys, err := manifestProviderKeys(path, manifest.ProviderKeys, manifest.ProviderKeyEnvs)
+	if err != nil {
+		return routerCreateRequest{}, err
+	}
+	providerKeySources, err := cleanProviderKeySources(path, manifest.ProviderKeySources)
+	if err != nil {
+		return routerCreateRequest{}, err
+	}
+	if err := validateManifestProviderKeys(path, providerKeySources, providerKeys, models); err != nil {
+		return routerCreateRequest{}, err
+	}
+	evalIDs, err := cleanRequiredStrings(manifest.EvalIDs, path, "eval_ids")
+	if err != nil {
+		return routerCreateRequest{}, err
+	}
+	strategy, err := routerStrategyForManifest(path, strings.ToLower(strings.TrimSpace(manifest.RoutingStrategy)), manifest.HeuristicConfig != nil)
+	if err != nil {
+		return routerCreateRequest{}, err
+	}
+	// The API expects eval_weights as {} rather than null.
+	if manifest.HeuristicConfig != nil && manifest.HeuristicConfig.EvalWeights == nil {
+		manifest.HeuristicConfig.EvalWeights = map[string]float64{}
+	}
+	if err := validateManifestHeuristicConfig(path, manifest.HeuristicConfig, evalIDs); err != nil {
+		return routerCreateRequest{}, err
+	}
+	body := routerCreateRequest{
+		Name:          name,
+		EnabledModels: models,
+	}
+	if len(providerKeys) > 0 {
+		body.ProviderKeys = providerKeys
+	}
+	if len(providerKeySources) > 0 {
+		body.ProviderKeySources = providerKeySources
+	}
+	if len(evalIDs) > 0 {
+		body.EvalIDs = evalIDs
+	}
+	if strategy != "" {
+		body.RoutingStrategy = strategy
+	}
+	body.HeuristicConfig = manifest.HeuristicConfig
+	return body, nil
+}
+
+func cleanRequiredStrings(values []string, path, field string) ([]string, error) {
+	cleaned := make([]string, 0, len(values))
+	for index, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return nil, fmt.Errorf("%s: %s[%d] must be non-empty", path, field, index)
+		}
+		cleaned = append(cleaned, trimmed)
+	}
+	return cleaned, nil
+}
+
+// The API matches provider names case-insensitively, so manifest provider
+// names are normalized to lowercase before validation and submission.
+func manifestProviderKeys(path string, rawKeys, rawEnvs map[string]string) (map[string]string, error) {
+	keys := map[string]string{}
+	for rawProvider, rawValue := range rawKeys {
+		provider := strings.ToLower(strings.TrimSpace(rawProvider))
+		value := strings.TrimSpace(rawValue)
+		if provider == "" || value == "" {
+			return nil, fmt.Errorf("%s: provider_keys entries must be provider: key", path)
+		}
+		if _, exists := keys[provider]; exists {
+			return nil, fmt.Errorf("%s: provider_keys defines provider %s more than once", path, provider)
+		}
+		keys[provider] = value
+	}
+	for rawProvider, rawEnv := range rawEnvs {
+		provider := strings.ToLower(strings.TrimSpace(rawProvider))
+		envName := strings.TrimSpace(rawEnv)
+		if provider == "" || envName == "" {
+			return nil, fmt.Errorf("%s: provider_key_envs entries must be provider: ENV_VAR", path)
+		}
+		if _, exists := keys[provider]; exists {
+			return nil, fmt.Errorf("%s: provider %s is defined more than once across provider_keys and provider_key_envs", path, provider)
+		}
+		value := os.Getenv(envName)
+		if strings.TrimSpace(value) == "" {
+			return nil, fmt.Errorf("%s: provider_key_envs.%s references unset or empty environment variable %s", path, provider, envName)
+		}
+		keys[provider] = value
+	}
+	return keys, nil
+}
+
+func cleanProviderKeySources(path string, rawSources map[string]string) (map[string]string, error) {
+	sources := map[string]string{}
+	for rawProvider, rawSource := range rawSources {
+		provider := strings.ToLower(strings.TrimSpace(rawProvider))
+		source := strings.TrimSpace(rawSource)
+		if provider == "" {
+			return nil, fmt.Errorf("%s: provider_key_sources has an empty provider name", path)
+		}
+		source = strings.ToLower(source)
+		if source != "managed" && source != "user" {
+			return nil, fmt.Errorf("%s: provider_key_sources.%s must be managed or user", path, provider)
+		}
+		if _, exists := sources[provider]; exists {
+			return nil, fmt.Errorf("%s: provider_key_sources defines provider %s more than once", path, provider)
+		}
+		sources[provider] = source
+	}
+	return sources, nil
+}
+
+func validateManifestProviderKeys(path string, sources, keys map[string]string, models []string) error {
+	providers, err := providersForRouterModels(path, models)
+	if err != nil {
+		return err
+	}
+	expected := map[string]bool{}
+	for _, provider := range providers {
+		expected[provider] = true
+	}
+	for provider := range sources {
+		if !expected[provider] {
+			return fmt.Errorf("%s: provider_key_sources.%s does not match any enabled_models provider", path, provider)
+		}
+	}
+	for provider := range keys {
+		if !expected[provider] {
+			return fmt.Errorf("%s: provider key for %s does not match any enabled_models provider", path, provider)
+		}
+	}
+	for provider, source := range sources {
+		if source == "managed" && strings.TrimSpace(keys[provider]) != "" {
+			return fmt.Errorf("%s: provider_keys can only include providers marked as user; %s is managed", path, provider)
+		}
+	}
+	for _, provider := range providers {
+		if !manifestProviderUsesManifestCredentials(provider) {
+			if strings.TrimSpace(keys[provider]) != "" {
+				return fmt.Errorf("%s: provider key for %s is configured by the custom model credential", path, provider)
+			}
+			if sources[provider] == "managed" {
+				return fmt.Errorf("%s: provider_key_sources.%s cannot be managed for a custom model provider", path, provider)
+			}
+			continue
+		}
+		switch sources[provider] {
+		case "":
+			return fmt.Errorf("%s: provider_key_sources.%s is required; set it to managed or user", path, provider)
+		case "user":
+			if strings.TrimSpace(keys[provider]) == "" {
+				return fmt.Errorf("%s: provider_key_sources.%s is user, so provider_keys.%s or provider_key_envs.%s is required", path, provider, provider, provider)
+			}
+		}
+	}
+	return nil
+}
+
+// Manifest validation is intentionally offline. Built-in router providers need
+// manifest-managed key selection, while org custom model providers resolve their
+// credentials from the model catalog and may omit manifest provider key fields.
+func manifestProviderUsesManifestCredentials(provider string) bool {
+	switch provider {
+	case "anthropic", "baseten", "fireworks", "openai":
+		return true
+	default:
+		return false
+	}
+}
+
+func providersForRouterModels(path string, models []string) ([]string, error) {
+	seen := map[string]bool{}
+	providers := []string{}
+	for _, model := range models {
+		provider, _, ok := strings.Cut(model, "/")
+		provider = strings.ToLower(provider)
+		if !ok || provider == "" {
+			return nil, fmt.Errorf("%s: enabled_models entry %s must be a provider-prefixed model ID like openai/gpt-5.5", path, model)
+		}
+		if seen[provider] {
+			continue
+		}
+		seen[provider] = true
+		providers = append(providers, provider)
+	}
+	return providers, nil
+}
+
+func validateManifestHeuristicConfig(path string, config *routerHeuristicConfig, evalIDs []string) error {
+	if config == nil {
+		return nil
+	}
+	if !isUnitWeight(config.PerformanceWeight) {
+		return fmt.Errorf("%s: heuristic_config.performance_weight must be a number between 0 and 1", path)
+	}
+	if !isUnitWeight(config.PriceWeight) {
+		return fmt.Errorf("%s: heuristic_config.price_weight must be a number between 0 and 1", path)
+	}
+	if math.Abs(config.PerformanceWeight+config.PriceWeight-1) > 1e-6 {
+		return fmt.Errorf("%s: heuristic_config.performance_weight and heuristic_config.price_weight must sum to 1", path)
+	}
+	if err := validateEvalWeights(config.EvalWeights, evalIDs, config.PerformanceWeight, evalWeightManifestTerms); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	return nil
+}
+
+func routerStrategyForManifest(path, strategy string, hasHeuristicConfig bool) (string, error) {
+	switch {
+	case strategy == "heuristic" && !hasHeuristicConfig:
+		return "", fmt.Errorf("%s: routing_strategy heuristic requires heuristic_config", path)
+	case strategy == "slm" && hasHeuristicConfig:
+		return "", fmt.Errorf("%s: heuristic_config is only supported when routing_strategy is heuristic", path)
+	case strategy == "heuristic" || strategy == "slm":
+		return strategy, nil
+	case strategy != "":
+		return "", fmt.Errorf("%s: routing_strategy must be slm or heuristic", path)
+	case hasHeuristicConfig:
+		return "heuristic", nil
+	default:
+		return "", nil
+	}
 }

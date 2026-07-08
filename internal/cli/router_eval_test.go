@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -122,6 +124,408 @@ func TestRouterCreateSendsPayload(t *testing.T) {
 	}
 	if !reflect.DeepEqual(body, want) {
 		t.Fatalf("create body = %#v, want %#v", body, want)
+	}
+}
+
+func TestRouterCreateManualFlagsAllowPathLikeNames(t *testing.T) {
+	for _, name := range []string{"Team/Prod", "draft.yaml"} {
+		t.Run(name, func(t *testing.T) {
+			var body map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/v1/organizations/current/routers" {
+					t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+				}
+				raw, _ := io.ReadAll(r.Body)
+				if err := json.Unmarshal(raw, &body); err != nil {
+					t.Fatalf("decode body: %v", err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "rtr_new"})
+			}))
+			defer srv.Close()
+			useTestAPIKey(t)
+
+			cmd := newRootCmd("dev")
+			cmd.SetArgs([]string{
+				"--api-url", srv.URL, "router", "create", name,
+				"--model", "openai/gpt-5.5",
+				"--managed-key", "openai",
+			})
+			if err := captureStdout(t, func() error { return cmd.Execute() }); err != nil {
+				t.Fatalf("dari router create %q: %v", name, err)
+			}
+			want := map[string]any{
+				"name":                 name,
+				"enabled_models":       []any{"openai/gpt-5.5"},
+				"provider_key_sources": map[string]any{"openai": "managed"},
+			}
+			if !reflect.DeepEqual(body, want) {
+				t.Fatalf("create body = %#v, want %#v", body, want)
+			}
+		})
+	}
+}
+
+func TestRouterCreateFromManifestFileSendsPayload(t *testing.T) {
+	t.Setenv("TEST_BASETEN_KEY", "sk-baseten-env")
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "router.yml")
+	if err := os.WriteFile(manifestPath, []byte(`name: Production Router
+enabled_models:
+  - openai/gpt-5.5
+  - baseten/moonshotai/Kimi-K2.7-Code
+provider_key_sources:
+  openai: managed
+  baseten: user
+provider_key_envs:
+  baseten: TEST_BASETEN_KEY
+routing_strategy: heuristic
+eval_ids:
+  - eval_123
+heuristic_config:
+  performance_weight: 0.7
+  price_weight: 0.3
+  eval_weights:
+    eval_123: 1
+`), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if auth := r.Header.Get("Authorization"); auth != "Bearer dari_test" {
+			t.Fatalf("Authorization = %q", auth)
+		}
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/organizations/current/routers" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		raw, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(raw, &body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "rtr_new"})
+	}))
+	defer srv.Close()
+	useTestAPIKey(t)
+
+	cmd := newRootCmd("dev")
+	cmd.SetArgs([]string{"--api-url", srv.URL, "router", "create", "--from-file", manifestPath})
+	if err := captureStdout(t, func() error { return cmd.Execute() }); err != nil {
+		t.Fatalf("dari router create --from-file: %v", err)
+	}
+
+	want := map[string]any{
+		"name":                 "Production Router",
+		"enabled_models":       []any{"openai/gpt-5.5", "baseten/moonshotai/Kimi-K2.7-Code"},
+		"provider_keys":        map[string]any{"baseten": "sk-baseten-env"},
+		"provider_key_sources": map[string]any{"openai": "managed", "baseten": "user"},
+		"eval_ids":             []any{"eval_123"},
+		"routing_strategy":     "heuristic",
+		"heuristic_config": map[string]any{
+			"performance_weight": 0.7,
+			"price_weight":       0.3,
+			"eval_weights":       map[string]any{"eval_123": 1.0},
+		},
+	}
+	if !reflect.DeepEqual(body, want) {
+		t.Fatalf("create body = %#v, want %#v", body, want)
+	}
+}
+
+func TestRouterCreateFromManifestDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "router.yaml"), []byte(`name: Managed Router
+enabled_models:
+  - openai/gpt-5.5
+provider_key_sources:
+  openai: managed
+routing_strategy: slm
+`), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(raw, &body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "rtr_new"})
+	}))
+	defer srv.Close()
+	useTestAPIKey(t)
+
+	cmd := newRootCmd("dev")
+	cmd.SetArgs([]string{"--api-url", srv.URL, "router", "create", dir})
+	if err := captureStdout(t, func() error { return cmd.Execute() }); err != nil {
+		t.Fatalf("dari router create <dir>: %v", err)
+	}
+	want := map[string]any{
+		"name":                 "Managed Router",
+		"enabled_models":       []any{"openai/gpt-5.5"},
+		"provider_key_sources": map[string]any{"openai": "managed"},
+		"routing_strategy":     "slm",
+	}
+	if !reflect.DeepEqual(body, want) {
+		t.Fatalf("create body = %#v, want %#v", body, want)
+	}
+}
+
+func TestRouterCreateFromManifestRejectsManagedProviderKey(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "router.yml")
+	if err := os.WriteFile(manifestPath, []byte(`name: Bad Router
+enabled_models:
+  - openai/gpt-5.5
+provider_key_sources:
+  openai: managed
+provider_keys:
+  openai: sk-openai
+`), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	useTestAPIKey(t)
+
+	cmd := newRootCmd("dev")
+	cmd.SetArgs([]string{"router", "create", manifestPath})
+	cmd.SetErr(io.Discard)
+	if err := captureStdout(t, func() error { return cmd.Execute() }); err == nil {
+		t.Fatal("expected error for provider key on managed provider")
+	}
+}
+
+func TestRouterCreateFromManifestValidatesRequiredFieldsBeforeAPI(t *testing.T) {
+	t.Setenv("TEST_BASETEN_KEY", "sk-baseten")
+
+	for _, tc := range []struct {
+		name     string
+		manifest string
+	}{
+		{
+			name: "missing name",
+			manifest: `enabled_models:
+  - openai/gpt-5.5
+`,
+		},
+		{
+			name: "missing enabled_models",
+			manifest: `name: Missing Models
+`,
+		},
+		{
+			name:     "empty manifest",
+			manifest: "",
+		},
+		{
+			name: "missing provider_key_sources",
+			manifest: `name: Missing Sources
+enabled_models:
+  - openai/gpt-5.5
+`,
+		},
+		{
+			name: "model missing provider prefix",
+			manifest: `name: Slashless Model
+enabled_models:
+  - gpt-5.5
+provider_key_sources:
+  openai: managed
+`,
+		},
+		{
+			name: "extra provider key source",
+			manifest: `name: Extra Source
+enabled_models:
+  - openai/gpt-5.5
+provider_key_sources:
+  openai: managed
+  baseten: managed
+`,
+		},
+		{
+			name: "extra provider key",
+			manifest: `name: Extra Key
+enabled_models:
+  - openai/gpt-5.5
+provider_key_sources:
+  openai: managed
+provider_keys:
+  baseten: sk-baseten
+`,
+		},
+		{
+			name: "extra provider key env",
+			manifest: `name: Extra Key Env
+enabled_models:
+  - openai/gpt-5.5
+provider_key_sources:
+  openai: managed
+provider_key_envs:
+  baseten: TEST_BASETEN_KEY
+`,
+		},
+		{
+			name: "custom provider inline key",
+			manifest: `name: Custom Inline Key
+enabled_models:
+  - acme/qwen3-coder
+provider_key_sources:
+  acme: user
+provider_keys:
+  acme: sk-acme
+`,
+		},
+		{
+			name: "custom provider managed source",
+			manifest: `name: Custom Managed Source
+enabled_models:
+  - acme/qwen3-coder
+provider_key_sources:
+  acme: managed
+`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			manifestPath := filepath.Join(dir, "router.yml")
+			if err := os.WriteFile(manifestPath, []byte(tc.manifest), 0o644); err != nil {
+				t.Fatalf("write manifest: %v", err)
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Fatalf("unexpected API request %s %s", r.Method, r.URL.Path)
+			}))
+			defer srv.Close()
+			useTestAPIKey(t)
+
+			cmd := newRootCmd("dev")
+			cmd.SetArgs([]string{"--api-url", srv.URL, "router", "create", manifestPath})
+			cmd.SetErr(io.Discard)
+			if err := captureStdout(t, func() error { return cmd.Execute() }); err == nil {
+				t.Fatal("expected manifest validation error")
+			}
+		})
+	}
+}
+
+func TestRouterCreateFromManifestNormalizesProviderCase(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "router.yml"), []byte(`name: Case Router
+enabled_models:
+  - openai/gpt-5.5
+provider_key_sources:
+  OpenAI: Managed
+routing_strategy: SLM
+`), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(raw, &body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "rtr_new"})
+	}))
+	defer srv.Close()
+	useTestAPIKey(t)
+
+	cmd := newRootCmd("dev")
+	cmd.SetArgs([]string{"--api-url", srv.URL, "router", "create", dir})
+	if err := captureStdout(t, func() error { return cmd.Execute() }); err != nil {
+		t.Fatalf("dari router create <dir>: %v", err)
+	}
+	want := map[string]any{"openai": "managed"}
+	if !reflect.DeepEqual(body["provider_key_sources"], want) {
+		t.Fatalf("provider_key_sources = %#v, want %#v", body["provider_key_sources"], want)
+	}
+	if body["routing_strategy"] != "slm" {
+		t.Fatalf("routing_strategy = %#v, want %q", body["routing_strategy"], "slm")
+	}
+}
+
+func TestRouterCreateFromManifestAllowsCustomModelCredentialProviders(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		manifest string
+		want     map[string]any
+	}{
+		{
+			name: "no provider key fields",
+			manifest: `name: Custom Router
+enabled_models:
+  - acme/qwen3-coder
+`,
+			want: map[string]any{
+				"name":           "Custom Router",
+				"enabled_models": []any{"acme/qwen3-coder"},
+			},
+		},
+		{
+			name: "user source without inline key",
+			manifest: `name: Custom Router
+enabled_models:
+  - acme/qwen3-coder
+provider_key_sources:
+  acme: user
+`,
+			want: map[string]any{
+				"name":                 "Custom Router",
+				"enabled_models":       []any{"acme/qwen3-coder"},
+				"provider_key_sources": map[string]any{"acme": "user"},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			manifestPath := filepath.Join(dir, "router.yml")
+			if err := os.WriteFile(manifestPath, []byte(tc.manifest), 0o644); err != nil {
+				t.Fatalf("write manifest: %v", err)
+			}
+
+			var body map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				raw, _ := io.ReadAll(r.Body)
+				if err := json.Unmarshal(raw, &body); err != nil {
+					t.Fatalf("decode body: %v", err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "rtr_new"})
+			}))
+			defer srv.Close()
+			useTestAPIKey(t)
+
+			cmd := newRootCmd("dev")
+			cmd.SetArgs([]string{"--api-url", srv.URL, "router", "create", "--from-file", manifestPath})
+			if err := captureStdout(t, func() error { return cmd.Execute() }); err != nil {
+				t.Fatalf("dari router create --from-file: %v", err)
+			}
+			if !reflect.DeepEqual(body, tc.want) {
+				t.Fatalf("create body = %#v, want %#v", body, tc.want)
+			}
+		})
+	}
+}
+
+func TestRouterCreateFromFileRejectsConfigFlags(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "router.yml")
+	if err := os.WriteFile(manifestPath, []byte(`name: Conflict Router
+enabled_models:
+  - openai/gpt-5.5
+`), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	useTestAPIKey(t)
+
+	cmd := newRootCmd("dev")
+	cmd.SetArgs([]string{"router", "create", "--from-file", manifestPath, "--model", "openai/gpt-5.5"})
+	cmd.SetErr(io.Discard)
+	if err := captureStdout(t, func() error { return cmd.Execute() }); err == nil {
+		t.Fatal("expected error combining --from-file with config flags")
 	}
 }
 
