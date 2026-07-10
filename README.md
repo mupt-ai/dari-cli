@@ -161,6 +161,25 @@ eval_ids: []
 heuristic_config: null
 ```
 
+Custom router rules are supported in YAML manifests:
+
+```yaml
+name: Custom Rules Router
+enabled_models:
+  - openai/gpt-5.5
+  - openai/gpt-4.1-mini
+provider_key_sources:
+  openai: managed
+routing_strategy: custom
+custom_config:
+  rules:
+    - when: planning and architecture
+      use: openai/gpt-5.5
+    - when: implementation and refactors
+      use: openai/gpt-4.1-mini
+  default: openai/gpt-4.1-mini
+```
+
 ### eval
 
 ```bash

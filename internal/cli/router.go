@@ -98,6 +98,16 @@ type routerHeuristicConfig struct {
 	EvalWeights       map[string]float64 `json:"eval_weights" yaml:"eval_weights"`
 }
 
+type routerCustomRule struct {
+	When string `json:"when" yaml:"when"`
+	Use  string `json:"use" yaml:"use"`
+}
+
+type routerCustomConfig struct {
+	Rules   []routerCustomRule `json:"rules" yaml:"rules"`
+	Default *string            `json:"default,omitempty" yaml:"default"`
+}
+
 type routerCreateRequest struct {
 	Name               string                 `json:"name"`
 	EnabledModels      []string               `json:"enabled_models"`
@@ -106,6 +116,7 @@ type routerCreateRequest struct {
 	EvalIDs            []string               `json:"eval_ids,omitempty"`
 	RoutingStrategy    string                 `json:"routing_strategy,omitempty"`
 	HeuristicConfig    *routerHeuristicConfig `json:"heuristic_config,omitempty"`
+	CustomConfig       *routerCustomConfig    `json:"custom_config,omitempty"`
 }
 
 type routerUpdateRequest struct {
@@ -135,6 +146,7 @@ type routerCreateManifest struct {
 	EvalIDs            []string               `yaml:"eval_ids"`
 	RoutingStrategy    string                 `yaml:"routing_strategy"`
 	HeuristicConfig    *routerHeuristicConfig `yaml:"heuristic_config"`
+	CustomConfig       *routerCustomConfig    `yaml:"custom_config"`
 }
 
 type routerConfigFlags struct {
@@ -508,6 +520,8 @@ func routerStrategyForCreate(strategy string, hasHeuristicConfig bool) (string, 
 		return "", fmt.Errorf("heuristic weight flags require --strategy heuristic")
 	case strategy == "heuristic" || strategy == "slm":
 		return strategy, nil
+	case strategy == "custom":
+		return "", fmt.Errorf("custom routing requires a manifest with custom_config; use dari router create --from-file")
 	case strategy != "":
 		return "", fmt.Errorf("--strategy must be slm or heuristic")
 	case hasHeuristicConfig:
@@ -521,13 +535,22 @@ func routerStrategyForUpdate(strategy, currentStrategy string, hasHeuristicConfi
 	if currentStrategy == "" {
 		currentStrategy = "slm"
 	}
+	if strategy == "custom" && currentStrategy != "custom" {
+		return "", fmt.Errorf("custom routing rules cannot be set with flags; create the router from a manifest with custom_config (--from-file)")
+	}
 	target := currentStrategy
 	if strategy != "" {
 		target = strategy
-	} else if hasHeuristicConfig && currentStrategy != "heuristic" {
+	} else if hasHeuristicConfig && currentStrategy != "heuristic" && currentStrategy != "custom" {
 		target = "heuristic"
 	}
 	switch {
+	case target == "custom" && hasHeuristicConfig:
+		return "", fmt.Errorf("heuristic weight flags require --strategy heuristic")
+	case target == "custom":
+		// Custom rules are manifest-managed; the API keeps the stored
+		// custom config when routing_strategy stays custom.
+		return target, nil
 	case target == "heuristic" && !hasHeuristicConfig && (currentStrategy != "heuristic" || evalIDsChanged):
 		return "", fmt.Errorf("heuristic routing requires --performance-weight, --price-weight, and --eval-weight for every imported eval")
 	case target == "slm" && hasHeuristicConfig:
@@ -639,7 +662,12 @@ func (manifest routerCreateManifest) createRequest(path string) (routerCreateReq
 	if err != nil {
 		return routerCreateRequest{}, err
 	}
-	strategy, err := routerStrategyForManifest(path, strings.ToLower(strings.TrimSpace(manifest.RoutingStrategy)), manifest.HeuristicConfig != nil)
+	strategy, err := routerStrategyForManifest(
+		path,
+		strings.ToLower(strings.TrimSpace(manifest.RoutingStrategy)),
+		manifest.HeuristicConfig != nil,
+		manifest.CustomConfig != nil,
+	)
 	if err != nil {
 		return routerCreateRequest{}, err
 	}
@@ -648,6 +676,10 @@ func (manifest routerCreateManifest) createRequest(path string) (routerCreateReq
 		manifest.HeuristicConfig.EvalWeights = map[string]float64{}
 	}
 	if err := validateManifestHeuristicConfig(path, manifest.HeuristicConfig, evalIDs); err != nil {
+		return routerCreateRequest{}, err
+	}
+	customConfig, err := normalizeManifestCustomConfig(path, manifest.CustomConfig, models)
+	if err != nil {
 		return routerCreateRequest{}, err
 	}
 	body := routerCreateRequest{
@@ -667,6 +699,7 @@ func (manifest routerCreateManifest) createRequest(path string) (routerCreateReq
 		body.RoutingStrategy = strategy
 	}
 	body.HeuristicConfig = manifest.HeuristicConfig
+	body.CustomConfig = customConfig
 	return body, nil
 }
 
@@ -830,18 +863,77 @@ func validateManifestHeuristicConfig(path string, config *routerHeuristicConfig,
 	return nil
 }
 
-func routerStrategyForManifest(path, strategy string, hasHeuristicConfig bool) (string, error) {
+const (
+	manifestCustomRulesMaxCount     = 20
+	manifestCustomRuleWhenMaxLength = 500
+)
+
+func normalizeManifestCustomConfig(path string, config *routerCustomConfig, models []string) (*routerCustomConfig, error) {
+	if config == nil {
+		return nil, nil
+	}
+	if len(config.Rules) == 0 {
+		return nil, fmt.Errorf("%s: custom_config.rules must contain at least one rule", path)
+	}
+	if len(config.Rules) > manifestCustomRulesMaxCount {
+		return nil, fmt.Errorf("%s: custom_config.rules supports at most %d rules", path, manifestCustomRulesMaxCount)
+	}
+	enabled := map[string]bool{}
+	for _, model := range models {
+		enabled[model] = true
+	}
+	rules := make([]routerCustomRule, 0, len(config.Rules))
+	for index, rule := range config.Rules {
+		when := strings.TrimSpace(rule.When)
+		if when == "" {
+			return nil, fmt.Errorf("%s: custom_config.rules[%d].when must be non-empty", path, index)
+		}
+		if len([]rune(when)) > manifestCustomRuleWhenMaxLength {
+			return nil, fmt.Errorf("%s: custom_config.rules[%d].when must be at most %d characters", path, index, manifestCustomRuleWhenMaxLength)
+		}
+		use := strings.TrimSpace(rule.Use)
+		if use == "" {
+			return nil, fmt.Errorf("%s: custom_config.rules[%d].use must be non-empty", path, index)
+		}
+		if !enabled[use] {
+			return nil, fmt.Errorf("%s: custom_config.rules[%d].use must be one of enabled_models", path, index)
+		}
+		rules = append(rules, routerCustomRule{When: when, Use: use})
+	}
+	var defaultModel *string
+	if config.Default != nil {
+		value := strings.TrimSpace(*config.Default)
+		if value == "" {
+			return nil, fmt.Errorf("%s: custom_config.default must be non-empty when set", path)
+		}
+		if !enabled[value] {
+			return nil, fmt.Errorf("%s: custom_config.default must be one of enabled_models", path)
+		}
+		defaultModel = &value
+	}
+	return &routerCustomConfig{Rules: rules, Default: defaultModel}, nil
+}
+
+func routerStrategyForManifest(path, strategy string, hasHeuristicConfig, hasCustomConfig bool) (string, error) {
 	switch {
+	case hasHeuristicConfig && hasCustomConfig:
+		return "", fmt.Errorf("%s: heuristic_config and custom_config cannot both be set", path)
 	case strategy == "heuristic" && !hasHeuristicConfig:
 		return "", fmt.Errorf("%s: routing_strategy heuristic requires heuristic_config", path)
+	case strategy == "custom" && !hasCustomConfig:
+		return "", fmt.Errorf("%s: routing_strategy custom requires custom_config", path)
 	case strategy == "slm" && hasHeuristicConfig:
 		return "", fmt.Errorf("%s: heuristic_config is only supported when routing_strategy is heuristic", path)
-	case strategy == "heuristic" || strategy == "slm":
+	case strategy == "slm" && hasCustomConfig:
+		return "", fmt.Errorf("%s: custom_config is only supported when routing_strategy is custom", path)
+	case strategy == "heuristic" || strategy == "custom" || strategy == "slm":
 		return strategy, nil
 	case strategy != "":
-		return "", fmt.Errorf("%s: routing_strategy must be slm or heuristic", path)
+		return "", fmt.Errorf("%s: routing_strategy must be slm, heuristic, or custom", path)
 	case hasHeuristicConfig:
 		return "heuristic", nil
+	case hasCustomConfig:
+		return "custom", nil
 	default:
 		return "", nil
 	}

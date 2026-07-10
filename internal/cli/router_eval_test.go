@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -233,6 +234,69 @@ heuristic_config:
 	}
 }
 
+func TestRouterCreateFromManifestCustomStrategySendsPayload(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "router.yml")
+	if err := os.WriteFile(manifestPath, []byte(`name: Custom Rules Router
+enabled_models:
+  - openai/gpt-5.5
+  - openai/gpt-4.1-mini
+provider_key_sources:
+  openai: managed
+routing_strategy: custom
+custom_config:
+  rules:
+    - when: " planning and architecture "
+      use: openai/gpt-5.5
+    - when: implementation and refactors
+      use: " openai/gpt-4.1-mini "
+  default: " openai/gpt-4.1-mini "
+`), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if auth := r.Header.Get("Authorization"); auth != "Bearer dari_test" {
+			t.Fatalf("Authorization = %q", auth)
+		}
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/organizations/current/routers" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		raw, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(raw, &body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "rtr_new"})
+	}))
+	defer srv.Close()
+	useTestAPIKey(t)
+
+	cmd := newRootCmd("dev")
+	cmd.SetArgs([]string{"--api-url", srv.URL, "router", "create", "--from-file", manifestPath})
+	if err := captureStdout(t, func() error { return cmd.Execute() }); err != nil {
+		t.Fatalf("dari router create --from-file: %v", err)
+	}
+
+	want := map[string]any{
+		"name":                 "Custom Rules Router",
+		"enabled_models":       []any{"openai/gpt-5.5", "openai/gpt-4.1-mini"},
+		"provider_key_sources": map[string]any{"openai": "managed"},
+		"routing_strategy":     "custom",
+		"custom_config": map[string]any{
+			"rules": []any{
+				map[string]any{"when": "planning and architecture", "use": "openai/gpt-5.5"},
+				map[string]any{"when": "implementation and refactors", "use": "openai/gpt-4.1-mini"},
+			},
+			"default": "openai/gpt-4.1-mini",
+		},
+	}
+	if !reflect.DeepEqual(body, want) {
+		t.Fatalf("create body = %#v, want %#v", body, want)
+	}
+}
+
 func TestRouterCreateFromManifestDirectory(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "router.yaml"), []byte(`name: Managed Router
@@ -384,6 +448,89 @@ enabled_models:
   - acme/qwen3-coder
 provider_key_sources:
   acme: managed
+`,
+		},
+		{
+			name: "custom strategy missing config",
+			manifest: `name: Missing Custom Config
+enabled_models:
+  - openai/gpt-5.5
+provider_key_sources:
+  openai: managed
+routing_strategy: custom
+`,
+		},
+		{
+			name: "custom config with slm strategy",
+			manifest: `name: Wrong Custom Strategy
+enabled_models:
+  - openai/gpt-5.5
+provider_key_sources:
+  openai: managed
+routing_strategy: slm
+custom_config:
+  rules:
+    - when: planning
+      use: openai/gpt-5.5
+`,
+		},
+		{
+			name: "custom rule model not enabled",
+			manifest: `name: Unknown Rule Model
+enabled_models:
+  - openai/gpt-5.5
+provider_key_sources:
+  openai: managed
+routing_strategy: custom
+custom_config:
+  rules:
+    - when: implementation
+      use: openai/gpt-4.1-mini
+`,
+		},
+		{
+			name: "custom rules empty",
+			manifest: `name: Empty Custom Rules
+enabled_models:
+  - openai/gpt-5.5
+provider_key_sources:
+  openai: managed
+routing_strategy: custom
+custom_config:
+  rules: []
+`,
+		},
+		{
+			name: "custom default model not enabled",
+			manifest: `name: Unknown Custom Default
+enabled_models:
+  - openai/gpt-5.5
+provider_key_sources:
+  openai: managed
+routing_strategy: custom
+custom_config:
+  rules:
+    - when: planning
+      use: openai/gpt-5.5
+  default: openai/gpt-4.1-mini
+`,
+		},
+		{
+			name: "heuristic and custom configs together",
+			manifest: `name: Mixed Strategies
+enabled_models:
+  - openai/gpt-5.5
+provider_key_sources:
+  openai: managed
+routing_strategy: custom
+heuristic_config:
+  performance_weight: 0
+  price_weight: 1
+  eval_weights: {}
+custom_config:
+  rules:
+    - when: planning
+      use: openai/gpt-5.5
 `,
 		},
 	} {
@@ -719,6 +866,141 @@ func TestRouterUpdatePreservesHeuristicEvalWeights(t *testing.T) {
 	}
 	if !reflect.DeepEqual(body["heuristic_config"], want) {
 		t.Fatalf("heuristic_config = %#v, want %#v", body["heuristic_config"], want)
+	}
+}
+
+func TestRouterUpdateKeepsCustomStrategy(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/organizations/current/routers/rtr_123":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":               "rtr_123",
+				"name":             "Production",
+				"enabled_models":   []string{"fireworks/deepseek-ai/DeepSeek-V4-Pro"},
+				"routing_strategy": "custom",
+				"custom_config": map[string]any{
+					"rules":   []map[string]any{{"when": "tools", "use": "fireworks/deepseek-ai/DeepSeek-V4-Pro"}},
+					"default": "fireworks/deepseek-ai/DeepSeek-V4-Pro",
+				},
+			})
+		case "PUT /v1/organizations/current/routers/rtr_123":
+			raw, _ := io.ReadAll(r.Body)
+			if err := json.Unmarshal(raw, &body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "rtr_123"})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	useTestAPIKey(t)
+
+	cmd := newRootCmd("dev")
+	cmd.SetArgs([]string{"--api-url", srv.URL, "router", "update", "rtr_123", "--name", "Staging"})
+	if err := captureStdout(t, func() error { return cmd.Execute() }); err != nil {
+		t.Fatalf("dari router update: %v", err)
+	}
+
+	want := map[string]any{
+		"name":           "Staging",
+		"enabled_models": []any{"fireworks/deepseek-ai/DeepSeek-V4-Pro"},
+	}
+	if !reflect.DeepEqual(body, want) {
+		t.Fatalf("update body = %#v, want %#v", body, want)
+	}
+}
+
+func TestRouterUpdateRejectsWeightFlagsOnCustomRouter(t *testing.T) {
+	seenPut := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/organizations/current/routers/rtr_123":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":               "rtr_123",
+				"name":             "Production",
+				"enabled_models":   []string{"fireworks/deepseek-ai/DeepSeek-V4-Pro"},
+				"routing_strategy": "custom",
+				"evals":            []map[string]any{{"id": "eval_123"}},
+			})
+		case "PUT /v1/organizations/current/routers/rtr_123":
+			seenPut = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "rtr_123"})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	useTestAPIKey(t)
+
+	cmd := newRootCmd("dev")
+	cmd.SetArgs([]string{
+		"--api-url", srv.URL, "router", "update", "rtr_123",
+		"--performance-weight", "0.7",
+		"--price-weight", "0.3",
+		"--eval-weight", "eval_123=1.0",
+	})
+	cmd.SetErr(io.Discard)
+	err := captureStdout(t, func() error { return cmd.Execute() })
+	if err == nil {
+		t.Fatal("expected error for weight flags on a custom router without --strategy heuristic")
+	}
+	if !strings.Contains(err.Error(), "--strategy heuristic") {
+		t.Fatalf("error = %q, want mention of --strategy heuristic", err)
+	}
+	if seenPut {
+		t.Fatal("unexpected update request after local validation failed")
+	}
+}
+
+func TestRouterUpdateRejectsSwitchToCustomViaFlag(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/organizations/current/routers/rtr_123":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":             "rtr_123",
+				"name":           "Production",
+				"enabled_models": []string{"fireworks/deepseek-ai/DeepSeek-V4-Pro"},
+			})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	useTestAPIKey(t)
+
+	cmd := newRootCmd("dev")
+	cmd.SetArgs([]string{"--api-url", srv.URL, "router", "update", "rtr_123", "--strategy", "custom"})
+	cmd.SetErr(io.Discard)
+	err := captureStdout(t, func() error { return cmd.Execute() })
+	if err == nil {
+		t.Fatal("expected error for --strategy custom on a non-custom router")
+	}
+	if !strings.Contains(err.Error(), "custom_config") {
+		t.Fatalf("error = %q, want manifest guidance", err)
+	}
+}
+
+func TestRouterCreateRejectsCustomStrategyFlag(t *testing.T) {
+	useTestAPIKey(t)
+
+	cmd := newRootCmd("dev")
+	cmd.SetArgs([]string{
+		"--api-url", "http://127.0.0.1:1", "router", "create", "Production",
+		"--model", "fireworks/deepseek-ai/DeepSeek-V4-Pro",
+		"--strategy", "custom",
+	})
+	cmd.SetErr(io.Discard)
+	err := captureStdout(t, func() error { return cmd.Execute() })
+	if err == nil {
+		t.Fatal("expected error for --strategy custom on flag-based create")
+	}
+	if !strings.Contains(err.Error(), "--from-file") {
+		t.Fatalf("error = %q, want --from-file guidance", err)
 	}
 }
 
