@@ -38,9 +38,9 @@ type PreparedFlow struct {
 	IsNewAgent      bool
 }
 
-// BuildPublishEndpoint returns the publish URL for deploy-by-name or an
+// buildPublishEndpoint returns the publish URL for deploy-by-name or an
 // explicitly targeted existing agent.
-func BuildPublishEndpoint(agentID string) string {
+func buildPublishEndpoint(agentID string) string {
 	if agentID == "" {
 		return "/v1/agents"
 	}
@@ -61,13 +61,6 @@ func manifestEndpoint(snapshotID string) string {
 // deleteSnapshotEndpoint returns the DELETE endpoint for cleanup.
 func deleteSnapshotEndpoint(snapshotID string) string {
 	return sourceSnapshotsEndpoint + "/" + snapshotID
-}
-
-// Prepare builds the local deploy flow (bundle + publish endpoint) without
-// making any network calls. Used by `--dry-run` and as the first step of a
-// live deploy.
-func Prepare(deployRoot, apiURL, agentID string) (*PreparedFlow, error) {
-	return PrepareWithOptions(deployRoot, apiURL, PrepareOptions{AgentID: agentID})
 }
 
 // PrepareWithOptions builds the local deploy flow with optional publish-time
@@ -108,7 +101,7 @@ func PrepareWithOptions(
 	return &PreparedFlow{
 		Bundle:          archive,
 		BundleMetadata:  metadata,
-		PublishEndpoint: BuildPublishEndpoint(resolvedAgentID),
+		PublishEndpoint: buildPublishEndpoint(resolvedAgentID),
 		AgentID:         resolvedAgentID,
 		RouterID:        normalizedRouterID,
 		IsNewAgent:      resolvedAgentID == "",

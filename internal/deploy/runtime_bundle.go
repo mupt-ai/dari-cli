@@ -55,7 +55,12 @@ func buildRuntimeArchive(deployRoot string, sourceArchive *bundle.Archive, build
 	if err := injectDariPersistence(workDir); err != nil {
 		return nil, false, err
 	}
-	if err := runBuildCommand(workDir, manifest.buildCommand(), buildOutput); err != nil {
+	if err := runShellCommand(
+		workDir,
+		manifest.buildCommand(),
+		"build Flue runtime archive",
+		buildOutput,
+	); err != nil {
 		return nil, false, err
 	}
 	if err := installTargetRuntimeDependencies(workDir, buildOutput); err != nil {
@@ -206,10 +211,6 @@ func installTargetRuntimeDependencies(projectDir string, buildOutput io.Writer) 
 		"install Linux Flue runtime dependencies",
 		buildOutput,
 	)
-}
-
-func runBuildCommand(projectDir, command string, buildOutput io.Writer) error {
-	return runShellCommand(projectDir, command, "build Flue runtime archive", buildOutput)
 }
 
 func runShellCommand(projectDir, command, label string, buildOutput io.Writer) error {

@@ -105,7 +105,7 @@ func Execute(ctx context.Context, deployRoot string, cfg Config) (map[string]any
 
 	emit("validate:start", nil)
 	if err := client.Do(ctx, http.MethodGet, manifestEndpoint(reserve.SourceSnapshotID), nil, nil); err != nil {
-		cleanupErr := deleteSnapshotBestEffort(ctx, client, reserve.SourceSnapshotID)
+		cleanupErr := client.Do(ctx, http.MethodDelete, deleteSnapshotEndpoint(reserve.SourceSnapshotID), nil, nil)
 		if cleanupErr != nil {
 			return nil, fmt.Errorf("uploaded bundle failed manifest validation and cleanup also failed for snapshot %s: %w; cleanup error: %v",
 				reserve.SourceSnapshotID, err, cleanupErr)
@@ -118,7 +118,7 @@ func Execute(ctx context.Context, deployRoot string, cfg Config) (map[string]any
 	var response map[string]any
 	if err := client.Do(ctx, http.MethodPost, prepared.PublishEndpoint,
 		prepared.publishPayload(reserve.SourceSnapshotID), &response); err != nil {
-		cleanupErr := deleteSnapshotBestEffort(ctx, client, reserve.SourceSnapshotID)
+		cleanupErr := client.Do(ctx, http.MethodDelete, deleteSnapshotEndpoint(reserve.SourceSnapshotID), nil, nil)
 		if cleanupErr != nil {
 			return nil, fmt.Errorf("publish failed after snapshot finalize and cleanup also failed for snapshot %s: %w; cleanup error: %v",
 				reserve.SourceSnapshotID, err, cleanupErr)
@@ -150,10 +150,6 @@ func Execute(ctx context.Context, deployRoot string, cfg Config) (map[string]any
 		emit("model_backend:complete", map[string]any{"agent_id": agentID, "router_id": prepared.RouterID})
 	}
 	return response, nil
-}
-
-func deleteSnapshotBestEffort(ctx context.Context, client *api.Client, snapshotID string) error {
-	return client.Do(ctx, http.MethodDelete, deleteSnapshotEndpoint(snapshotID), nil, nil)
 }
 
 func publishAgentID(response map[string]any, fallback string) string {

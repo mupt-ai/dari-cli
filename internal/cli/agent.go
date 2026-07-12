@@ -154,7 +154,11 @@ func newAgentStatusCmd(gf *globalFlags) *cobra.Command {
 			if resolvedAgentID == "" {
 				resolvedAgentID = strings.TrimSpace(os.Getenv("DARI_AGENT_ID"))
 			}
-			prepared, err := deploy.Prepare(repoRoot, apiURL, resolvedAgentID)
+			prepared, err := deploy.PrepareWithOptions(
+				repoRoot,
+				apiURL,
+				deploy.PrepareOptions{AgentID: resolvedAgentID},
+			)
 			if err != nil {
 				return err
 			}

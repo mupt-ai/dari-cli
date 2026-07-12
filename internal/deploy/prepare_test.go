@@ -38,45 +38,24 @@ func TestDryRunPayloadOmitsRuntimeMetadataWithRouter(t *testing.T) {
 }
 
 func TestDryRunPayloadOmitsRuntimeMetadataWithoutRouter(t *testing.T) {
-	tests := []struct {
-		name    string
-		prepare func(string) (*PreparedFlow, error)
-	}{
-		{
-			name: "default prepare",
-			prepare: func(dir string) (*PreparedFlow, error) {
-				return Prepare(dir, "https://api.example", "")
-			},
-		},
-		{
-			name: "prepare with options",
-			prepare: func(dir string) (*PreparedFlow, error) {
-				return PrepareWithOptions(dir, "https://api.example", PrepareOptions{})
-			},
-		},
+	dir := t.TempDir()
+	writeDeployFile(t, filepath.Join(dir, "dari.yml"), "name: test\n")
+
+	prepared, err := PrepareWithOptions(dir, "https://api.example", PrepareOptions{})
+	if err != nil {
+		t.Fatalf("PrepareWithOptions: %v", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			writeDeployFile(t, filepath.Join(dir, "dari.yml"), "name: test\n")
 
-			prepared, err := tt.prepare(dir)
-			if err != nil {
-				t.Fatalf("Prepare: %v", err)
-			}
+	payload := prepared.DryRunPayload()
+	steps := payload["steps"].([]any)
+	publishStep := steps[len(steps)-1].(map[string]any)
+	publishPayload := publishStep["payload"].(map[string]any)
 
-			payload := prepared.DryRunPayload()
-			steps := payload["steps"].([]any)
-			publishStep := steps[len(steps)-1].(map[string]any)
-			publishPayload := publishStep["payload"].(map[string]any)
-
-			if _, ok := publishPayload["runtime_metadata"]; ok {
-				t.Fatalf("runtime_metadata should be omitted")
-			}
-			if got := publishPayload["source_snapshot_id"]; got != sourceSnapshotIDPlaceholder {
-				t.Fatalf("source_snapshot_id = %v, want placeholder", got)
-			}
-		})
+	if _, ok := publishPayload["runtime_metadata"]; ok {
+		t.Fatalf("runtime_metadata should be omitted")
+	}
+	if got := publishPayload["source_snapshot_id"]; got != sourceSnapshotIDPlaceholder {
+		t.Fatalf("source_snapshot_id = %v, want placeholder", got)
 	}
 }
 
