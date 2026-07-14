@@ -241,6 +241,9 @@ func TestRouterCreateFromManifestCustomStrategySendsPayload(t *testing.T) {
 enabled_models:
   - openai/gpt-5.5
   - openai/gpt-4.1-mini
+model_thinking_levels:
+  openai/gpt-5.5: [high, low]
+  openai/gpt-4.1-mini: [off]
 provider_key_sources:
   openai: managed
 routing_strategy: custom
@@ -248,9 +251,12 @@ custom_config:
   rules:
     - when: " planning and architecture "
       use: openai/gpt-5.5
+      thinking_level: high
     - when: implementation and refactors
       use: " openai/gpt-4.1-mini "
+      thinking_level: null
   default: " openai/gpt-4.1-mini "
+  default_thinking_level: null
 `), 0o644); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
@@ -280,13 +286,21 @@ custom_config:
 	}
 
 	want := map[string]any{
-		"name":                 "Custom Rules Router",
-		"enabled_models":       []any{"openai/gpt-5.5", "openai/gpt-4.1-mini"},
+		"name":           "Custom Rules Router",
+		"enabled_models": []any{"openai/gpt-5.5", "openai/gpt-4.1-mini"},
+		"model_thinking_levels": map[string]any{
+			"openai/gpt-5.5":      []any{"low", "high"},
+			"openai/gpt-4.1-mini": []any{"off"},
+		},
 		"provider_key_sources": map[string]any{"openai": "managed"},
 		"routing_strategy":     "custom",
 		"custom_config": map[string]any{
 			"rules": []any{
-				map[string]any{"when": "planning and architecture", "use": "openai/gpt-5.5"},
+				map[string]any{
+					"when":           "planning and architecture",
+					"use":            "openai/gpt-5.5",
+					"thinking_level": "high",
+				},
 				map[string]any{"when": "implementation and refactors", "use": "openai/gpt-4.1-mini"},
 			},
 			"default": "openai/gpt-4.1-mini",
@@ -513,6 +527,86 @@ custom_config:
     - when: planning
       use: openai/gpt-5.5
   default: openai/gpt-4.1-mini
+`,
+		},
+		{
+			name: "model thinking levels missing enabled model",
+			manifest: `name: Missing Pair Config
+enabled_models:
+  - openai/gpt-5.5
+  - openai/gpt-4.1-mini
+model_thinking_levels:
+  openai/gpt-5.5: [high]
+provider_key_sources:
+  openai: managed
+`,
+		},
+		{
+			name: "model thinking levels include disabled model",
+			manifest: `name: Extra Pair Config
+enabled_models:
+  - openai/gpt-5.5
+model_thinking_levels:
+  openai/gpt-5.5: [high]
+  openai/gpt-4.1-mini: [off]
+provider_key_sources:
+  openai: managed
+`,
+		},
+		{
+			name: "model thinking levels empty",
+			manifest: `name: Empty Pair Config
+enabled_models:
+  - openai/gpt-5.5
+model_thinking_levels:
+  openai/gpt-5.5: []
+provider_key_sources:
+  openai: managed
+`,
+		},
+		{
+			name: "model thinking level invalid",
+			manifest: `name: Invalid Pair Config
+enabled_models:
+  - openai/gpt-5.5
+model_thinking_levels:
+  openai/gpt-5.5: [turbo]
+provider_key_sources:
+  openai: managed
+`,
+		},
+		{
+			name: "custom rule thinking level not enabled",
+			manifest: `name: Invalid Rule Pair
+enabled_models:
+  - openai/gpt-5.5
+model_thinking_levels:
+  openai/gpt-5.5: [low]
+provider_key_sources:
+  openai: managed
+routing_strategy: custom
+custom_config:
+  rules:
+    - when: planning
+      use: openai/gpt-5.5
+      thinking_level: high
+`,
+		},
+		{
+			name: "custom default thinking level without default",
+			manifest: `name: Invalid Auto Fallback
+enabled_models:
+  - openai/gpt-5.5
+model_thinking_levels:
+  openai/gpt-5.5: [high]
+provider_key_sources:
+  openai: managed
+routing_strategy: custom
+custom_config:
+  rules:
+    - when: planning
+      use: openai/gpt-5.5
+  default_thinking_level: high
 `,
 		},
 		{

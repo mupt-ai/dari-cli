@@ -99,24 +99,27 @@ type routerHeuristicConfig struct {
 }
 
 type routerCustomRule struct {
-	When string `json:"when" yaml:"when"`
-	Use  string `json:"use" yaml:"use"`
+	When          string  `json:"when" yaml:"when"`
+	Use           string  `json:"use" yaml:"use"`
+	ThinkingLevel *string `json:"thinking_level,omitempty" yaml:"thinking_level"`
 }
 
 type routerCustomConfig struct {
-	Rules   []routerCustomRule `json:"rules" yaml:"rules"`
-	Default *string            `json:"default,omitempty" yaml:"default"`
+	Rules                []routerCustomRule `json:"rules" yaml:"rules"`
+	Default              *string            `json:"default,omitempty" yaml:"default"`
+	DefaultThinkingLevel *string            `json:"default_thinking_level,omitempty" yaml:"default_thinking_level"`
 }
 
 type routerCreateRequest struct {
-	Name               string                 `json:"name"`
-	EnabledModels      []string               `json:"enabled_models"`
-	ProviderKeys       map[string]string      `json:"provider_keys,omitempty"`
-	ProviderKeySources map[string]string      `json:"provider_key_sources,omitempty"`
-	EvalIDs            []string               `json:"eval_ids,omitempty"`
-	RoutingStrategy    string                 `json:"routing_strategy,omitempty"`
-	HeuristicConfig    *routerHeuristicConfig `json:"heuristic_config,omitempty"`
-	CustomConfig       *routerCustomConfig    `json:"custom_config,omitempty"`
+	Name                string                 `json:"name"`
+	EnabledModels       []string               `json:"enabled_models"`
+	ProviderKeys        map[string]string      `json:"provider_keys,omitempty"`
+	ProviderKeySources  map[string]string      `json:"provider_key_sources,omitempty"`
+	EvalIDs             []string               `json:"eval_ids,omitempty"`
+	RoutingStrategy     string                 `json:"routing_strategy,omitempty"`
+	HeuristicConfig     *routerHeuristicConfig `json:"heuristic_config,omitempty"`
+	CustomConfig        *routerCustomConfig    `json:"custom_config,omitempty"`
+	ModelThinkingLevels map[string][]string    `json:"model_thinking_levels,omitempty"`
 }
 
 type routerUpdateRequest struct {
@@ -138,15 +141,16 @@ type routerCurrent struct {
 }
 
 type routerCreateManifest struct {
-	Name               string                 `yaml:"name"`
-	EnabledModels      []string               `yaml:"enabled_models"`
-	ProviderKeys       map[string]string      `yaml:"provider_keys"`
-	ProviderKeyEnvs    map[string]string      `yaml:"provider_key_envs"`
-	ProviderKeySources map[string]string      `yaml:"provider_key_sources"`
-	EvalIDs            []string               `yaml:"eval_ids"`
-	RoutingStrategy    string                 `yaml:"routing_strategy"`
-	HeuristicConfig    *routerHeuristicConfig `yaml:"heuristic_config"`
-	CustomConfig       *routerCustomConfig    `yaml:"custom_config"`
+	Name                string                 `yaml:"name"`
+	EnabledModels       []string               `yaml:"enabled_models"`
+	ProviderKeys        map[string]string      `yaml:"provider_keys"`
+	ProviderKeyEnvs     map[string]string      `yaml:"provider_key_envs"`
+	ProviderKeySources  map[string]string      `yaml:"provider_key_sources"`
+	EvalIDs             []string               `yaml:"eval_ids"`
+	RoutingStrategy     string                 `yaml:"routing_strategy"`
+	HeuristicConfig     *routerHeuristicConfig `yaml:"heuristic_config"`
+	CustomConfig        *routerCustomConfig    `yaml:"custom_config"`
+	ModelThinkingLevels map[string][]string    `yaml:"model_thinking_levels"`
 }
 
 type routerConfigFlags struct {
@@ -658,6 +662,14 @@ func (manifest routerCreateManifest) createRequest(path string) (routerCreateReq
 	if err := validateManifestProviderKeys(path, providerKeySources, providerKeys, models); err != nil {
 		return routerCreateRequest{}, err
 	}
+	modelThinkingLevels, err := normalizeManifestModelThinkingLevels(
+		path,
+		manifest.ModelThinkingLevels,
+		models,
+	)
+	if err != nil {
+		return routerCreateRequest{}, err
+	}
 	evalIDs, err := cleanRequiredStrings(manifest.EvalIDs, path, "eval_ids")
 	if err != nil {
 		return routerCreateRequest{}, err
@@ -678,7 +690,12 @@ func (manifest routerCreateManifest) createRequest(path string) (routerCreateReq
 	if err := validateManifestHeuristicConfig(path, manifest.HeuristicConfig, evalIDs); err != nil {
 		return routerCreateRequest{}, err
 	}
-	customConfig, err := normalizeManifestCustomConfig(path, manifest.CustomConfig, models)
+	customConfig, err := normalizeManifestCustomConfig(
+		path,
+		manifest.CustomConfig,
+		models,
+		modelThinkingLevels,
+	)
 	if err != nil {
 		return routerCreateRequest{}, err
 	}
@@ -700,6 +717,7 @@ func (manifest routerCreateManifest) createRequest(path string) (routerCreateReq
 	}
 	body.HeuristicConfig = manifest.HeuristicConfig
 	body.CustomConfig = customConfig
+	body.ModelThinkingLevels = modelThinkingLevels
 	return body, nil
 }
 
@@ -868,7 +886,74 @@ const (
 	manifestCustomRuleWhenMaxLength = 500
 )
 
-func normalizeManifestCustomConfig(path string, config *routerCustomConfig, models []string) (*routerCustomConfig, error) {
+var routerThinkingLevels = []string{
+	"off",
+	"minimal",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+	"max",
+}
+
+func normalizeManifestModelThinkingLevels(
+	path string,
+	raw map[string][]string,
+	models []string,
+) (map[string][]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	enabled := make(map[string]bool, len(models))
+	for _, model := range models {
+		enabled[model] = true
+	}
+	for model := range raw {
+		if !enabled[model] {
+			return nil, fmt.Errorf("%s: model_thinking_levels.%s is not in enabled_models", path, model)
+		}
+	}
+
+	normalized := make(map[string][]string, len(models))
+	for _, model := range models {
+		rawLevels, ok := raw[model]
+		if !ok {
+			return nil, fmt.Errorf("%s: model_thinking_levels must contain every enabled_models entry", path)
+		}
+		if len(rawLevels) == 0 {
+			return nil, fmt.Errorf("%s: model_thinking_levels.%s must contain at least one level", path, model)
+		}
+		selected := make(map[string]bool, len(rawLevels))
+		for index, rawLevel := range rawLevels {
+			level := strings.ToLower(strings.TrimSpace(rawLevel))
+			if !slices.Contains(routerThinkingLevels, level) {
+				return nil, fmt.Errorf(
+					"%s: model_thinking_levels.%s[%d] must be one of: %s",
+					path,
+					model,
+					index,
+					strings.Join(routerThinkingLevels, ", "),
+				)
+			}
+			selected[level] = true
+		}
+		levels := make([]string, 0, len(selected))
+		for _, level := range routerThinkingLevels {
+			if selected[level] {
+				levels = append(levels, level)
+			}
+		}
+		normalized[model] = levels
+	}
+	return normalized, nil
+}
+
+func normalizeManifestCustomConfig(
+	path string,
+	config *routerCustomConfig,
+	models []string,
+	modelThinkingLevels map[string][]string,
+) (*routerCustomConfig, error) {
 	if config == nil {
 		return nil, nil
 	}
@@ -898,9 +983,23 @@ func normalizeManifestCustomConfig(path string, config *routerCustomConfig, mode
 		if !enabled[use] {
 			return nil, fmt.Errorf("%s: custom_config.rules[%d].use must be one of enabled_models", path, index)
 		}
-		rules = append(rules, routerCustomRule{When: when, Use: use})
+		thinkingLevel, err := normalizeManifestTargetThinkingLevel(
+			fmt.Sprintf("%s: custom_config.rules[%d].thinking_level", path, index),
+			use,
+			rule.ThinkingLevel,
+			modelThinkingLevels,
+		)
+		if err != nil {
+			return nil, err
+		}
+		rules = append(rules, routerCustomRule{
+			When:          when,
+			Use:           use,
+			ThinkingLevel: thinkingLevel,
+		})
 	}
 	var defaultModel *string
+	var defaultThinkingLevel *string
 	if config.Default != nil {
 		value := strings.TrimSpace(*config.Default)
 		if value == "" {
@@ -910,8 +1009,47 @@ func normalizeManifestCustomConfig(path string, config *routerCustomConfig, mode
 			return nil, fmt.Errorf("%s: custom_config.default must be one of enabled_models", path)
 		}
 		defaultModel = &value
+		normalizedDefaultThinkingLevel, err := normalizeManifestTargetThinkingLevel(
+			path+": custom_config.default_thinking_level",
+			value,
+			config.DefaultThinkingLevel,
+			modelThinkingLevels,
+		)
+		if err != nil {
+			return nil, err
+		}
+		defaultThinkingLevel = normalizedDefaultThinkingLevel
+	} else if config.DefaultThinkingLevel != nil {
+		return nil, fmt.Errorf("%s: custom_config.default is required when default_thinking_level is set", path)
 	}
-	return &routerCustomConfig{Rules: rules, Default: defaultModel}, nil
+	return &routerCustomConfig{
+		Rules:                rules,
+		Default:              defaultModel,
+		DefaultThinkingLevel: defaultThinkingLevel,
+	}, nil
+}
+
+func normalizeManifestTargetThinkingLevel(
+	label string,
+	model string,
+	raw *string,
+	modelThinkingLevels map[string][]string,
+) (*string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	level := strings.ToLower(strings.TrimSpace(*raw))
+	if !slices.Contains(routerThinkingLevels, level) {
+		return nil, fmt.Errorf(
+			"%s must be null or one of: %s",
+			label,
+			strings.Join(routerThinkingLevels, ", "),
+		)
+	}
+	if enabledLevels := modelThinkingLevels[model]; enabledLevels != nil && !slices.Contains(enabledLevels, level) {
+		return nil, fmt.Errorf("%s must be enabled in model_thinking_levels.%s", label, model)
+	}
+	return &level, nil
 }
 
 func routerStrategyForManifest(path, strategy string, hasHeuristicConfig, hasCustomConfig bool) (string, error) {
