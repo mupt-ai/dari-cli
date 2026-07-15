@@ -120,6 +120,7 @@ type routerCreateRequest struct {
 	HeuristicConfig     *routerHeuristicConfig `json:"heuristic_config,omitempty"`
 	CustomConfig        *routerCustomConfig    `json:"custom_config,omitempty"`
 	ModelThinkingLevels map[string][]string    `json:"model_thinking_levels,omitempty"`
+	FastModels          []string               `json:"fast_models,omitempty"`
 }
 
 type routerUpdateRequest struct {
@@ -151,6 +152,7 @@ type routerCreateManifest struct {
 	HeuristicConfig     *routerHeuristicConfig `yaml:"heuristic_config"`
 	CustomConfig        *routerCustomConfig    `yaml:"custom_config"`
 	ModelThinkingLevels map[string][]string    `yaml:"model_thinking_levels"`
+	FastModels          []string               `yaml:"fast_models"`
 }
 
 type routerConfigFlags struct {
@@ -670,6 +672,10 @@ func (manifest routerCreateManifest) createRequest(path string) (routerCreateReq
 	if err != nil {
 		return routerCreateRequest{}, err
 	}
+	fastModels, err := normalizeManifestFastModels(path, manifest.FastModels, models)
+	if err != nil {
+		return routerCreateRequest{}, err
+	}
 	evalIDs, err := cleanRequiredStrings(manifest.EvalIDs, path, "eval_ids")
 	if err != nil {
 		return routerCreateRequest{}, err
@@ -718,6 +724,7 @@ func (manifest routerCreateManifest) createRequest(path string) (routerCreateReq
 	body.HeuristicConfig = manifest.HeuristicConfig
 	body.CustomConfig = customConfig
 	body.ModelThinkingLevels = modelThinkingLevels
+	body.FastModels = fastModels
 	return body, nil
 }
 
@@ -944,6 +951,34 @@ func normalizeManifestModelThinkingLevels(
 			}
 		}
 		normalized[model] = levels
+	}
+	return normalized, nil
+}
+
+func normalizeManifestFastModels(path string, raw, models []string) ([]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	enabled := make(map[string]bool, len(models))
+	for _, model := range models {
+		enabled[model] = true
+	}
+	selected := make(map[string]bool, len(raw))
+	for index, rawModel := range raw {
+		model := strings.TrimSpace(rawModel)
+		if model == "" {
+			return nil, fmt.Errorf("%s: fast_models[%d] must be non-empty", path, index)
+		}
+		if !enabled[model] {
+			return nil, fmt.Errorf("%s: fast_models[%d] must be one of enabled_models", path, index)
+		}
+		selected[model] = true
+	}
+	normalized := make([]string, 0, len(selected))
+	for _, model := range models {
+		if selected[model] {
+			normalized = append(normalized, model)
+		}
 	}
 	return normalized, nil
 }

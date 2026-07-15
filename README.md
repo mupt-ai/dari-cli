@@ -171,6 +171,8 @@ enabled_models:
 model_thinking_levels:
   openai/gpt-5.5: [low, medium, high]
   openai/gpt-4.1-mini: [off]
+fast_models:
+  - openai/gpt-5.5
 provider_key_sources:
   openai: managed
 routing_strategy: custom
@@ -186,7 +188,7 @@ custom_config:
   default_thinking_level: null
 ```
 
-`model_thinking_levels` enables exact model/thinking-level pairs and must list every enabled model when set. A custom rule or fallback can pin one enabled `thinking_level`; use `null` or omit the field for Auto, which lets the router select among that model's enabled levels.
+`model_thinking_levels` enables exact model/thinking-level pairs and must list every enabled model when set. `fast_models` enables Fast Mode for the listed models and every entry must also appear in `enabled_models`; the API rejects models whose catalog entry does not support Fast Mode. A custom rule or fallback can pin one enabled `thinking_level`; use `null` or omit the field for Auto, which lets the router select among that model's enabled levels.
 
 ### eval
 

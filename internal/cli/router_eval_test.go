@@ -311,6 +311,52 @@ custom_config:
 	}
 }
 
+func TestRouterCreateFromManifestSendsFastModels(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "router.yml")
+	if err := os.WriteFile(manifestPath, []byte(`name: Fast Sol Router
+enabled_models:
+  - openai/gpt-5.6-sol
+model_thinking_levels:
+  openai/gpt-5.6-sol: [max, off, high, low, medium, xhigh]
+fast_models:
+  - openai/gpt-5.6-sol
+provider_key_sources:
+  openai: managed
+`), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(raw, &body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "rtr_new"})
+	}))
+	defer srv.Close()
+	useTestAPIKey(t)
+
+	cmd := newRootCmd("dev")
+	cmd.SetArgs([]string{"--api-url", srv.URL, "router", "create", manifestPath})
+	if err := captureStdout(t, func() error { return cmd.Execute() }); err != nil {
+		t.Fatalf("dari router create --from-file: %v", err)
+	}
+
+	wantThinkingLevels := map[string]any{
+		"openai/gpt-5.6-sol": []any{"off", "low", "medium", "high", "xhigh", "max"},
+	}
+	if !reflect.DeepEqual(body["model_thinking_levels"], wantThinkingLevels) {
+		t.Fatalf("model_thinking_levels = %#v, want %#v", body["model_thinking_levels"], wantThinkingLevels)
+	}
+	wantFastModels := []any{"openai/gpt-5.6-sol"}
+	if !reflect.DeepEqual(body["fast_models"], wantFastModels) {
+		t.Fatalf("fast_models = %#v, want %#v", body["fast_models"], wantFastModels)
+	}
+}
+
 func TestRouterCreateFromManifestDirectory(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "router.yaml"), []byte(`name: Managed Router
@@ -571,6 +617,17 @@ enabled_models:
   - openai/gpt-5.5
 model_thinking_levels:
   openai/gpt-5.5: [turbo]
+provider_key_sources:
+  openai: managed
+`,
+		},
+		{
+			name: "fast model not enabled",
+			manifest: `name: Invalid Fast Model
+enabled_models:
+  - openai/gpt-5.6-sol
+fast_models:
+  - openai/gpt-5.6-terra
 provider_key_sources:
   openai: managed
 `,
