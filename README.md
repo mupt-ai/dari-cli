@@ -131,14 +131,12 @@ dari router get <router_id_or_endpoint>
 dari router models                           # model catalog grouped by provider
 dari router create <name> --model <model_id> [--model <model_id> ...] \
   [--provider-key provider=KEY | --provider-key-env provider=ENV_VAR | --managed-key provider] \
-  [--eval <eval_id> ...] \
-  [--strategy slm|heuristic] \
-  [--performance-weight 0.7 --price-weight 0.3 --eval-weight <eval_id>=1.0]
+  [--eval <eval_id> ...] [--strategy slm]
 dari router create ./router.yml              # or a directory containing router.yml/router.yaml
 dari router create --from-file ./router.yml  # same, via explicit flag (-f)
 dari router update <router_id_or_endpoint> [--name <name>] [--model ...] \
   [--provider-key ...] [--managed-key ...] [--eval ...] [--clear-evals] \
-  [--strategy ...] [--performance-weight ... --price-weight ... --eval-weight ...]
+  [--strategy slm]
 dari router delete <router_id_or_endpoint> [--yes]
 ```
 
@@ -158,10 +156,9 @@ provider_key_envs:
   baseten: BASETEN_API_KEY
 routing_strategy: slm
 eval_ids: []
-heuristic_config: null
 ```
 
-Custom router rules are supported in YAML manifests:
+Describe Your Router rules use the `custom` strategy in YAML manifests:
 
 ```yaml
 name: Custom Rules Router

@@ -5,13 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -88,16 +86,6 @@ func newRouterModelsCmd(gf *globalFlags) *cobra.Command {
 	}
 }
 
-type routerEval struct {
-	ID string `json:"id"`
-}
-
-type routerHeuristicConfig struct {
-	PerformanceWeight float64            `json:"performance_weight" yaml:"performance_weight"`
-	PriceWeight       float64            `json:"price_weight" yaml:"price_weight"`
-	EvalWeights       map[string]float64 `json:"eval_weights" yaml:"eval_weights"`
-}
-
 type routerCustomRule struct {
 	When          string  `json:"when" yaml:"when"`
 	Use           string  `json:"use" yaml:"use"`
@@ -111,48 +99,43 @@ type routerCustomConfig struct {
 }
 
 type routerCreateRequest struct {
-	Name                string                 `json:"name"`
-	EnabledModels       []string               `json:"enabled_models"`
-	ProviderKeys        map[string]string      `json:"provider_keys,omitempty"`
-	ProviderKeySources  map[string]string      `json:"provider_key_sources,omitempty"`
-	EvalIDs             []string               `json:"eval_ids,omitempty"`
-	RoutingStrategy     string                 `json:"routing_strategy,omitempty"`
-	HeuristicConfig     *routerHeuristicConfig `json:"heuristic_config,omitempty"`
-	CustomConfig        *routerCustomConfig    `json:"custom_config,omitempty"`
-	ModelThinkingLevels map[string][]string    `json:"model_thinking_levels,omitempty"`
-	FastModels          []string               `json:"fast_models,omitempty"`
+	Name                string              `json:"name"`
+	EnabledModels       []string            `json:"enabled_models"`
+	ProviderKeys        map[string]string   `json:"provider_keys,omitempty"`
+	ProviderKeySources  map[string]string   `json:"provider_key_sources,omitempty"`
+	EvalIDs             []string            `json:"eval_ids,omitempty"`
+	RoutingStrategy     string              `json:"routing_strategy,omitempty"`
+	CustomConfig        *routerCustomConfig `json:"custom_config,omitempty"`
+	ModelThinkingLevels map[string][]string `json:"model_thinking_levels,omitempty"`
+	FastModels          []string            `json:"fast_models,omitempty"`
 }
 
 type routerUpdateRequest struct {
-	Name               string                 `json:"name"`
-	EnabledModels      []string               `json:"enabled_models"`
-	ProviderKeys       map[string]string      `json:"provider_keys,omitempty"`
-	ProviderKeySources map[string]string      `json:"provider_key_sources,omitempty"`
-	EvalIDs            *[]string              `json:"eval_ids,omitempty"`
-	RoutingStrategy    string                 `json:"routing_strategy,omitempty"`
-	HeuristicConfig    *routerHeuristicConfig `json:"heuristic_config,omitempty"`
+	Name               string            `json:"name"`
+	EnabledModels      []string          `json:"enabled_models"`
+	ProviderKeys       map[string]string `json:"provider_keys,omitempty"`
+	ProviderKeySources map[string]string `json:"provider_key_sources,omitempty"`
+	EvalIDs            *[]string         `json:"eval_ids,omitempty"`
+	RoutingStrategy    string            `json:"routing_strategy,omitempty"`
 }
 
 type routerCurrent struct {
-	Name            string                 `json:"name"`
-	EnabledModels   []string               `json:"enabled_models"`
-	Evals           []routerEval           `json:"evals"`
-	RoutingStrategy string                 `json:"routing_strategy"`
-	HeuristicConfig *routerHeuristicConfig `json:"heuristic_config"`
+	Name            string   `json:"name"`
+	EnabledModels   []string `json:"enabled_models"`
+	RoutingStrategy string   `json:"routing_strategy"`
 }
 
 type routerCreateManifest struct {
-	Name                string                 `yaml:"name"`
-	EnabledModels       []string               `yaml:"enabled_models"`
-	ProviderKeys        map[string]string      `yaml:"provider_keys"`
-	ProviderKeyEnvs     map[string]string      `yaml:"provider_key_envs"`
-	ProviderKeySources  map[string]string      `yaml:"provider_key_sources"`
-	EvalIDs             []string               `yaml:"eval_ids"`
-	RoutingStrategy     string                 `yaml:"routing_strategy"`
-	HeuristicConfig     *routerHeuristicConfig `yaml:"heuristic_config"`
-	CustomConfig        *routerCustomConfig    `yaml:"custom_config"`
-	ModelThinkingLevels map[string][]string    `yaml:"model_thinking_levels"`
-	FastModels          []string               `yaml:"fast_models"`
+	Name                string              `yaml:"name"`
+	EnabledModels       []string            `yaml:"enabled_models"`
+	ProviderKeys        map[string]string   `yaml:"provider_keys"`
+	ProviderKeyEnvs     map[string]string   `yaml:"provider_key_envs"`
+	ProviderKeySources  map[string]string   `yaml:"provider_key_sources"`
+	EvalIDs             []string            `yaml:"eval_ids"`
+	RoutingStrategy     string              `yaml:"routing_strategy"`
+	CustomConfig        *routerCustomConfig `yaml:"custom_config"`
+	ModelThinkingLevels map[string][]string `yaml:"model_thinking_levels"`
+	FastModels          []string            `yaml:"fast_models"`
 }
 
 type routerConfigFlags struct {
@@ -163,9 +146,6 @@ type routerConfigFlags struct {
 	evalIDs            []string
 	clearEvals         bool
 	strategy           string
-	performanceWeight  float64
-	priceWeight        float64
-	evalWeightPairs    []string
 	flagNames          []string
 }
 
@@ -181,10 +161,7 @@ func (rf *routerConfigFlags) register(cmd *cobra.Command) {
 	cmd.Flags().StringArrayVar(&rf.providerKeyEnvs, name("provider-key-env"), nil, "Read a provider API key from the local environment as provider=ENV_VAR (repeatable)")
 	cmd.Flags().StringSliceVar(&rf.managedKeyProvider, name("managed-key"), nil, "Use the Dari-managed key for this provider (repeatable or comma-separated)")
 	cmd.Flags().StringSliceVar(&rf.evalIDs, name("eval"), nil, "Eval scorecard ID to import (repeatable or comma-separated); run 'dari eval list' for IDs")
-	cmd.Flags().StringVar(&rf.strategy, name("strategy"), "", "Routing strategy: slm or heuristic")
-	cmd.Flags().Float64Var(&rf.performanceWeight, name("performance-weight"), 0, "Heuristic strategy: weight for model performance (0-1)")
-	cmd.Flags().Float64Var(&rf.priceWeight, name("price-weight"), 0, "Heuristic strategy: weight for model price (0-1)")
-	cmd.Flags().StringArrayVar(&rf.evalWeightPairs, name("eval-weight"), nil, "Heuristic strategy: per-eval weight as eval_id=WEIGHT (repeatable)")
+	cmd.Flags().StringVar(&rf.strategy, name("strategy"), "", "Routing strategy: slm; use a manifest for custom rules")
 }
 
 func (rf *routerConfigFlags) changed(cmd *cobra.Command) bool {
@@ -224,116 +201,6 @@ func (rf *routerConfigFlags) providerKeySources() map[string]string {
 		sources[strings.TrimSpace(provider)] = "managed"
 	}
 	return sources
-}
-
-func (rf *routerConfigFlags) heuristicConfig(cmd *cobra.Command, currentConfig *routerHeuristicConfig, evalIDs []string) (*routerHeuristicConfig, error) {
-	changed := cmd.Flags().Changed("performance-weight") ||
-		cmd.Flags().Changed("price-weight") ||
-		cmd.Flags().Changed("eval-weight")
-	if !changed {
-		return nil, nil
-	}
-	if !cmd.Flags().Changed("performance-weight") || !cmd.Flags().Changed("price-weight") {
-		return nil, fmt.Errorf("heuristic config requires both --performance-weight and --price-weight")
-	}
-	if !isUnitWeight(rf.performanceWeight) {
-		return nil, fmt.Errorf("--performance-weight must be a number between 0 and 1")
-	}
-	if !isUnitWeight(rf.priceWeight) {
-		return nil, fmt.Errorf("--price-weight must be a number between 0 and 1")
-	}
-	if math.Abs(rf.performanceWeight+rf.priceWeight-1) > 1e-6 {
-		return nil, fmt.Errorf("--performance-weight and --price-weight must sum to 1")
-	}
-	evalWeights, err := rf.evalWeights(cmd, currentConfig)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateEvalWeights(evalWeights, evalIDs, rf.performanceWeight, evalWeightFlagTerms); err != nil {
-		return nil, err
-	}
-	return &routerHeuristicConfig{
-		PerformanceWeight: rf.performanceWeight,
-		PriceWeight:       rf.priceWeight,
-		EvalWeights:       evalWeights,
-	}, nil
-}
-
-func (rf *routerConfigFlags) evalWeights(cmd *cobra.Command, currentConfig *routerHeuristicConfig) (map[string]float64, error) {
-	if !cmd.Flags().Changed("eval-weight") {
-		return currentEvalWeights(currentConfig), nil
-	}
-	evalWeights := map[string]float64{}
-	for _, pair := range rf.evalWeightPairs {
-		evalID, raw, err := splitPair(pair, "--eval-weight", "eval_id=WEIGHT")
-		if err != nil {
-			return nil, err
-		}
-		weight, err := strconv.ParseFloat(raw, 64)
-		if err != nil || !isUnitWeight(weight) {
-			return nil, fmt.Errorf("--eval-weight %s: weight must be a number between 0 and 1", pair)
-		}
-		evalWeights[evalID] = weight
-	}
-	return evalWeights, nil
-}
-
-func currentEvalWeights(config *routerHeuristicConfig) map[string]float64 {
-	if config == nil {
-		return map[string]float64{}
-	}
-	copy := map[string]float64{}
-	for evalID, weight := range config.EvalWeights {
-		copy[evalID] = weight
-	}
-	return copy
-}
-
-// evalWeightTerms names the user-facing configuration surface in
-// validateEvalWeights errors: CLI flags for the flag path, YAML fields for
-// the manifest path.
-type evalWeightTerms struct {
-	performanceWeight string
-	eval              string
-	evalWeight        string
-}
-
-var (
-	evalWeightFlagTerms     = evalWeightTerms{"--performance-weight", "--eval", "--eval-weight"}
-	evalWeightManifestTerms = evalWeightTerms{"heuristic_config.performance_weight", "eval_ids entry", "heuristic_config.eval_weights"}
-)
-
-func validateEvalWeights(weights map[string]float64, evalIDs []string, performanceWeight float64, terms evalWeightTerms) error {
-	if len(weights) == 0 {
-		if performanceWeight > 0 && len(evalIDs) == 0 {
-			return fmt.Errorf("heuristic routing with %s > 0 requires at least one %s", terms.performanceWeight, terms.eval)
-		}
-		if performanceWeight > 0 {
-			return fmt.Errorf("heuristic routing with %s > 0 requires %s for every imported eval", terms.performanceWeight, terms.evalWeight)
-		}
-		return nil
-	}
-	expected := map[string]bool{}
-	for _, evalID := range evalIDs {
-		expected[evalID] = true
-	}
-	if len(weights) != len(expected) {
-		return fmt.Errorf("%s must be provided for exactly the imported eval ids", terms.evalWeight)
-	}
-	total := 0.0
-	for evalID, weight := range weights {
-		if !expected[evalID] {
-			return fmt.Errorf("%s %s: eval is not imported by this router", terms.evalWeight, evalID)
-		}
-		if !isUnitWeight(weight) {
-			return fmt.Errorf("%s %s: weight must be a number between 0 and 1", terms.evalWeight, evalID)
-		}
-		total += weight
-	}
-	if math.Abs(total-1) > 1e-6 {
-		return fmt.Errorf("%s values must sum to 1", terms.evalWeight)
-	}
-	return nil
 }
 
 func newRouterCreateCmd(gf *globalFlags) *cobra.Command {
@@ -381,18 +248,13 @@ func newRouterCreateCmd(gf *globalFlags) *cobra.Command {
 			if len(rf.evalIDs) > 0 {
 				body.EvalIDs = rf.evalIDs
 			}
-			heuristic, err := rf.heuristicConfig(cmd, nil, rf.evalIDs)
-			if err != nil {
-				return err
-			}
-			strategy, err := routerStrategyForCreate(rf.strategy, heuristic != nil)
+			strategy, err := routerStrategyForCreate(rf.strategy)
 			if err != nil {
 				return err
 			}
 			if strategy != "" {
 				body.RoutingStrategy = strategy
 			}
-			body.HeuristicConfig = heuristic
 			var resp map[string]any
 			if err := orgKeyRequest(cmd, gf, http.MethodPost, "/v1/organizations/current/routers", body, &resp); err != nil {
 				return err
@@ -453,33 +315,20 @@ func newRouterUpdateCmd(gf *globalFlags) *cobra.Command {
 			if sources := rf.providerKeySources(); sources != nil {
 				body.ProviderKeySources = sources
 			}
-			currentEvalIDs := routerEvalIDs(current.Evals)
-			targetEvalIDs := currentEvalIDs
-			evalIDsChanged := rf.clearEvals || cmd.Flags().Changed("eval")
 			switch {
 			case rf.clearEvals:
-				targetEvalIDs = []string{}
+				targetEvalIDs := []string{}
 				body.EvalIDs = &targetEvalIDs
 			case cmd.Flags().Changed("eval"):
-				targetEvalIDs = rf.evalIDs
-				body.EvalIDs = &targetEvalIDs
+				body.EvalIDs = &rf.evalIDs
 			}
-			currentConfig := current.HeuristicConfig
-			if evalIDsChanged && !cmd.Flags().Changed("eval-weight") {
-				currentConfig = nil
-			}
-			heuristic, err := rf.heuristicConfig(cmd, currentConfig, targetEvalIDs)
+			strategy, err := routerStrategyForUpdate(rf.strategy, current.RoutingStrategy)
 			if err != nil {
 				return err
 			}
-			strategy, err := routerStrategyForUpdate(rf.strategy, current.RoutingStrategy, heuristic != nil, evalIDsChanged)
-			if err != nil {
-				return err
-			}
-			if rf.strategy != "" || (heuristic != nil && strategy == "heuristic" && current.RoutingStrategy != "heuristic") {
+			if rf.strategy != "" {
 				body.RoutingStrategy = strategy
 			}
-			body.HeuristicConfig = heuristic
 			var resp map[string]any
 			if err := orgKeyRequest(cmd, gf, http.MethodPut, "/v1/organizations/current/routers/"+url.PathEscape(routerID), body, &resp); err != nil {
 				return err
@@ -518,66 +367,28 @@ func newRouterDeleteCmd(gf *globalFlags) *cobra.Command {
 	return cmd
 }
 
-func routerStrategyForCreate(strategy string, hasHeuristicConfig bool) (string, error) {
-	switch {
-	case strategy == "heuristic" && !hasHeuristicConfig:
-		return "", fmt.Errorf("--strategy heuristic requires --performance-weight, --price-weight, and --eval-weight for every imported eval")
-	case strategy == "slm" && hasHeuristicConfig:
-		return "", fmt.Errorf("heuristic weight flags require --strategy heuristic")
-	case strategy == "heuristic" || strategy == "slm":
+func routerStrategyForCreate(strategy string) (string, error) {
+	switch strategy {
+	case "", "slm":
 		return strategy, nil
-	case strategy == "custom":
+	case "custom":
 		return "", fmt.Errorf("custom routing requires a manifest with custom_config; use dari router create --from-file")
-	case strategy != "":
-		return "", fmt.Errorf("--strategy must be slm or heuristic")
-	case hasHeuristicConfig:
-		return "heuristic", nil
 	default:
-		return "", nil
+		return "", fmt.Errorf("--strategy must be slm")
 	}
 }
 
-func routerStrategyForUpdate(strategy, currentStrategy string, hasHeuristicConfig, evalIDsChanged bool) (string, error) {
-	if currentStrategy == "" {
-		currentStrategy = "slm"
+func routerStrategyForUpdate(strategy, currentStrategy string) (string, error) {
+	if strategy == "" {
+		return currentStrategy, nil
 	}
 	if strategy == "custom" && currentStrategy != "custom" {
 		return "", fmt.Errorf("custom routing rules cannot be set with flags; create the router from a manifest with custom_config (--from-file)")
 	}
-	target := currentStrategy
-	if strategy != "" {
-		target = strategy
-	} else if hasHeuristicConfig && currentStrategy != "heuristic" && currentStrategy != "custom" {
-		target = "heuristic"
+	if strategy != "slm" && strategy != "custom" {
+		return "", fmt.Errorf("--strategy must be slm")
 	}
-	switch {
-	case target == "custom" && hasHeuristicConfig:
-		return "", fmt.Errorf("heuristic weight flags require --strategy heuristic")
-	case target == "custom":
-		// Custom rules are manifest-managed; the API keeps the stored
-		// custom config when routing_strategy stays custom.
-		return target, nil
-	case target == "heuristic" && !hasHeuristicConfig && (currentStrategy != "heuristic" || evalIDsChanged):
-		return "", fmt.Errorf("heuristic routing requires --performance-weight, --price-weight, and --eval-weight for every imported eval")
-	case target == "slm" && hasHeuristicConfig:
-		return "", fmt.Errorf("heuristic weight flags require --strategy heuristic")
-	case target != "heuristic" && target != "slm":
-		return "", fmt.Errorf("--strategy must be slm or heuristic")
-	default:
-		return target, nil
-	}
-}
-
-func routerEvalIDs(evals []routerEval) []string {
-	ids := make([]string, 0, len(evals))
-	for _, eval := range evals {
-		ids = append(ids, eval.ID)
-	}
-	return ids
-}
-
-func isUnitWeight(value float64) bool {
-	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= 1
+	return strategy, nil
 }
 
 func splitPair(pair, flagName, format string) (string, string, error) {
@@ -683,17 +494,9 @@ func (manifest routerCreateManifest) createRequest(path string) (routerCreateReq
 	strategy, err := routerStrategyForManifest(
 		path,
 		strings.ToLower(strings.TrimSpace(manifest.RoutingStrategy)),
-		manifest.HeuristicConfig != nil,
 		manifest.CustomConfig != nil,
 	)
 	if err != nil {
-		return routerCreateRequest{}, err
-	}
-	// The API expects eval_weights as {} rather than null.
-	if manifest.HeuristicConfig != nil && manifest.HeuristicConfig.EvalWeights == nil {
-		manifest.HeuristicConfig.EvalWeights = map[string]float64{}
-	}
-	if err := validateManifestHeuristicConfig(path, manifest.HeuristicConfig, evalIDs); err != nil {
 		return routerCreateRequest{}, err
 	}
 	customConfig, err := normalizeManifestCustomConfig(
@@ -721,7 +524,6 @@ func (manifest routerCreateManifest) createRequest(path string) (routerCreateReq
 	if strategy != "" {
 		body.RoutingStrategy = strategy
 	}
-	body.HeuristicConfig = manifest.HeuristicConfig
 	body.CustomConfig = customConfig
 	body.ModelThinkingLevels = modelThinkingLevels
 	body.FastModels = fastModels
@@ -867,25 +669,6 @@ func providersForRouterModels(path string, models []string) ([]string, error) {
 		providers = append(providers, provider)
 	}
 	return providers, nil
-}
-
-func validateManifestHeuristicConfig(path string, config *routerHeuristicConfig, evalIDs []string) error {
-	if config == nil {
-		return nil
-	}
-	if !isUnitWeight(config.PerformanceWeight) {
-		return fmt.Errorf("%s: heuristic_config.performance_weight must be a number between 0 and 1", path)
-	}
-	if !isUnitWeight(config.PriceWeight) {
-		return fmt.Errorf("%s: heuristic_config.price_weight must be a number between 0 and 1", path)
-	}
-	if math.Abs(config.PerformanceWeight+config.PriceWeight-1) > 1e-6 {
-		return fmt.Errorf("%s: heuristic_config.performance_weight and heuristic_config.price_weight must sum to 1", path)
-	}
-	if err := validateEvalWeights(config.EvalWeights, evalIDs, config.PerformanceWeight, evalWeightManifestTerms); err != nil {
-		return fmt.Errorf("%s: %w", path, err)
-	}
-	return nil
 }
 
 const (
@@ -1087,24 +870,16 @@ func normalizeManifestTargetThinkingLevel(
 	return &level, nil
 }
 
-func routerStrategyForManifest(path, strategy string, hasHeuristicConfig, hasCustomConfig bool) (string, error) {
+func routerStrategyForManifest(path, strategy string, hasCustomConfig bool) (string, error) {
 	switch {
-	case hasHeuristicConfig && hasCustomConfig:
-		return "", fmt.Errorf("%s: heuristic_config and custom_config cannot both be set", path)
-	case strategy == "heuristic" && !hasHeuristicConfig:
-		return "", fmt.Errorf("%s: routing_strategy heuristic requires heuristic_config", path)
 	case strategy == "custom" && !hasCustomConfig:
 		return "", fmt.Errorf("%s: routing_strategy custom requires custom_config", path)
-	case strategy == "slm" && hasHeuristicConfig:
-		return "", fmt.Errorf("%s: heuristic_config is only supported when routing_strategy is heuristic", path)
 	case strategy == "slm" && hasCustomConfig:
 		return "", fmt.Errorf("%s: custom_config is only supported when routing_strategy is custom", path)
-	case strategy == "heuristic" || strategy == "custom" || strategy == "slm":
+	case strategy == "custom" || strategy == "slm":
 		return strategy, nil
 	case strategy != "":
-		return "", fmt.Errorf("%s: routing_strategy must be slm, heuristic, or custom", path)
-	case hasHeuristicConfig:
-		return "heuristic", nil
+		return "", fmt.Errorf("%s: routing_strategy must be slm or custom", path)
 	case hasCustomConfig:
 		return "custom", nil
 	default:
