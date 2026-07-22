@@ -187,6 +187,23 @@ func TestActivityModelsRejectsInvalidRangeAndStatusBeforeRequest(t *testing.T) {
 	}
 }
 
+func TestActivityModelsAcceptsFractionalSecondTimestamps(t *testing.T) {
+	flags := activityModelsFlags{
+		from: "2026-07-01T00:00:00.000Z",
+		to:   "2026-07-08T12:30:45.123456789+02:00",
+	}
+	query, err := flags.query()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := query.Get("from"); got != "2026-07-01T00:00:00Z" {
+		t.Fatalf("from = %q", got)
+	}
+	if got := query.Get("to"); got != "2026-07-08T12:30:45.123456789+02:00" {
+		t.Fatalf("to = %q", got)
+	}
+}
+
 func captureStdoutBytes(t *testing.T, run func() error) ([]byte, error) {
 	t.Helper()
 	old := os.Stdout
