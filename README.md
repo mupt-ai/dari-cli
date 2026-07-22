@@ -62,6 +62,7 @@ What works under `DARI_API_KEY`:
 - `dari api-keys list|create|revoke`
 - `dari credentials list|add|remove`
 - `dari eval list|get`
+- `dari activity models`
 - `dari org members|invite`
 - `dari router list|get|models|create|update|delete`
 - `dari session list|create|get|send|events`
@@ -186,6 +187,20 @@ custom_config:
 ```
 
 `model_thinking_levels` enables exact model/thinking-level pairs and must list every enabled model when set. `fast_models` enables Fast Mode for the listed models and every entry must also appear in `enabled_models`; the API rejects models whose catalog entry does not support Fast Mode. A custom rule or fallback can pin one enabled `thinking_level`; use `null` or omit the field for Auto, which lets the router select among that model's enabled levels.
+
+### activity
+
+```bash
+dari activity models \
+  --from 2026-07-01T00:00:00Z \
+  --to 2026-07-08T00:00:00Z \
+  [--router-id <router_id>] \
+  [--api-key-id <api_key_id> ...] [--user-id <user_id> ...] \
+  [--model <model_id> ...] [--provider <provider>] \
+  [--status completed|provider_error|selector_error|aborted]
+```
+
+Returns JSON for the current organization's model usage, token and cache buckets, provider spend and pricing coverage, cost per step, latency p95, completion outcomes, and observed model/provider transitions. The current user or Management API key must have organization owner or admin access. See [Model Activity](https://docs.dari.dev/router/model-activity) for API usage and metric definitions.
 
 ### eval
 
