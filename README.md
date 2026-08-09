@@ -1,6 +1,6 @@
 # Dari CLI
 
-`dari` packages and publishes Flue projects to Dari.
+`dari` manages Dari routers, credentials, API keys, and organizations from the terminal.
 
 Full docs: https://docs.dari.dev
 
@@ -30,21 +30,6 @@ The CLI also checks for newer releases periodically and prints a stderr notice w
 
 Most commands require `dari auth login` first. The CLI talks to `https://api.dari.dev`.
 
-### init
-
-```bash
-dari init chat
-```
-
-Creates a normal Flue project with `package.json`, `agents/chat.ts`, and a small Dari deploy file. The generated OpenRouter example declares the provider key it reads at runtime:
-
-```yaml
-name: chat
-sandbox:
-  secrets:
-    - OPENROUTER_API_KEY
-```
-
 ### Headless auth (CI, scripts)
 
 Set `DARI_API_KEY` to a Management key to bypass browser login. When set, the CLI uses it as the bearer for every request and skips cached state entirely.
@@ -57,15 +42,12 @@ Create a Management key for CLI/API use from a logged-in shell via `dari api-key
 
 What works under `DARI_API_KEY`:
 
-- `dari deploy`
-- `dari agent list|versions|version|status|webhook|delete`
 - `dari api-keys list|create|revoke`
 - `dari credentials list|add|remove`
 - `dari eval list|get`
 - `dari activity models`
 - `dari org members|invite`
 - `dari router list|get|models|create|update|delete`
-- `dari session list|create|get|send|events`
 
 What does **not** work under `DARI_API_KEY`:
 
@@ -98,21 +80,6 @@ dari org switch <organization>               # slug or id
 dari org members
 dari org invite <email> [--role owner|admin|member]   # emails an invite; default: member
 ```
-
-### deploy
-
-```bash
-dari deploy [repo_root]
-```
-
-Packages the checkout and publishes an agent version. For Flue projects with `package.json`, live deploy installs dependencies and runs the Flue build locally once, then uploads a prebuilt runtime archive so hosted message workers only extract and run it. From non-Linux/x64 machines, commit `package-lock.json` so the CLI can reinstall runtime dependencies for the hosted Linux target before upload. Agent names are unique within an organization: deploying a bundle whose `dari.yml` name already exists creates a new version of that existing agent. If legacy duplicates make the name ambiguous, re-run with `--agent-id`.
-
-| Flag | Description |
-| --- | --- |
-| `--api-key` | Override the cached org key |
-| `--agent-id` | Publish to a specific agent instead of resolving by name |
-| `--dry-run` | Package the source bundle and print the publish flow without installing dependencies, building, or uploading |
-| `--quiet` | Suppress per-stage progress on stderr |
 
 ### api-keys
 
@@ -211,7 +178,7 @@ dari eval get <eval_id>
 
 ### credentials
 
-Stored credentials are named secrets for values your Flue project needs at runtime, such as a provider key for a model API.
+Stored credentials are named secrets for the current organization, such as a provider key for a model API.
 
 ```bash
 dari credentials list
@@ -219,49 +186,6 @@ dari credentials add OPENROUTER_API_KEY      # prompts if value omitted
 dari credentials add <name> --value-stdin < secret.txt
 dari credentials remove <name>
 ```
-
-### agent
-
-```bash
-dari agent list
-dari agent versions <agent>
-dari agent version show <agent> <version_id>
-dari agent version files <agent> <version_id>
-dari agent version cat <agent> <version_id> <path>
-dari agent status [repo_root] [--agent-id <agent>]
-dari agent webhook get <agent>
-dari agent webhook set <agent> <webhook_url> [--event <event_type> ...]
-dari agent webhook clear <agent>
-dari agent webhook rotate-secret <agent>
-dari agent delete <agent> [--yes]
-```
-
-`<agent>` can be an agent ID or an unambiguous agent name. `agent delete` hides the agent and stops new sessions; published versions are preserved.
-
-### session
-
-```bash
-dari session list --agent <agent_id>
-dari session create --agent <agent_id>
-dari session create --agent <agent_id> --secret-env INTERNAL_API_TOKEN
-dari session create --agent <agent_id> --internet-access
-dari session get <session_id>
-dari session send <session_id> <text>        # or --stdin < message.txt
-dari session send --agent <agent_id> <text>  # creates a new session first
-dari session events <session_id> [--limit N]
-```
-
-## Bundle Shape
-
-The repo root must contain `dari.yml` and a Flue project with `agents/<name>.ts`.
-
-Minimal `dari.yml`:
-
-```yaml
-name: chat
-```
-
-If your Flue code reads runtime secrets, declare their names under `sandbox.secrets` and store them with `dari credentials add` before deploy. Prompts, models, tools, and agent behavior live in Flue code.
 
 ## Local Development
 

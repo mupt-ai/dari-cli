@@ -1,4 +1,4 @@
-package deploy
+package cli
 
 import "testing"
 
@@ -48,18 +48,18 @@ func TestNormalizeRouterID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := NormalizeRouterID(tt.raw)
+			got, err := normalizeRouterID(tt.raw)
 			if tt.wantErr {
 				if err == nil {
-					t.Fatalf("NormalizeRouterID(%q) succeeded, want error", tt.raw)
+					t.Fatalf("normalizeRouterID(%q) succeeded, want error", tt.raw)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("NormalizeRouterID(%q): %v", tt.raw, err)
+				t.Fatalf("normalizeRouterID(%q): %v", tt.raw, err)
 			}
 			if got != tt.want {
-				t.Fatalf("NormalizeRouterID(%q) = %q, want %q", tt.raw, got, tt.want)
+				t.Fatalf("normalizeRouterID(%q) = %q, want %q", tt.raw, got, tt.want)
 			}
 		})
 	}

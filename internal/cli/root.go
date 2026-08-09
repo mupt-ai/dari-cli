@@ -38,7 +38,7 @@ func newRootCmd(version string) *cobra.Command {
 	gf := &globalFlags{version: version}
 	cmd := &cobra.Command{
 		Use:           "dari",
-		Short:         "dari packages and publishes agent projects to Dari.",
+		Short:         "dari manages Dari routers, credentials, and organizations.",
 		SilenceUsage:  true,
 		SilenceErrors: false,
 		Version:       version,

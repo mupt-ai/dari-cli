@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -59,36 +58,11 @@ func TestDoHTTPErrorWithDetail(t *testing.T) {
 	}
 }
 
-func TestUpload(t *testing.T) {
-	var got []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			t.Errorf("method: %s", r.Method)
-		}
-		if r.Header.Get("Content-Type") != "application/octet-stream" {
-			t.Errorf("ct: %q", r.Header.Get("Content-Type"))
-		}
-		got, _ = io.ReadAll(r.Body)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	payload := []byte("hello tar.gz")
-	if err := New("").Upload(context.Background(), srv.URL, payload, map[string]string{
-		"Content-Type": "application/octet-stream",
-	}); err != nil {
-		t.Fatalf("Upload: %v", err)
-	}
-	if string(got) != string(payload) {
-		t.Errorf("body mismatch")
-	}
-}
-
 func TestNormalizeURL(t *testing.T) {
 	cases := map[string]string{
-		"https://api.dari.dev":    "https://api.dari.dev",
-		"https://api.dari.dev/":   "https://api.dari.dev",
-		"  https://x.com//  ":     "https://x.com",
+		"https://api.dari.dev":  "https://api.dari.dev",
+		"https://api.dari.dev/": "https://api.dari.dev",
+		"  https://x.com//  ":   "https://x.com",
 	}
 	for in, want := range cases {
 		if got := NormalizeURL(in); got != want {

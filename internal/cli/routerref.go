@@ -1,14 +1,16 @@
-package deploy
+package cli
 
 import (
+	"bufio"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 )
 
-// NormalizeRouterID accepts either a raw rtr_... ID or a copied router endpoint
+// normalizeRouterID accepts either a raw rtr_... ID or a copied router endpoint
 // such as https://routing.dari.dev/rtr_123/chat/completions.
-func NormalizeRouterID(raw string) (string, error) {
+func normalizeRouterID(raw string) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return "", nil
@@ -39,4 +41,15 @@ func routerIDFromReference(ref string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// confirm prints a yes/no prompt to stderr and reads a single line from stdin.
+func confirm(prompt string) bool {
+	fmt.Fprint(os.Stderr, prompt)
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil {
+		return false
+	}
+	answer := strings.ToLower(strings.TrimSpace(line))
+	return answer == "y" || answer == "yes"
 }

@@ -117,35 +117,6 @@ func (c *Client) Do(ctx context.Context, method, path string, body, out any) err
 	return nil
 }
 
-// Upload PUTs raw bytes (e.g. a tar.gz archive) to an absolute URL with the
-// provided headers. Used for signed-URL S3 uploads.
-func (c *Client) Upload(ctx context.Context, uploadURL string, body []byte, headers map[string]string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("build upload request: %w", err)
-	}
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-	// Uploads to signed URLs can be slow; allow more headroom than the
-	// management default.
-	client := *c.HTTP
-	if client.Timeout > 0 && client.Timeout < 5*time.Minute {
-		client.Timeout = 5 * time.Minute
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return &NetworkError{Err: err}
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		raw, _ := io.ReadAll(resp.Body)
-		return &HTTPError{Status: resp.StatusCode, Detail: extractErrorDetail(raw, resp.Status)}
-	}
-	_, _ = io.Copy(io.Discard, resp.Body)
-	return nil
-}
-
 // NormalizeURL trims whitespace and a trailing slash from an API URL.
 func NormalizeURL(raw string) string {
 	trimmed := strings.TrimSpace(raw)

@@ -70,11 +70,11 @@ func newOrgDeleteCmd(gf *globalFlags) *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "delete <organization>",
-		Short: "Delete an organization by slug or ID. Owner only. Soft-delete; all agents in the org are marked deleted.",
+		Short: "Delete an organization by slug or ID. Owner only. Soft-delete.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			identifier := args[0]
-			if !yes && !confirm(fmt.Sprintf("Delete organization %s? This also deletes all of its agents. [y/N] ", identifier)) {
+			if !yes && !confirm(fmt.Sprintf("Delete organization %s? [y/N] ", identifier)) {
 				return fmt.Errorf("aborted")
 			}
 			apiURL, err := gf.resolveAPIURL()

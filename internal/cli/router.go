@@ -14,8 +14,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
-
-	"github.com/mupt-ai/dari-cli/internal/deploy"
 )
 
 func init() {
@@ -58,7 +56,7 @@ func newRouterGetCmd(gf *globalFlags) *cobra.Command {
 		Short: "Show one router for the current org",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			routerID, err := deploy.NormalizeRouterID(args[0])
+			routerID, err := normalizeRouterID(args[0])
 			if err != nil {
 				return err
 			}
@@ -287,7 +285,7 @@ func newRouterUpdateCmd(gf *globalFlags) *cobra.Command {
 		Short: "Update a router; only the flags you pass change",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			routerID, err := deploy.NormalizeRouterID(args[0])
+			routerID, err := normalizeRouterID(args[0])
 			if err != nil {
 				return err
 			}
@@ -349,11 +347,11 @@ func newRouterDeleteCmd(gf *globalFlags) *cobra.Command {
 		Short: "Soft-delete a router for the current org",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			routerID, err := deploy.NormalizeRouterID(args[0])
+			routerID, err := normalizeRouterID(args[0])
 			if err != nil {
 				return err
 			}
-			if !yes && !confirm(fmt.Sprintf("Delete router %s? Agents and API keys pointing at it will stop routing. [y/N] ", routerID)) {
+			if !yes && !confirm(fmt.Sprintf("Delete router %s? API keys pointing at it will stop routing. [y/N] ", routerID)) {
 				return fmt.Errorf("aborted")
 			}
 			var resp map[string]any

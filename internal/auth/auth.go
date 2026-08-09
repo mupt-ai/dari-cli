@@ -319,7 +319,7 @@ func buildWebLoginURL(webAppURL, callbackURL, state, codeChallenge string) (stri
 
 // OrgKeyClient returns an api.Client authenticated with the cached managed
 // CLI API key (the `dari_...` bearer) for the current organization. Used by
-// data-plane commands (agent, session, file) that the server authenticates
+// commands (router, credentials, api-keys) that the server authenticates
 // via the org API key rather than the user JWT.
 //
 // If DARI_API_KEY is set it takes precedence, skipping the state/login cache.
