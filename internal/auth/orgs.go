@@ -61,24 +61,51 @@ func ensureCurrentOrgKey(ctx context.Context, s *state.CliState, apiURL, orgID s
 	if s.SupabaseSession == nil {
 		return ErrNotLoggedIn
 	}
+	key, err := fetchManagedOrgKey(ctx, apiURL, s.SupabaseSession.AccessToken, orgID)
+	if err != nil {
+		return err
+	}
+	return cacheCurrentOrgKey(s, orgID, key)
+}
+
+func fetchManagedOrgKey(ctx context.Context, apiURL, accessToken, orgID string) (string, error) {
 	hostname, _ := os.Hostname()
 	if hostname == "" {
 		hostname = "dari-cli"
 	}
 	var issued managedKeyResponse
 	path := "/v1/organizations/" + orgID + "/managed-cli-key/ensure"
-	client := api.New(apiURL).WithBearer(s.SupabaseSession.AccessToken)
+	client := api.New(apiURL).WithBearer(accessToken)
 	if err := client.Do(ctx, http.MethodPost, path, map[string]string{"device_name": hostname}, &issued); err != nil {
-		return fmt.Errorf("ensure managed CLI key: %w", err)
+		return "", fmt.Errorf("ensure managed CLI key: %w", err)
 	}
+	return issued.APIKey, nil
+}
+
+func cacheCurrentOrgKey(s *state.CliState, orgID, apiKey string) error {
 	org, ok := s.Organizations[orgID]
 	if !ok {
 		return fmt.Errorf("organization %q is not known locally", orgID)
 	}
-	org.APIKey = issued.APIKey
+	org.APIKey = apiKey
 	s.Organizations[orgID] = org
 	s.CurrentOrgID = orgID
 	return nil
+}
+
+func ensureStoredCurrentOrgKey(ctx context.Context, apiURL, orgID string) (*state.CliState, error) {
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "dari-cli"
+	}
+	var issued managedKeyResponse
+	path := "/v1/organizations/" + orgID + "/managed-cli-key/ensure"
+	if _, err := DoAuthenticated(ctx, apiURL, http.MethodPost, path, map[string]string{"device_name": hostname}, &issued); err != nil {
+		return nil, err
+	}
+	return updateStoredState(apiURL, func(current *state.CliState) error {
+		return cacheCurrentOrgKey(current, orgID, issued.APIKey)
+	})
 }
 
 // syncOrganizations reconciles a freshly-fetched org list with the locally
@@ -120,14 +147,18 @@ func ListOrganizations(ctx context.Context, apiURL string) (*state.CliState, []O
 	if err != nil {
 		return nil, nil, err
 	}
-	syncOrganizations(s, resp.Organizations)
+	s, err = updateStoredState(apiURL, func(current *state.CliState) error {
+		syncOrganizations(current, resp.Organizations)
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
 	if org := s.CurrentOrg(); org != nil && org.APIKey == "" {
-		if err := ensureCurrentOrgKey(ctx, s, apiURL, org.ID); err != nil {
+		s, err = ensureStoredCurrentOrgKey(ctx, apiURL, org.ID)
+		if err != nil {
 			return nil, nil, err
 		}
-	}
-	if err := state.Save(s); err != nil {
-		return nil, nil, err
 	}
 	return s, resp.Organizations, nil
 }
@@ -139,25 +170,24 @@ func CreateOrganization(ctx context.Context, apiURL, name string) (*state.CliSta
 		return nil, ErrNeedsUserLogin
 	}
 	var created OrgRecord
-	s, err := DoAuthenticated(ctx, apiURL, http.MethodPost, "/v1/organizations", map[string]string{"name": name}, &created)
+	_, err := DoAuthenticated(ctx, apiURL, http.MethodPost, "/v1/organizations", map[string]string{"name": name}, &created)
 	if err != nil {
 		return nil, err
 	}
-	// Upsert manually (not a full sync — we haven't refetched the list).
-	s.Organizations[created.ID] = state.Organization{
-		ID:     created.ID,
-		Name:   created.Name,
-		Slug:   created.Slug,
-		Role:   created.Role,
-		APIKey: s.Organizations[created.ID].APIKey,
-	}
-	if err := ensureCurrentOrgKey(ctx, s, apiURL, created.ID); err != nil {
+	if _, err := updateStoredState(apiURL, func(current *state.CliState) error {
+		// Upsert manually (not a full sync — we haven't refetched the list).
+		current.Organizations[created.ID] = state.Organization{
+			ID:     created.ID,
+			Name:   created.Name,
+			Slug:   created.Slug,
+			Role:   created.Role,
+			APIKey: current.Organizations[created.ID].APIKey,
+		}
+		return nil
+	}); err != nil {
 		return nil, err
 	}
-	if err := state.Save(s); err != nil {
-		return nil, err
-	}
-	return s, nil
+	return ensureStoredCurrentOrgKey(ctx, apiURL, created.ID)
 }
 
 // SwitchOrganization syncs the org list, matches identifier against id or
@@ -166,7 +196,7 @@ func SwitchOrganization(ctx context.Context, apiURL, identifier string) (*state.
 	if EnvAPIKeyValue() != "" {
 		return nil, ErrNeedsUserLogin
 	}
-	s, orgs, err := ListOrganizations(ctx, apiURL)
+	_, orgs, err := ListOrganizations(ctx, apiURL)
 	if err != nil {
 		return nil, err
 	}
@@ -174,13 +204,7 @@ func SwitchOrganization(ctx context.Context, apiURL, identifier string) (*state.
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureCurrentOrgKey(ctx, s, apiURL, matched.ID); err != nil {
-		return nil, err
-	}
-	if err := state.Save(s); err != nil {
-		return nil, err
-	}
-	return s, nil
+	return ensureStoredCurrentOrgKey(ctx, apiURL, matched.ID)
 }
 
 // DeleteOrganization soft-deletes the organization identified by id or slug
@@ -201,18 +225,36 @@ func DeleteOrganization(ctx context.Context, apiURL, identifier string) (*state.
 	if _, err := DoAuthenticated(ctx, apiURL, http.MethodDelete, "/v1/organizations/"+matched.ID, nil, &deleted); err != nil {
 		return nil, OrgRecord{}, err
 	}
-	delete(s.Organizations, matched.ID)
-	if s.CurrentOrgID == matched.ID {
-		s.CurrentOrgID = ""
-		for id := range s.Organizations {
-			s.CurrentOrgID = id
-			break
+	s, err = updateStoredState(apiURL, func(current *state.CliState) error {
+		delete(current.Organizations, matched.ID)
+		if current.CurrentOrgID == matched.ID {
+			current.CurrentOrgID = ""
+			for id := range current.Organizations {
+				current.CurrentOrgID = id
+				break
+			}
 		}
-	}
-	if err := state.Save(s); err != nil {
+		return nil
+	})
+	if err != nil {
 		return nil, OrgRecord{}, err
 	}
 	return s, matched, nil
+}
+
+func updateStoredState(apiURL string, update func(*state.CliState) error) (*state.CliState, error) {
+	var updated *state.CliState
+	err := state.Update(func(s *state.CliState) error {
+		if !api.URLsMatch(s.APIURL, apiURL) || s.SupabaseSession == nil {
+			return ErrNotLoggedIn
+		}
+		if err := update(s); err != nil {
+			return err
+		}
+		updated = s
+		return nil
+	})
+	return updated, err
 }
 
 // findOrgRecord matches identifier against an org's id or slug.

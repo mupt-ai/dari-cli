@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -52,6 +53,53 @@ func TestRoundTrip(t *testing.T) {
 	}
 	if loaded.Organizations["org-1"].APIKey != "dari_abc" {
 		t.Errorf("org-1 api_key: %q", loaded.Organizations["org-1"].APIKey)
+	}
+}
+
+func TestConcurrentUpdatesDoNotLoseChanges(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DARI_CONFIG_DIR", dir)
+	unsetXDG(t)
+
+	if err := Save(&CliState{Organizations: map[string]Organization{}}); err != nil {
+		t.Fatal(err)
+	}
+
+	const updates = 20
+	var wg sync.WaitGroup
+	errs := make(chan error, updates)
+	for i := range updates {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- Update(func(s *CliState) error {
+				id := string(rune('a' + i))
+				s.Organizations[id] = Organization{ID: id}
+				return nil
+			})
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+	}
+
+	s, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(s.Organizations); got != updates {
+		t.Fatalf("organization count = %d, want %d", got, updates)
+	}
+	matches, err := filepath.Glob(filepath.Join(dir, ".state-*.tmp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("temporary state files remain: %v", matches)
 	}
 }
 
@@ -126,6 +174,29 @@ func TestLoadPythonWrittenState(t *testing.T) {
 	org := s.CurrentOrg()
 	if org == nil || org.APIKey != "" {
 		t.Errorf("current org: %+v", org)
+	}
+}
+
+func TestSaveReplacesCorruptState(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DARI_CONFIG_DIR", dir)
+	unsetXDG(t)
+
+	path, err := Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(&CliState{APIURL: "https://api.dari.dev", Organizations: map[string]Organization{}}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load after Save: %v", err)
 	}
 }
 

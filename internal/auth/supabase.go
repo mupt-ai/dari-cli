@@ -70,7 +70,7 @@ func (c *supabaseClient) refresh(ctx context.Context, refreshToken string) (*sup
 // signOut best-effort revokes the server-side session. Ignored errors on the
 // caller side (logout still clears local state).
 func (c *supabaseClient) signOut(ctx context.Context, accessToken string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url+"/auth/v1/logout?scope=global", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url+"/auth/v1/logout?scope=local", nil)
 	if err != nil {
 		return err
 	}

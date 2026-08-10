@@ -142,19 +142,23 @@ func LoginWithOptions(ctx context.Context, apiURL string, opts LoginOptions) (*s
 // Logout best-effort revokes the Supabase session and clears local state.
 func Logout(ctx context.Context, apiURL string) error {
 	apiURL = api.NormalizeURL(apiURL)
-	s, err := state.Load()
-	if err != nil {
+	var accessToken string
+	if err := state.Update(func(s *state.CliState) error {
+		if !api.URLsMatch(s.APIURL, apiURL) || s.SupabaseSession == nil {
+			return nil
+		}
+		accessToken = s.SupabaseSession.AccessToken
+		*s = state.CliState{Organizations: map[string]state.Organization{}}
+		return nil
+	}); err != nil {
 		return err
 	}
-	if !api.URLsMatch(s.APIURL, apiURL) || s.SupabaseSession == nil {
-		// Nothing local to clear for this API URL.
-		return nil
+	if accessToken != "" {
+		if cfg, err := fetchAuthConfig(ctx, apiURL); err == nil {
+			_ = newSupabaseClient(cfg).signOut(ctx, accessToken)
+		}
 	}
-	cfg, err := fetchAuthConfig(ctx, apiURL)
-	if err == nil {
-		_ = newSupabaseClient(cfg).signOut(ctx, s.SupabaseSession.AccessToken)
-	}
-	return state.Save(&state.CliState{Organizations: map[string]state.Organization{}})
+	return nil
 }
 
 // CurrentStatus returns the cached auth status without making network calls.
@@ -207,9 +211,8 @@ func CurrentStatus(apiURL string) (Status, error) {
 }
 
 // DoAuthenticated issues an API request using the cached JWT, refreshing it
-// on demand (proactively if expired, or reactively on a 401/403). The
-// resulting CliState (possibly mutated with a refreshed session) is saved
-// back to disk before returning.
+// on demand (proactively if expired, or reactively on a 401). Refresh is
+// serialized across CLI processes so a rotated refresh token cannot be reused.
 //
 // If DARI_API_KEY is set it takes precedence: the key is used as the bearer,
 // the JWT refresh dance is skipped entirely, and no state is written.
@@ -227,33 +230,56 @@ func DoAuthenticated(ctx context.Context, apiURL, method, path string, body, out
 		return nil, ErrNotLoggedIn
 	}
 
-	usedCached := true
+	refreshedBeforeRequest := false
 	if storedSessionNeedsRefresh(s.SupabaseSession) {
-		if err := refresh(ctx, s, apiURL); err != nil {
+		s, err = refreshStoredSession(ctx, apiURL, "")
+		if err != nil {
 			return nil, err
 		}
-		if err := state.Save(s); err != nil {
-			return nil, err
-		}
-		usedCached = false
+		refreshedBeforeRequest = true
 	}
 
-	client := api.New(apiURL).WithBearer(s.SupabaseSession.AccessToken)
+	accessToken := s.SupabaseSession.AccessToken
+	client := api.New(apiURL).WithBearer(accessToken)
 	err = client.Do(ctx, method, path, body, out)
 	if err == nil {
 		return s, nil
 	}
-	if he := api.AsHTTPError(err); he != nil && usedCached && (he.Status == 401 || he.Status == 403) {
-		if rerr := refresh(ctx, s, apiURL); rerr != nil {
-			return nil, rerr
-		}
-		if err := state.Save(s); err != nil {
+	if he := api.AsHTTPError(err); he != nil && he.Status == 401 && !refreshedBeforeRequest {
+		s, err = refreshStoredSession(ctx, apiURL, accessToken)
+		if err != nil {
 			return nil, err
 		}
 		client = api.New(apiURL).WithBearer(s.SupabaseSession.AccessToken)
 		err = client.Do(ctx, method, path, body, out)
 	}
 	return s, translateAuthError(err)
+}
+
+// refreshStoredSession reloads state while holding the cross-process lock.
+// If another process already replaced rejectedAccessToken, its session is
+// reused rather than rotating the new refresh token again.
+func refreshStoredSession(ctx context.Context, apiURL, rejectedAccessToken string) (*state.CliState, error) {
+	var refreshed *state.CliState
+	err := state.Update(func(s *state.CliState) error {
+		if !api.URLsMatch(s.APIURL, apiURL) || s.SupabaseSession == nil {
+			return ErrNotLoggedIn
+		}
+		if rejectedAccessToken != "" && s.SupabaseSession.AccessToken != rejectedAccessToken {
+			refreshed = s
+			return nil
+		}
+		if rejectedAccessToken == "" && !storedSessionNeedsRefresh(s.SupabaseSession) {
+			refreshed = s
+			return nil
+		}
+		if err := refresh(ctx, s, apiURL); err != nil {
+			return err
+		}
+		refreshed = s
+		return nil
+	})
+	return refreshed, err
 }
 
 // refresh exchanges the stored refresh_token for a new session and mutates s
@@ -295,7 +321,7 @@ func sessionToStored(sess *supabaseSession) *state.SupabaseSession {
 }
 
 func translateAuthError(err error) error {
-	if he := api.AsHTTPError(err); he != nil && (he.Status == 401 || he.Status == 403) {
+	if he := api.AsHTTPError(err); he != nil && he.Status == 401 {
 		return fmt.Errorf("%w: %s", ErrNotLoggedIn, strings.TrimSpace(he.Detail))
 	}
 	return api.HumanError(err)

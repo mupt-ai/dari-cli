@@ -58,6 +58,10 @@ func Load() (*CliState, error) {
 	if err != nil {
 		return nil, err
 	}
+	return load(path)
+}
+
+func load(path string) (*CliState, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -88,15 +92,53 @@ func Load() (*CliState, error) {
 	return s, nil
 }
 
-// Save persists the CLI state with user-only permissions on Unix.
+// Save atomically persists the CLI state while holding the cross-process
+// state lock. Call Update when a write depends on the current on-disk state.
 func Save(s *CliState) error {
-	path, err := Path()
+	path, unlock, err := lockState()
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("create state dir: %w", err)
+	defer unlock()
+	return save(path, s)
+}
+
+// Update serializes a read-modify-write operation across CLI processes. The
+// callback receives state loaded after the lock is acquired, preventing a
+// process from restoring a refresh token rotated by another process.
+func Update(update func(*CliState) error) error {
+	path, unlock, err := lockState()
+	if err != nil {
+		return err
 	}
+	defer unlock()
+
+	s, err := load(path)
+	if err != nil {
+		return err
+	}
+	if err := update(s); err != nil {
+		return err
+	}
+	return save(path, s)
+}
+
+func lockState() (string, func(), error) {
+	path, err := Path()
+	if err != nil {
+		return "", nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", nil, fmt.Errorf("create state dir: %w", err)
+	}
+	unlock, err := lock(path + ".lock")
+	if err != nil {
+		return "", nil, fmt.Errorf("lock state: %w", err)
+	}
+	return path, unlock, nil
+}
+
+func save(path string, s *CliState) error {
 	data, err := json.MarshalIndent(s.marshalShape(), "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode state: %w", err)
@@ -105,8 +147,29 @@ func Save(s *CliState) error {
 	if runtime.GOOS != "windows" {
 		perm = 0o600
 	}
-	if err := os.WriteFile(path, data, perm); err != nil {
-		return fmt.Errorf("write state: %w", err)
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".state-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temporary state: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return fmt.Errorf("set temporary state permissions: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write temporary state: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("sync temporary state: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temporary state: %w", err)
+	}
+	if err := replaceFile(tmpPath, path); err != nil {
+		return fmt.Errorf("replace state: %w", err)
 	}
 	return nil
 }
