@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -26,9 +27,14 @@ func Execute(version string) int {
 }
 
 // globalFlags hold cross-command options resolved at root level.
+//
+//go:embed skill/SKILL.md
+var skillFile embed.FS
+
 type globalFlags struct {
 	apiURL  string
 	version string
+	skill   bool
 }
 
 func newRootCmd(version string) *cobra.Command {
@@ -42,14 +48,29 @@ func newRootCmd(version string) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: false,
 		Version:       version,
-	}
-	cmd.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
-		maybePrintUpdateNotice(cmd, version)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !gf.skill {
+				return cmd.Help()
+			}
+			content, err := skillFile.ReadFile("skill/SKILL.md")
+			if err != nil {
+				return fmt.Errorf("read embedded skill: %w", err)
+			}
+			_, err = cmd.OutOrStdout().Write(content)
+			return err
+		},
 	}
 	cmd.SetVersionTemplate("dari {{.Version}}\n")
 
 	cmd.PersistentFlags().StringVar(&gf.apiURL, "api-url", "", "Override the Dari API base URL (defaults to $DARI_API_URL or the cached value)")
 	_ = cmd.PersistentFlags().MarkHidden("api-url")
+	cmd.PersistentFlags().BoolVar(&gf.skill, "skill", false, "Print the Dari agent skill and exit")
+	cmd.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
+		if gf.skill {
+			return
+		}
+		maybePrintUpdateNotice(cmd, version)
+	}
 
 	// Subcommands are registered by their respective files via init().
 	registerCommands(cmd, gf)

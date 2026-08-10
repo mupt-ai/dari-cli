@@ -91,6 +91,89 @@ func TestActivityModelsUsesAuthenticatedCurrentOrgRouteAndPreservesFilters(t *te
 	}
 }
 
+func TestActivityCommandsExposeActivityAPIRoutes(t *testing.T) {
+	useTestAPIKey(t)
+	tests := []struct {
+		name      string
+		args      []string
+		wantPath  string
+		wantQuery map[string]string
+	}{
+		{
+			name:      "filters",
+			args:      []string{"activity", "filter-options", "--from", "2026-07-01T00:00:00Z", "--to", "2026-07-08T00:00:00Z"},
+			wantPath:  "/v1/organizations/current/routing/activity/filter-options",
+			wantQuery: map[string]string{"from": "2026-07-01T00:00:00Z"},
+		},
+		{
+			name:      "overview",
+			args:      []string{"activity", "overview", "--from", "2026-07-01T00:00:00Z", "--to", "2026-07-01T01:00:00Z", "--bucket-seconds", "300"},
+			wantPath:  "/v1/organizations/current/routing/activity/overview",
+			wantQuery: map[string]string{"bucket_seconds": "300"},
+		},
+		{
+			name:      "people",
+			args:      []string{"activity", "people", "--from", "2026-07-01T00:00:00Z", "--to", "2026-07-08T00:00:00Z", "--scope", "keys", "--search", "prod", "--limit", "10"},
+			wantPath:  "/v1/organizations/current/routing/activity/people-keys",
+			wantQuery: map[string]string{"identity_scope": "keys", "search": "prod", "limit": "10"},
+		},
+		{
+			name:      "conversations",
+			args:      []string{"activity", "conversations", "--from", "2026-07-01T00:00:00Z", "--to", "2026-07-08T00:00:00Z", "--sort-by", "spend"},
+			wantPath:  "/v1/organizations/current/routing/activity/conversations",
+			wantQuery: map[string]string{"sort_by": "spend"},
+		},
+		{
+			name:      "conversation detail",
+			args:      []string{"activity", "conversations", "get", "conv/a", "--limit", "25"},
+			wantPath:  "/v1/organizations/current/routing/activity/conversations/conv%2Fa",
+			wantQuery: map[string]string{"limit": "25"},
+		},
+		{
+			name:      "people series",
+			args:      []string{"activity", "people", "series", "--from", "2026-07-01T00:00:00Z", "--to", "2026-07-08T00:00:00Z", "--comparison-user-id", "usr_a", "--comparison-user-id", "usr_b"},
+			wantPath:  "/v1/organizations/current/routing/activity/people-series",
+			wantQuery: map[string]string{"comparison_user_id": "usr_a", "bucket_seconds": "86400"},
+		},
+		{
+			name:      "tools inventory",
+			args:      []string{"activity", "tools", "list", "--from", "2026-07-01T00:00:00Z", "--to", "2026-07-08T00:00:00Z", "--sort-by", "latest"},
+			wantPath:  "/v1/organizations/current/routing/activity/tools-skills/inventory",
+			wantQuery: map[string]string{"mode": "tools", "sort_by": "latest"},
+		},
+		{
+			name:      "skill detail",
+			args:      []string{"activity", "skills", "get", "dari", "--from", "2026-07-01T00:00:00Z", "--to", "2026-07-08T00:00:00Z"},
+			wantPath:  "/v1/organizations/current/routing/activity/tools-skills/detail",
+			wantQuery: map[string]string{"mode": "skills", "capability_id": "dari"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.EscapedPath() != test.wantPath {
+					t.Fatalf("path = %s, want %s", r.URL.EscapedPath(), test.wantPath)
+				}
+				for key, want := range test.wantQuery {
+					if got := r.URL.Query().Get(key); got != want {
+						t.Fatalf("query %s = %q, want %q", key, got, want)
+					}
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{}`)
+			}))
+			defer srv.Close()
+
+			cmd := newRootCmd("dev")
+			cmd.SetArgs(append([]string{"--api-url", srv.URL}, test.args...))
+			if err := captureStdout(t, cmd.Execute); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestActivityModelsExplicitOrganizationUsesBrowserSession(t *testing.T) {
 	t.Setenv("DARI_API_KEY", "")
 	t.Setenv("DARI_CONFIG_DIR", t.TempDir())
@@ -185,6 +268,89 @@ func TestActivityModelsRejectsInvalidRangeAndStatusBeforeRequest(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestActivityBucketDefaultsFollowRange(t *testing.T) {
+	tests := []struct {
+		name string
+		from string
+		to   string
+		want int
+	}{
+		{"hour", "2026-07-01T00:00:00Z", "2026-07-01T01:00:00Z", 60},
+		{"day", "2026-07-01T00:00:00Z", "2026-07-02T00:00:00Z", 900},
+		{"week", "2026-07-01T00:00:00Z", "2026-07-08T00:00:00Z", 86400},
+		{"year-range", "2026-01-01T00:00:00Z", "2026-12-01T00:00:00Z", 2592000},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			from := mustParseActivityTime(t, test.from)
+			to := mustParseActivityTime(t, test.to)
+			if got := defaultActivityBucketSeconds(from, to); got != test.want {
+				t.Fatalf("defaultActivityBucketSeconds = %d, want %d", got, test.want)
+			}
+		})
+	}
+}
+
+func TestActivityBucketValidation(t *testing.T) {
+	for _, seconds := range []int{60, 300, 900, 1800, 86400, 604800, 2592000} {
+		if !allowedActivityBucketSeconds(seconds) {
+			t.Fatalf("allowed bucket %d rejected", seconds)
+		}
+	}
+	for _, seconds := range []int{0, 1, 3600, 7200, 172800} {
+		if allowedActivityBucketSeconds(seconds) {
+			t.Fatalf("disallowed bucket %d accepted", seconds)
+		}
+	}
+}
+
+func TestActivityBucketLimitRejectsPartialExtraBucket(t *testing.T) {
+	from := mustParseActivityTime(t, "2026-07-01T00:00:00Z")
+	to := from.Add(1000*300*time.Second + time.Second)
+	if !tooManyActivityBuckets(from, to, 300) {
+		t.Fatal("expected more than 1000 buckets to be rejected")
+	}
+	if tooManyActivityBuckets(from, from.Add(1000*300*time.Second), 300) {
+		t.Fatal("expected exactly 1000 buckets to be allowed")
+	}
+}
+
+func TestActivityRangeLimit(t *testing.T) {
+	cmd := newRootCmd("dev")
+	cmd.SetArgs([]string{
+		"activity", "overview",
+		"--from", "2025-01-01T00:00:00Z",
+		"--to", "2026-07-08T00:00:00Z",
+	})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "cannot exceed 366 days") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestActivityInvalidBucketRejected(t *testing.T) {
+	cmd := newRootCmd("dev")
+	cmd.SetArgs([]string{
+		"activity", "overview",
+		"--from", "2026-07-01T00:00:00Z",
+		"--to", "2026-07-08T00:00:00Z",
+		"--bucket-seconds", "3600",
+	})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "invalid --bucket-seconds") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func mustParseActivityTime(t *testing.T, value string) time.Time {
+	t.Helper()
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return parsed
 }
 
 func TestActivityModelsAcceptsFractionalSecondTimestamps(t *testing.T) {
