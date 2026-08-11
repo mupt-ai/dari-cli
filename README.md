@@ -93,13 +93,13 @@ dari eval get <eval_id>
 
 ## Agent Skill
 
-Print the bundled skill for a coding agent or other tool that accepts Markdown instructions:
+Print managed-router instructions for a coding agent:
 
 ```bash
 dari --skill
 ```
 
-The command prints the same managed-router workflow used by the [Dari Skill](https://github.com/mupt-ai/dari-skill).
+The command prints the managed-router workflow directly so an agent can load and follow it.
 
 ## Command Discovery
 

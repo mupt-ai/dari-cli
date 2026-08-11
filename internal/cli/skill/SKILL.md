@@ -131,6 +131,7 @@ dari router delete <router-id-or-endpoint>
 
 ## Examples
 
-- Managed-router manifests: https://github.com/mupt-ai/dari-dev-examples
+- Managed-router manifests: https://github.com/mupt-ai/dari-router-core/tree/main/examples/managed
 - Router Framework documentation: https://docs.dari.dev/framework/overview
+- Router Framework examples: https://github.com/mupt-ai/dari-router-core/tree/main/examples
 - Managed router docs: https://docs.dari.dev/router/create-a-router
