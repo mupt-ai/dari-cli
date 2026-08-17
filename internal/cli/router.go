@@ -99,6 +99,7 @@ type routerCustomConfig struct {
 type routerCreateRequest struct {
 	Name                string              `json:"name"`
 	EnabledModels       []string            `json:"enabled_models"`
+	ModelProviders      map[string]string   `json:"model_providers,omitempty"`
 	ProviderKeys        map[string]string   `json:"provider_keys,omitempty"`
 	ProviderKeySources  map[string]string   `json:"provider_key_sources,omitempty"`
 	EvalIDs             []string            `json:"eval_ids,omitempty"`
@@ -126,6 +127,7 @@ type routerCurrent struct {
 type routerCreateManifest struct {
 	Name                string              `yaml:"name"`
 	EnabledModels       []string            `yaml:"enabled_models"`
+	ModelProviders      map[string]string   `yaml:"model_providers"`
 	ProviderKeys        map[string]string   `yaml:"provider_keys"`
 	ProviderKeyEnvs     map[string]string   `yaml:"provider_key_envs"`
 	ProviderKeySources  map[string]string   `yaml:"provider_key_sources"`
@@ -266,7 +268,13 @@ func newRouterCreateCmd(gf *globalFlags) *cobra.Command {
 }
 
 func createRouterFromManifest(cmd *cobra.Command, gf *globalFlags, path string) error {
-	body, err := loadRouterCreateRequestFromManifest(path)
+	manifest, resolvedPath, err := loadRouterManifest(path)
+	if err != nil {
+		return err
+	}
+	body, err := manifest.createRequest(resolvedPath, func() (map[string]string, error) {
+		return routerModelCatalogDefaults(cmd, gf)
+	})
 	if err != nil {
 		return err
 	}
@@ -430,14 +438,14 @@ func resolveRouterManifestPath(rawPath string) (string, error) {
 	return "", fmt.Errorf("router manifest directory %s must contain router.yml or router.yaml", path)
 }
 
-func loadRouterCreateRequestFromManifest(rawPath string) (routerCreateRequest, error) {
+func loadRouterManifest(rawPath string) (routerCreateManifest, string, error) {
 	path, err := resolveRouterManifestPath(rawPath)
 	if err != nil {
-		return routerCreateRequest{}, err
+		return routerCreateManifest{}, "", err
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return routerCreateRequest{}, fmt.Errorf("read router manifest %s: %w", path, err)
+		return routerCreateManifest{}, "", fmt.Errorf("read router manifest %s: %w", path, err)
 	}
 	var manifest routerCreateManifest
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
@@ -445,12 +453,46 @@ func loadRouterCreateRequestFromManifest(rawPath string) (routerCreateRequest, e
 	// io.EOF means an empty manifest; let createRequest report the missing
 	// fields instead of surfacing a bare "EOF".
 	if err := decoder.Decode(&manifest); err != nil && !errors.Is(err, io.EOF) {
-		return routerCreateRequest{}, fmt.Errorf("parse router manifest %s: %w", path, err)
+		return routerCreateManifest{}, "", fmt.Errorf("parse router manifest %s: %w", path, err)
 	}
-	return manifest.createRequest(path)
+	return manifest, path, nil
 }
 
-func (manifest routerCreateManifest) createRequest(path string) (routerCreateRequest, error) {
+// routerModelCatalogDefaults fetches each catalog model's default execution
+// provider so manifests without model_providers validate against the same
+// bindings the control plane will apply.
+func routerModelCatalogDefaults(cmd *cobra.Command, gf *globalFlags) (map[string]string, error) {
+	var resp struct {
+		Groups []struct {
+			Models []struct {
+				ID              string `json:"id"`
+				Provider        string `json:"provider"`
+				DefaultProvider string `json:"default_provider"`
+			} `json:"models"`
+		} `json:"groups"`
+	}
+	if err := orgKeyRequest(cmd, gf, http.MethodGet, "/v1/organizations/current/routers/model-catalog", nil, &resp); err != nil {
+		return nil, err
+	}
+	defaults := map[string]string{}
+	for _, group := range resp.Groups {
+		for _, model := range group.Models {
+			provider := strings.ToLower(strings.TrimSpace(model.DefaultProvider))
+			if provider == "" {
+				provider = strings.ToLower(strings.TrimSpace(model.Provider))
+			}
+			if model.ID == "" || provider == "" {
+				continue
+			}
+			if _, exists := defaults[model.ID]; !exists || model.DefaultProvider != "" {
+				defaults[model.ID] = provider
+			}
+		}
+	}
+	return defaults, nil
+}
+
+func (manifest routerCreateManifest) createRequest(path string, resolveCatalogDefaults func() (map[string]string, error)) (routerCreateRequest, error) {
 	name := strings.TrimSpace(manifest.Name)
 	if name == "" {
 		return routerCreateRequest{}, fmt.Errorf("%s: name is required", path)
@@ -462,6 +504,10 @@ func (manifest routerCreateManifest) createRequest(path string) (routerCreateReq
 	if len(models) == 0 {
 		return routerCreateRequest{}, fmt.Errorf("%s: enabled_models must contain at least one model", path)
 	}
+	modelProviders, err := cleanModelProviders(path, manifest.ModelProviders, models)
+	if err != nil {
+		return routerCreateRequest{}, err
+	}
 	providerKeys, err := manifestProviderKeys(path, manifest.ProviderKeys, manifest.ProviderKeyEnvs)
 	if err != nil {
 		return routerCreateRequest{}, err
@@ -470,7 +516,7 @@ func (manifest routerCreateManifest) createRequest(path string) (routerCreateReq
 	if err != nil {
 		return routerCreateRequest{}, err
 	}
-	if err := validateManifestProviderKeys(path, providerKeySources, providerKeys, models); err != nil {
+	if err := validateManifestProviderKeys(path, providerKeySources, providerKeys, models, modelProviders, resolveCatalogDefaults); err != nil {
 		return routerCreateRequest{}, err
 	}
 	modelThinkingLevels, err := normalizeManifestModelThinkingLevels(
@@ -507,8 +553,9 @@ func (manifest routerCreateManifest) createRequest(path string) (routerCreateReq
 		return routerCreateRequest{}, err
 	}
 	body := routerCreateRequest{
-		Name:          name,
-		EnabledModels: models,
+		Name:           name,
+		EnabledModels:  models,
+		ModelProviders: modelProviders,
 	}
 	if len(providerKeys) > 0 {
 		body.ProviderKeys = providerKeys
@@ -593,10 +640,68 @@ func cleanProviderKeySources(path string, rawSources map[string]string) (map[str
 	return sources, nil
 }
 
-func validateManifestProviderKeys(path string, sources, keys map[string]string, models []string) error {
-	providers, err := providersForRouterModels(path, models)
+func cleanModelProviders(path string, raw map[string]string, models []string) (map[string]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	enabled := map[string]bool{}
+	for _, model := range models {
+		enabled[model] = true
+	}
+	cleaned := map[string]string{}
+	for rawModel, rawProvider := range raw {
+		model := strings.TrimSpace(rawModel)
+		provider := strings.ToLower(strings.TrimSpace(rawProvider))
+		if !enabled[model] {
+			return nil, fmt.Errorf("%s: model_providers.%s is not in enabled_models", path, model)
+		}
+		if provider == "" {
+			return nil, fmt.Errorf("%s: model_providers.%s must be non-empty", path, model)
+		}
+		if _, exists := cleaned[model]; exists {
+			return nil, fmt.Errorf("%s: model_providers defines model %s more than once", path, model)
+		}
+		cleaned[model] = provider
+	}
+	if len(cleaned) != len(enabled) {
+		return nil, fmt.Errorf("%s: model_providers must contain every enabled_models entry", path)
+	}
+	return cleaned, nil
+}
+
+// validateManifestProviderKeys validates provider key declarations against the
+// providers the enabled models resolve to. Without explicit model_providers it
+// first assumes each model's namespace serves it; only when that fails does it
+// consult the catalog defaults (a network call on the create path), because
+// owner-namespace models (deepseek-ai/…) do not name their serving provider.
+func validateManifestProviderKeys(path string, sources, keys map[string]string, models []string, modelProviders map[string]string, resolveCatalogDefaults func() (map[string]string, error)) error {
+	err := validateManifestProviderKeysWith(path, sources, keys, models, modelProviders, nil)
+	if err == nil || len(modelProviders) > 0 || resolveCatalogDefaults == nil {
+		return err
+	}
+	catalogDefaults, fetchErr := resolveCatalogDefaults()
+	if fetchErr != nil {
+		return errors.Join(err, fmt.Errorf("resolving default providers from the model catalog also failed (declare model_providers in %s): %w", path, fetchErr))
+	}
+	if len(catalogDefaults) == 0 {
+		return err
+	}
+	return validateManifestProviderKeysWith(path, sources, keys, models, modelProviders, catalogDefaults)
+}
+
+func validateManifestProviderKeysWith(path string, sources, keys map[string]string, models []string, modelProviders map[string]string, catalogDefaults map[string]string) error {
+	// Always resolves, even when model_providers overrides the result below:
+	// it also rejects enabled_models entries without a provider-prefixed shape.
+	providers, err := providersForRouterModels(path, models, catalogDefaults)
 	if err != nil {
 		return err
+	}
+	if len(modelProviders) > 0 {
+		// cleanModelProviders guarantees a non-empty provider per enabled model.
+		providers = make([]string, 0, len(models))
+		for _, model := range models {
+			providers = append(providers, modelProviders[model])
+		}
 	}
 	expected := map[string]bool{}
 	for _, provider := range providers {
@@ -639,26 +744,36 @@ func validateManifestProviderKeys(path string, sources, keys map[string]string, 
 	return nil
 }
 
-// Manifest validation is intentionally offline. Built-in router providers need
+// Structural manifest validation stays offline; only default-provider
+// resolution may consult the model catalog. Built-in router providers need
 // manifest-managed key selection, while org custom model providers resolve their
 // credentials from the model catalog and may omit manifest provider key fields.
 func manifestProviderUsesManifestCredentials(provider string) bool {
 	switch provider {
-	case "anthropic", "baseten", "fireworks", "openai":
+	case "anthropic", "baseten", "fireworks", "openai", "openrouter", "xai":
 		return true
 	default:
 		return false
 	}
 }
 
-func providersForRouterModels(path string, models []string) ([]string, error) {
+// providersForRouterModels resolves each model's execution provider when the
+// manifest declares no model_providers. Catalog defaults win because canonical
+// model ids carry the owner's namespace (deepseek-ai/…), which is not
+// necessarily the serving provider; the namespace covers models the catalog
+// does not know (org custom models).
+func providersForRouterModels(path string, models []string, catalogDefaults map[string]string) ([]string, error) {
 	seen := map[string]bool{}
 	providers := []string{}
 	for _, model := range models {
-		provider, _, ok := strings.Cut(model, "/")
-		provider = strings.ToLower(provider)
-		if !ok || provider == "" {
+		namespace, _, ok := strings.Cut(model, "/")
+		namespace = strings.ToLower(namespace)
+		if !ok || namespace == "" {
 			return nil, fmt.Errorf("%s: enabled_models entry %s must be a provider-prefixed model ID like openai/gpt-5.5", path, model)
+		}
+		provider := namespace
+		if fromCatalog := catalogDefaults[model]; fromCatalog != "" {
+			provider = fromCatalog
 		}
 		if seen[provider] {
 			continue

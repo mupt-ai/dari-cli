@@ -311,6 +311,11 @@ provider_key_sources:
 
 	var body map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-catalog" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"groups":[]}`))
+			return
+		}
 		raw, _ := io.ReadAll(r.Body)
 		if err := json.Unmarshal(raw, &body); err != nil {
 			t.Fatalf("decode body: %v", err)
@@ -353,6 +358,11 @@ routing_strategy: slm
 
 	var body map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-catalog" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"groups":[]}`))
+			return
+		}
 		raw, _ := io.ReadAll(r.Body)
 		if err := json.Unmarshal(raw, &body); err != nil {
 			t.Fatalf("decode body: %v", err)
@@ -656,6 +666,14 @@ custom_config:
 				t.Fatalf("write manifest: %v", err)
 			}
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Provider-mismatch validation may consult the model catalog
+				// for default providers; an invalid manifest must still never
+				// reach the create endpoint.
+				if r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-catalog" {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"groups":[]}`))
+					return
+				}
 				t.Fatalf("unexpected API request %s %s", r.Method, r.URL.Path)
 			}))
 			defer srv.Close()
@@ -685,6 +703,11 @@ routing_strategy: SLM
 
 	var body map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-catalog" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"groups":[]}`))
+			return
+		}
 		raw, _ := io.ReadAll(r.Body)
 		if err := json.Unmarshal(raw, &body); err != nil {
 			t.Fatalf("decode body: %v", err)
@@ -750,6 +773,11 @@ provider_key_sources:
 
 			var body map[string]any
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-catalog" {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"groups":[]}`))
+					return
+				}
 				raw, _ := io.ReadAll(r.Body)
 				if err := json.Unmarshal(raw, &body); err != nil {
 					t.Fatalf("decode body: %v", err)

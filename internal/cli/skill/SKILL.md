@@ -74,7 +74,7 @@ custom_config:
     - when: planning and architecture
       use: openai/gpt-5.6-sol
       thinking_level: high
-  default: fireworks/deepseek-ai/DeepSeek-V4-Flash-0731
+  default: deepseek-ai/DeepSeek-V4-Flash-0731
   default_thinking_level: off
 ```
 
@@ -83,7 +83,7 @@ When `model_thinking_levels` is present, it must list every enabled model:
 ```yaml
 model_thinking_levels:
   openai/gpt-5.6-sol: [low, medium, high]
-  fireworks/deepseek-ai/DeepSeek-V4-Flash-0731: [off]
+  deepseek-ai/DeepSeek-V4-Flash-0731: [off]
 ```
 
 ## Evals
