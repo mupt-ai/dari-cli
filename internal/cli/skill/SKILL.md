@@ -38,6 +38,17 @@ dari router create ./router.yml
 
 The command accepts a file or a directory containing `router.yml` or `router.yaml`. The CLI strictly parses and validates the manifest before sending it to the managed API.
 
+Models default to the provider shown by `dari router models`; the CLI resolves those defaults from the model catalog during create. Bind a model to a different provider with `model_providers` (when present, it must cover every enabled model):
+
+```yaml
+enabled_models:
+  - openai/gpt-5.6-sol
+  - zai-org/GLM-5.2
+model_providers:
+  openai/gpt-5.6-sol: openai
+  zai-org/GLM-5.2: fireworks
+```
+
 ## Provider Keys
 
 Use Dari-managed keys when available:
