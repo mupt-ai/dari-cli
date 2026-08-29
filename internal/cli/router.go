@@ -97,25 +97,27 @@ type routerCustomConfig struct {
 }
 
 type routerCreateRequest struct {
-	Name                string              `json:"name"`
-	EnabledModels       []string            `json:"enabled_models"`
-	ModelProviders      map[string]string   `json:"model_providers,omitempty"`
-	ProviderKeys        map[string]string   `json:"provider_keys,omitempty"`
-	ProviderKeySources  map[string]string   `json:"provider_key_sources,omitempty"`
-	EvalIDs             []string            `json:"eval_ids,omitempty"`
-	RoutingStrategy     string              `json:"routing_strategy,omitempty"`
-	CustomConfig        *routerCustomConfig `json:"custom_config,omitempty"`
-	ModelThinkingLevels map[string][]string `json:"model_thinking_levels,omitempty"`
-	FastModels          []string            `json:"fast_models,omitempty"`
+	Name                  string              `json:"name"`
+	EnabledModels         []string            `json:"enabled_models"`
+	ModelProviders        map[string]string   `json:"model_providers,omitempty"`
+	ProviderKeys          map[string]string   `json:"provider_keys,omitempty"`
+	ProviderCredentialIDs map[string]string   `json:"provider_credential_ids,omitempty"`
+	ProviderKeySources    map[string]string   `json:"provider_key_sources,omitempty"`
+	EvalIDs               []string            `json:"eval_ids,omitempty"`
+	RoutingStrategy       string              `json:"routing_strategy,omitempty"`
+	CustomConfig          *routerCustomConfig `json:"custom_config,omitempty"`
+	ModelThinkingLevels   map[string][]string `json:"model_thinking_levels,omitempty"`
+	FastModels            []string            `json:"fast_models,omitempty"`
 }
 
 type routerUpdateRequest struct {
-	Name               string            `json:"name"`
-	EnabledModels      []string          `json:"enabled_models"`
-	ProviderKeys       map[string]string `json:"provider_keys,omitempty"`
-	ProviderKeySources map[string]string `json:"provider_key_sources,omitempty"`
-	EvalIDs            *[]string         `json:"eval_ids,omitempty"`
-	RoutingStrategy    string            `json:"routing_strategy,omitempty"`
+	Name                  string            `json:"name"`
+	EnabledModels         []string          `json:"enabled_models"`
+	ProviderKeys          map[string]string `json:"provider_keys,omitempty"`
+	ProviderCredentialIDs map[string]string `json:"provider_credential_ids,omitempty"`
+	ProviderKeySources    map[string]string `json:"provider_key_sources,omitempty"`
+	EvalIDs               *[]string         `json:"eval_ids,omitempty"`
+	RoutingStrategy       string            `json:"routing_strategy,omitempty"`
 }
 
 type routerCurrent struct {
@@ -125,28 +127,30 @@ type routerCurrent struct {
 }
 
 type routerCreateManifest struct {
-	Name                string              `yaml:"name"`
-	EnabledModels       []string            `yaml:"enabled_models"`
-	ModelProviders      map[string]string   `yaml:"model_providers"`
-	ProviderKeys        map[string]string   `yaml:"provider_keys"`
-	ProviderKeyEnvs     map[string]string   `yaml:"provider_key_envs"`
-	ProviderKeySources  map[string]string   `yaml:"provider_key_sources"`
-	EvalIDs             []string            `yaml:"eval_ids"`
-	RoutingStrategy     string              `yaml:"routing_strategy"`
-	CustomConfig        *routerCustomConfig `yaml:"custom_config"`
-	ModelThinkingLevels map[string][]string `yaml:"model_thinking_levels"`
-	FastModels          []string            `yaml:"fast_models"`
+	Name                  string              `yaml:"name"`
+	EnabledModels         []string            `yaml:"enabled_models"`
+	ModelProviders        map[string]string   `yaml:"model_providers"`
+	ProviderKeys          map[string]string   `yaml:"provider_keys"`
+	ProviderKeyEnvs       map[string]string   `yaml:"provider_key_envs"`
+	ProviderCredentialIDs map[string]string   `yaml:"provider_credential_ids"`
+	ProviderKeySources    map[string]string   `yaml:"provider_key_sources"`
+	EvalIDs               []string            `yaml:"eval_ids"`
+	RoutingStrategy       string              `yaml:"routing_strategy"`
+	CustomConfig          *routerCustomConfig `yaml:"custom_config"`
+	ModelThinkingLevels   map[string][]string `yaml:"model_thinking_levels"`
+	FastModels            []string            `yaml:"fast_models"`
 }
 
 type routerConfigFlags struct {
-	models             []string
-	providerKeyPairs   []string
-	providerKeyEnvs    []string
-	managedKeyProvider []string
-	evalIDs            []string
-	clearEvals         bool
-	strategy           string
-	flagNames          []string
+	models              []string
+	providerKeyPairs    []string
+	providerKeyEnvs     []string
+	providerCredentials []string
+	managedKeyProvider  []string
+	evalIDs             []string
+	clearEvals          bool
+	strategy            string
+	flagNames           []string
 }
 
 func (rf *routerConfigFlags) register(cmd *cobra.Command) {
@@ -159,6 +163,7 @@ func (rf *routerConfigFlags) register(cmd *cobra.Command) {
 	cmd.Flags().StringSliceVar(&rf.models, name("model"), nil, "Enabled model ID (repeatable or comma-separated); run 'dari router models' for the catalog")
 	cmd.Flags().StringArrayVar(&rf.providerKeyPairs, name("provider-key"), nil, "Provider API key as provider=KEY, e.g. fireworks=sk-... (repeatable)")
 	cmd.Flags().StringArrayVar(&rf.providerKeyEnvs, name("provider-key-env"), nil, "Read a provider API key from the local environment as provider=ENV_VAR (repeatable)")
+	cmd.Flags().StringArrayVar(&rf.providerCredentials, name("provider-credential"), nil, "Use a saved provider credential as provider=CREDENTIAL_ID (repeatable)")
 	cmd.Flags().StringSliceVar(&rf.managedKeyProvider, name("managed-key"), nil, "Use the Dari-managed key for this provider (repeatable or comma-separated)")
 	cmd.Flags().StringSliceVar(&rf.evalIDs, name("eval"), nil, "Eval scorecard ID to import (repeatable or comma-separated); run 'dari eval list' for IDs")
 	cmd.Flags().StringVar(&rf.strategy, name("strategy"), "", "Routing strategy: slm; use a manifest for custom rules")
@@ -175,6 +180,7 @@ func (rf *routerConfigFlags) providerKeys(stderr io.Writer) (map[string]string, 
 		if err != nil {
 			return nil, err
 		}
+		provider = strings.ToLower(provider)
 		fmt.Fprintln(stderr, "Warning: passing provider keys on the command line can expose them via shell history and process arguments; prefer --provider-key-env.")
 		keys[provider] = value
 	}
@@ -183,6 +189,7 @@ func (rf *routerConfigFlags) providerKeys(stderr io.Writer) (map[string]string, 
 		if err != nil {
 			return nil, err
 		}
+		provider = strings.ToLower(provider)
 		value := os.Getenv(envName)
 		if strings.TrimSpace(value) == "" {
 			return nil, fmt.Errorf("--provider-key-env %s: environment variable %s is empty or unset", pair, envName)
@@ -198,9 +205,28 @@ func (rf *routerConfigFlags) providerKeySources() map[string]string {
 	}
 	sources := map[string]string{}
 	for _, provider := range rf.managedKeyProvider {
-		sources[strings.TrimSpace(provider)] = "managed"
+		sources[strings.ToLower(strings.TrimSpace(provider))] = "managed"
 	}
 	return sources
+}
+
+func (rf *routerConfigFlags) providerCredentialIDs() (map[string]string, error) {
+	if len(rf.providerCredentials) == 0 {
+		return nil, nil
+	}
+	ids := map[string]string{}
+	for _, pair := range rf.providerCredentials {
+		provider, credentialID, err := splitPair(pair, "--provider-credential", "provider=CREDENTIAL_ID")
+		if err != nil {
+			return nil, err
+		}
+		provider = strings.ToLower(provider)
+		if existing, exists := ids[provider]; exists && existing != credentialID {
+			return nil, fmt.Errorf("--provider-credential defines provider %s more than once", provider)
+		}
+		ids[provider] = credentialID
+	}
+	return ids, nil
 }
 
 func newRouterCreateCmd(gf *globalFlags) *cobra.Command {
@@ -242,7 +268,18 @@ func newRouterCreateCmd(gf *globalFlags) *cobra.Command {
 			if len(keys) > 0 {
 				body.ProviderKeys = keys
 			}
-			if sources := rf.providerKeySources(); sources != nil {
+			credentialIDs, err := rf.providerCredentialIDs()
+			if err != nil {
+				return err
+			}
+			if len(credentialIDs) > 0 {
+				body.ProviderCredentialIDs = credentialIDs
+			}
+			sources := rf.providerKeySources()
+			if err := validateProviderCredentialSelections(keys, credentialIDs, sources); err != nil {
+				return err
+			}
+			if sources != nil {
 				body.ProviderKeySources = sources
 			}
 			if len(rf.evalIDs) > 0 {
@@ -318,7 +355,18 @@ func newRouterUpdateCmd(gf *globalFlags) *cobra.Command {
 			if len(keys) > 0 {
 				body.ProviderKeys = keys
 			}
-			if sources := rf.providerKeySources(); sources != nil {
+			credentialIDs, err := rf.providerCredentialIDs()
+			if err != nil {
+				return err
+			}
+			if len(credentialIDs) > 0 {
+				body.ProviderCredentialIDs = credentialIDs
+			}
+			sources := rf.providerKeySources()
+			if err := validateProviderCredentialSelections(keys, credentialIDs, sources); err != nil {
+				return err
+			}
+			if sources != nil {
 				body.ProviderKeySources = sources
 			}
 			switch {
@@ -346,6 +394,18 @@ func newRouterUpdateCmd(gf *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "Rename the router")
 	cmd.Flags().BoolVar(&rf.clearEvals, "clear-evals", false, "Remove all imported eval scorecards")
 	return cmd
+}
+
+func validateProviderCredentialSelections(keys, credentialIDs, sources map[string]string) error {
+	for provider := range credentialIDs {
+		if strings.TrimSpace(keys[provider]) != "" {
+			return fmt.Errorf("provider %s cannot use both --provider-credential and an inline provider key", provider)
+		}
+		if sources[provider] == "managed" {
+			return fmt.Errorf("provider %s cannot use both --provider-credential and --managed-key", provider)
+		}
+	}
+	return nil
 }
 
 func newRouterDeleteCmd(gf *globalFlags) *cobra.Command {
@@ -516,7 +576,25 @@ func (manifest routerCreateManifest) createRequest(path string, resolveCatalogDe
 	if err != nil {
 		return routerCreateRequest{}, err
 	}
-	if err := validateManifestProviderKeys(path, providerKeySources, providerKeys, models, modelProviders, resolveCatalogDefaults); err != nil {
+	providerCredentialIDs, err := cleanProviderCredentialIDs(path, manifest.ProviderCredentialIDs, providerKeys, providerKeySources)
+	if err != nil {
+		return routerCreateRequest{}, err
+	}
+	validationKeys := make(map[string]string, len(providerKeys)+len(providerCredentialIDs))
+	validationSources := make(map[string]string, len(providerKeySources)+len(providerCredentialIDs))
+	for provider, source := range providerKeySources {
+		validationSources[provider] = source
+	}
+	for provider, value := range providerKeys {
+		validationKeys[provider] = value
+	}
+	for provider := range providerCredentialIDs {
+		validationKeys[provider] = "saved-credential"
+		if validationSources[provider] == "" {
+			validationSources[provider] = "user"
+		}
+	}
+	if err := validateManifestProviderKeys(path, validationSources, validationKeys, models, modelProviders, resolveCatalogDefaults); err != nil {
 		return routerCreateRequest{}, err
 	}
 	modelThinkingLevels, err := normalizeManifestModelThinkingLevels(
@@ -560,6 +638,9 @@ func (manifest routerCreateManifest) createRequest(path string, resolveCatalogDe
 	if len(providerKeys) > 0 {
 		body.ProviderKeys = providerKeys
 	}
+	if len(providerCredentialIDs) > 0 {
+		body.ProviderCredentialIDs = providerCredentialIDs
+	}
 	if len(providerKeySources) > 0 {
 		body.ProviderKeySources = providerKeySources
 	}
@@ -573,6 +654,28 @@ func (manifest routerCreateManifest) createRequest(path string, resolveCatalogDe
 	body.ModelThinkingLevels = modelThinkingLevels
 	body.FastModels = fastModels
 	return body, nil
+}
+
+func cleanProviderCredentialIDs(path string, rawIDs, providerKeys, sources map[string]string) (map[string]string, error) {
+	ids := map[string]string{}
+	for rawProvider, rawID := range rawIDs {
+		provider := strings.ToLower(strings.TrimSpace(rawProvider))
+		credentialID := strings.TrimSpace(rawID)
+		if provider == "" || credentialID == "" {
+			return nil, fmt.Errorf("%s: provider_credential_ids entries must be provider: credential_id", path)
+		}
+		if _, exists := ids[provider]; exists {
+			return nil, fmt.Errorf("%s: provider_credential_ids defines provider %s more than once", path, provider)
+		}
+		if strings.TrimSpace(providerKeys[provider]) != "" {
+			return nil, fmt.Errorf("%s: provider %s cannot use both provider_credential_ids and inline provider keys", path, provider)
+		}
+		if sources[provider] == "managed" {
+			return nil, fmt.Errorf("%s: provider_credential_ids can only include providers marked as user; %s is managed", path, provider)
+		}
+		ids[provider] = credentialID
+	}
+	return ids, nil
 }
 
 func cleanRequiredStrings(values []string, path, field string) ([]string, error) {

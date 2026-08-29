@@ -66,7 +66,23 @@ routing_strategy: slm
 dari router create ./router.yml
 ```
 
-Keep BYOK values out of YAML by using `provider_key_envs`. Run `dari router models` first to see the current catalog.
+Save BYOK values once, then reference their stable IDs in router configuration:
+
+```bash
+printf '%s' "$OPENROUTER_API_KEY" | \
+  dari credentials provider add openrouter "OpenRouter Production" --value-stdin
+```
+
+```yaml
+name: OpenRouter Production
+enabled_models:
+  - openrouter/openai/gpt-5.6-sol
+provider_credential_ids:
+  openrouter: cred_...
+routing_strategy: slm
+```
+
+Use `dari credentials provider update` to change a saved credential without changing its ID. For AWS IAM credentials, pass only `--aws-region` to keep the stored keys, or include `--aws-access-key-id-env`, `--aws-secret-access-key-env`, and optional `--aws-session-token-env` to replace them. Run `dari router models` first to see the current catalog.
 
 Inspect and manage routers:
 
