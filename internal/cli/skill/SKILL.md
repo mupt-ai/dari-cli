@@ -99,7 +99,23 @@ model_thinking_levels:
 
 ## Evals
 
-List available scorecards and use their exact IDs:
+Create an organization scorecard from a CSV whose first two columns are `model_id,score`. Optional columns are `thinking_level`, `notes`, and `metadata_json`:
+
+```bash
+dari eval create --name "SWE-bench Verified" --file scores.csv
+```
+
+Each `(model_id, thinking_level)` pair must be unique. Use `--file -` to read the CSV from standard input.
+
+`model_id` values must be the exact provider-prefixed IDs from the router model catalog — run `dari router models` first and copy IDs from its output. Do not invent aliases, bare provider names, or IDs the catalog does not list:
+
+```csv
+model_id,score,thinking_level,notes
+openai/gpt-5.6-sol,87,high,Strong public run
+anthropic/claude-fable-5,81,,Generic score
+```
+
+Then list scorecards and use their exact IDs:
 
 ```bash
 dari eval list

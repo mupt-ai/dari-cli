@@ -15,6 +15,7 @@ func init() {
 			Short:   "Inspect eval scorecards for the current org",
 		}
 		cmd.AddCommand(
+			newEvalCreateCmd(gf),
 			newEvalListCmd(gf),
 			newEvalGetCmd(gf),
 		)

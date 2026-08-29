@@ -107,6 +107,26 @@ dari eval list
 dari eval get <eval_id>
 ```
 
+Create an eval scorecard from a CSV:
+
+```csv
+model_id,score,thinking_level,notes
+openai/gpt-5.6-sol,87,high,Strong public run
+openai/gpt-5.6-sol,82,off,Non-reasoning run
+anthropic/claude-fable-5,81,,Generic score
+```
+
+```bash
+dari eval create \
+  --name "SWE-bench Verified" \
+  --description "Public benchmark scores." \
+  --min-score 0 \
+  --max-score 100 \
+  --file scores.csv
+```
+
+`model_id` and `score` must be the first two columns. Optional columns are `thinking_level`, `notes`, and `metadata_json` (a JSON object). Each `(model_id, thinking_level)` pair must be unique. Use `--file -` to read the CSV from standard input.
+
 ## Agent Skill
 
 Print managed-router instructions for a coding agent:
