@@ -43,10 +43,10 @@ Models default to the provider shown by `dari router models`; the CLI resolves t
 ```yaml
 enabled_models:
   - openai/gpt-5.6-sol
-  - zai-org/GLM-5.2
+  - zai-org/GLM-5.3
 model_providers:
   openai/gpt-5.6-sol: openai
-  zai-org/GLM-5.2: fireworks
+  zai-org/GLM-5.3: fireworks
 ```
 
 ## Provider Keys
