@@ -36,6 +36,28 @@ dari router list
 
 Create Management and Routing keys with `dari api-keys create`. Management keys authenticate CLI and management API operations; Routing keys authenticate requests sent to router endpoints. Keys are shown once, so store them in a secret manager.
 
+## Coding Agents
+
+Launch an installed coding agent through your organization's default Dari Router:
+
+```bash
+dari --claude
+dari --codex
+dari --pi
+```
+
+The first launch creates and privately caches one Routing key after signing you in if needed. Dari then supplies the router endpoint and `dari/routing` model without overwriting the agent's own configuration. Set `DARI_ROUTING_API_KEY` to use an existing Routing key instead.
+
+Every argument after the launcher flag is forwarded to the agent. This includes interactive and non-interactive modes, prompts, and agent-specific flags:
+
+```bash
+dari --claude --print "Review this diff"
+dari --codex exec --sandbox workspace-write "Fix the failing tests"
+dari --pi --tools read,grep,find,ls -p "Review this repository"
+```
+
+The launcher selector must be the first argument. Dari-owned provider and model settings take precedence if conflicting agent flags are passed, so the process remains routed through Dari. The native agent executable must already be installed and available on `PATH`.
+
 ## Common Workflows
 
 Create a router from flags:

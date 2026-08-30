@@ -147,6 +147,24 @@ curl https://routing.dari.dev/rtr_.../chat/completions \
 
 The response is OpenAI-compatible and includes `dari_routing` metadata with the selected model and reasoning effort.
 
+## Launch A Coding Agent
+
+Use an installed local coding agent through the organization's default router without editing its configuration:
+
+```bash
+dari --claude
+dari --codex
+dari --pi
+```
+
+The first launch creates and privately caches a Routing key. Set `DARI_ROUTING_API_KEY` to supply one explicitly. Every following argument is forwarded to the selected agent, and Dari's provider/model settings take precedence:
+
+```bash
+dari --claude --print "Review this diff"
+dari --codex exec "Fix the failing tests"
+dari --pi -p "Review this repository"
+```
+
 ## Inspect, Update, Delete
 
 ```bash
