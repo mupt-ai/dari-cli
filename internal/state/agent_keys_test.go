@@ -48,6 +48,45 @@ func TestRoutingKeyRoundTripAndScopeIsolation(t *testing.T) {
 	}
 }
 
+func TestAgentRouterRoundTripAndScopeIsolation(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DARI_CONFIG_DIR", dir)
+	unsetXDG(t)
+
+	for scope, want := range map[string]string{
+		"api|org:one|agent:claude": "rtr_claude",
+		"api|org:one|agent:codex":  "rtr_default",
+	} {
+		if err := SaveAgentRouterID(scope, want); err != nil {
+			t.Fatal(err)
+		}
+		got, err := AgentRouterID(scope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Errorf("AgentRouterID(%q) = %q, want %q", scope, got, want)
+		}
+	}
+
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(filepath.Join(dir, agentKeysFilename))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Errorf("permissions = %o, want 600", got)
+		}
+	}
+}
+
+func TestSaveAgentRouterIDRejectsEmptyID(t *testing.T) {
+	t.Setenv("DARI_CONFIG_DIR", t.TempDir())
+	if err := SaveAgentRouterID("scope", ""); err == nil {
+		t.Fatal("SaveAgentRouterID accepted an empty ID")
+	}
+}
+
 func TestConcurrentRoutingKeyCreationIssuesOnce(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("DARI_CONFIG_DIR", dir)

@@ -12,8 +12,9 @@ import (
 const agentKeysFilename = "agent-keys.json"
 
 type agentKeysFile struct {
-	SchemaVersion int               `json:"schema_version"`
-	RoutingKeys   map[string]string `json:"routing_keys"`
+	SchemaVersion  int               `json:"schema_version"`
+	RoutingKeys    map[string]string `json:"routing_keys"`
+	AgentRouterIDs map[string]string `json:"agent_router_ids,omitempty"`
 }
 
 // EnsureRoutingKey returns the cached key for a launcher scope, or issues and
@@ -67,8 +68,9 @@ func loadAgentKeys(path string) (agentKeysFile, error) {
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return agentKeysFile{
-				SchemaVersion: SchemaVersion,
-				RoutingKeys:   map[string]string{},
+				SchemaVersion:  SchemaVersion,
+				RoutingKeys:    map[string]string{},
+				AgentRouterIDs: map[string]string{},
 			}, nil
 		}
 		return agentKeysFile{}, fmt.Errorf("read agent keys: %w", err)
@@ -84,7 +86,49 @@ func loadAgentKeys(path string) (agentKeysFile, error) {
 	if keys.RoutingKeys == nil {
 		keys.RoutingKeys = map[string]string{}
 	}
+	if keys.AgentRouterIDs == nil {
+		keys.AgentRouterIDs = map[string]string{}
+	}
 	return keys, nil
+}
+
+// AgentRouterID returns the router remembered for an agent scope.
+func AgentRouterID(scope string) (string, error) {
+	path, err := agentKeysPath()
+	if err != nil {
+		return "", err
+	}
+	keys, err := loadAgentKeys(path)
+	if err != nil {
+		return "", err
+	}
+	return keys.AgentRouterIDs[scope], nil
+}
+
+// SaveAgentRouterID atomically remembers the router for an agent scope.
+func SaveAgentRouterID(scope, routerID string) error {
+	if routerID == "" {
+		return errors.New("cannot cache an empty agent router ID")
+	}
+	path, err := agentKeysPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create state dir: %w", err)
+	}
+	unlock, err := lock(path + ".lock")
+	if err != nil {
+		return fmt.Errorf("lock agent keys: %w", err)
+	}
+	defer unlock()
+
+	keys, err := loadAgentKeys(path)
+	if err != nil {
+		return err
+	}
+	keys.AgentRouterIDs[scope] = routerID
+	return saveAgentKeys(path, keys)
 }
 
 func saveAgentKeys(path string, keys agentKeysFile) error {

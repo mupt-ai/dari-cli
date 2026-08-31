@@ -62,15 +62,25 @@ func runAgentLaunch(ctx context.Context, launch agentLaunch, stdin io.Reader, st
 	}
 
 	key := "unused"
+	routerID := "default"
 	if !onlyRequestsAgentInfo(launch.args) {
-		key, err = resolveAgentRoutingKey(ctx, stdin, stderr)
+		if launch.name == "pi" {
+			key, err = resolveAgentRoutingKey(ctx, stdin, stderr)
+		} else {
+			var access agentRoutingAccess
+			access, err = resolveAgentRoutingAccess(ctx, stdin, stderr)
+			if err == nil {
+				key = access.key
+				routerID, err = ensureAgentRouter(ctx, launch.name, access, stdin, stderr)
+			}
+		}
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
 	}
 
-	command, err := buildAgentCommand(path, launch, key)
+	command, err := buildAgentCommand(path, launch, key, routerID)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -135,6 +145,18 @@ func resolveAgentRoutingKey(ctx context.Context, stdin io.Reader, stderr io.Writ
 	scope, err := agentKeyScope(ctx, apiURL, stdin, stderr)
 	if err != nil {
 		return "", err
+	}
+	return resolveAgentRoutingKeyForScope(ctx, apiURL, scope, stderr)
+}
+
+func resolveAgentRoutingKeyForScope(
+	ctx context.Context,
+	apiURL string,
+	scope string,
+	stderr io.Writer,
+) (string, error) {
+	if key := strings.TrimSpace(os.Getenv(routingAPIKeyEnv)); key != "" {
+		return key, nil
 	}
 	key, created, err := state.EnsureRoutingKey(scope, func() (string, error) {
 		return createAgentRoutingKey(ctx, apiURL)
@@ -225,7 +247,7 @@ func issueAgentRoutingKey(ctx context.Context, apiURL string) (string, error) {
 	return issued.APIKey, err
 }
 
-func buildAgentCommand(path string, launch agentLaunch, key string) (agentCommand, error) {
+func buildAgentCommand(path string, launch agentLaunch, key, routerID string) (agentCommand, error) {
 	env := withEnvironment(os.Environ(), map[string]string{routingAPIKeyEnv: key})
 	var (
 		ownedArgs []string
@@ -234,8 +256,12 @@ func buildAgentCommand(path string, launch agentLaunch, key string) (agentComman
 
 	switch launch.name {
 	case "claude":
+		baseURL := routingBaseURL
+		if routerID != "" && routerID != "default" {
+			baseURL += "/" + routerID
+		}
 		env = withEnvironment(env, map[string]string{
-			"ANTHROPIC_BASE_URL":             routingBaseURL,
+			"ANTHROPIC_BASE_URL":             baseURL,
 			"ANTHROPIC_AUTH_TOKEN":           key,
 			"ANTHROPIC_API_KEY":              "",
 			"CLAUDE_CODE_EFFORT_LEVEL":       "auto",

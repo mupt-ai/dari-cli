@@ -149,7 +149,7 @@ The response is OpenAI-compatible and includes `dari_routing` metadata with the 
 
 ## Launch A Coding Agent
 
-Use an installed local coding agent through the organization's default router without editing its configuration:
+Use an installed local coding agent through Dari without editing the agent's configuration:
 
 ```bash
 dari --claude
@@ -157,7 +157,7 @@ dari --codex
 dari --pi
 ```
 
-The first launch creates and privately caches a Routing key. Set `DARI_ROUTING_API_KEY` to supply one explicitly. Every following argument is forwarded to the selected agent, and Dari's provider/model settings take precedence:
+The first Claude or Codex launch opens an arrow-key model checklist (up/down to move, space to toggle, right arrow to check any combination of thinking levels). Codex preserves the current default router selection unless it is changed; Claude gets a separate router with the recommended coding models preselected and the current default public eval set. Dari applies recommended reasoning levels and managed providers to selected models, then privately caches the agent router and Routing key. Set `DARI_ROUTING_API_KEY` to supply the key explicitly. Every following argument is forwarded to the selected agent, and Dari's provider/model settings take precedence:
 
 ```bash
 dari --claude --print "Review this diff"

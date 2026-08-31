@@ -38,7 +38,7 @@ Create Management and Routing keys with `dari api-keys create`. Management keys 
 
 ## Coding Agents
 
-Launch an installed coding agent through your organization's default Dari Router:
+Launch an installed coding agent through Dari:
 
 ```bash
 dari --claude
@@ -46,7 +46,9 @@ dari --codex
 dari --pi
 ```
 
-The first launch creates and privately caches one Routing key after signing you in if needed. Dari then supplies the router endpoint and `dari/routing` model without overwriting the agent's own configuration. Set `DARI_ROUTING_API_KEY` to use an existing Routing key instead.
+On first launch, Dari signs you in if needed and creates and privately caches one Routing key. The first Claude or Codex launch also opens an arrow-key model checklist: up/down moves, space toggles a model, and the right arrow opens its thinking levels, where any combination can be checked. Recommended defaults are preselected and clearly marked. Codex keeps your organization's default router and its current models unless you change the selection. Claude Code gets a separate router with Claude Fable 5, Claude Opus 5, and GLM 5.3 Flash preselected. Dari applies recommended reasoning levels and managed providers to selected models; the Claude router also uses the current default public eval set.
+
+Dari then supplies the appropriate router endpoint and `dari/routing` model without overwriting the agent's own configuration. Later launches start immediately. Set `DARI_ROUTING_API_KEY` to use an existing Routing key instead.
 
 Every argument after the launcher flag is forwarded to the agent. This includes interactive and non-interactive modes, prompts, and agent-specific flags:
 

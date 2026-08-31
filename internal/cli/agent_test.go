@@ -138,7 +138,7 @@ func TestBuildAgentCommandKeepsDariSettingsLast(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			command, err := buildAgentCommand("/agent", tt.launch, "dari_route")
+			command, err := buildAgentCommand("/agent", tt.launch, "dari_route", "default")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -165,6 +165,7 @@ func TestBuildAgentCommandInsertsSettingsBeforeDoubleDash(t *testing.T) {
 		"/claude",
 		agentLaunch{name: "claude", args: []string{"--print", "--", "--help"}},
 		"dari_route",
+		"default",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -183,6 +184,7 @@ func TestBuildPiAgentCommandUsesTemporaryProviderExtension(t *testing.T) {
 		"/pi",
 		agentLaunch{name: "pi", args: []string{"-p", "review"}},
 		"dari_route",
+		"default",
 	)
 	if err != nil {
 		t.Fatal(err)
