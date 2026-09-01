@@ -10,6 +10,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/mupt-ai/dari-cli/internal/api"
+	"github.com/mupt-ai/dari-cli/internal/state"
 )
 
 func TestSelectAgentModelsByNumberKeepsDefaultsOnEnter(t *testing.T) {
@@ -263,15 +266,30 @@ func TestAgentRouterCreateBodyUsesCurrentDefaultEvals(t *testing.T) {
 	body := agentRouterCreateBody(testAgentModels(), []agentModelChoice{
 		{ID: "anthropic/claude-fable-5", Levels: []string{"high"}},
 		{ID: "zai-org/GLM-5.3", Levels: []string{"high"}},
-	})
+	}, claudeRouterClientKey, true)
 	if !slices.Equal(body.EvalIDs, defaultAgentEvalIDs) {
 		t.Fatalf("eval_ids = %q, want %q", body.EvalIDs, defaultAgentEvalIDs)
 	}
-	if body.PersonalOAuthEnabled {
-		t.Error("personal OAuth is enabled")
+	if !body.PersonalOAuthEnabled {
+		t.Error("personal OAuth is disabled")
+	}
+	if body.PersonalOAuthFallbackEnabled {
+		t.Error("personal OAuth fallback is enabled")
 	}
 	if !slices.Equal(body.EnabledModels, []string{"anthropic/claude-fable-5", "zai-org/GLM-5.3"}) {
 		t.Errorf("enabled_models = %q", body.EnabledModels)
+	}
+	withoutSubscription := agentRouterCreateBody(testAgentModels(), []agentModelChoice{
+		{ID: "anthropic/claude-fable-5", Levels: []string{"high"}},
+	}, claudeManagedRouterClientKey, false)
+	if withoutSubscription.PersonalOAuthEnabled {
+		t.Error("personal OAuth is enabled after opt-out")
+	}
+	if withoutSubscription.ClientKey != claudeManagedRouterClientKey {
+		t.Errorf("managed client key = %q", withoutSubscription.ClientKey)
+	}
+	if withoutSubscription.Name != claudeManagedRouterName {
+		t.Errorf("managed router name = %q", withoutSubscription.Name)
 	}
 	if !slices.Equal(body.ModelThinkingLevels["anthropic/claude-fable-5"], []string{"high"}) {
 		t.Errorf("Fable levels = %q", body.ModelThinkingLevels["anthropic/claude-fable-5"])
@@ -290,6 +308,373 @@ func TestBuildClaudeAgentCommandTargetsAgentRouter(t *testing.T) {
 	}
 	if got := environmentValue(command.env, "ANTHROPIC_BASE_URL"); got != routingBaseURL+"/rtr_claude" {
 		t.Fatalf("ANTHROPIC_BASE_URL = %q", got)
+	}
+}
+
+func TestClaudeSubscriptionPreferenceScopeIncludesLoggedInUser(t *testing.T) {
+	t.Setenv("DARI_CONFIG_DIR", t.TempDir())
+	if err := state.Save(&state.CliState{
+		SupabaseSession: &state.SupabaseSession{UserID: "user_one"},
+		Organizations:   map[string]state.Organization{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	scope, err := claudeSubscriptionPreferenceScope("https://api.example.test|org:org_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "https://api.example.test|org:org_one|agent:claude|user:user_one"
+	if scope != want {
+		t.Fatalf("scope = %q, want %q", scope, want)
+	}
+}
+
+func TestClaudeSubscriptionPreferenceScopeKeepsAPIKeyScope(t *testing.T) {
+	t.Setenv("DARI_CONFIG_DIR", t.TempDir())
+	scope, err := claudeSubscriptionPreferenceScope("https://api.example.test|key:abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "https://api.example.test|key:abc|agent:claude"
+	if scope != want {
+		t.Fatalf("scope = %q, want %q", scope, want)
+	}
+}
+
+func TestResolveClaudePersonalSubscriptionUsesExistingConnection(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/organizations/current/credentials" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		writeClaudeSubscriptionCredential(w)
+	}))
+	defer server.Close()
+
+	var stderr strings.Builder
+	resolution, err := resolveClaudePersonalSubscription(
+		context.Background(),
+		api.New(server.URL),
+		strings.NewReader("n\n"),
+		&stderr,
+		true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resolution.enabled || !resolution.decided || !resolution.preferenceChanged {
+		t.Fatalf("resolution = %#v, want enabled with cleared opt-out", resolution)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected prompt: %q", stderr.String())
+	}
+}
+
+func TestResolveClaudePersonalSubscriptionDefaultsToConnect(t *testing.T) {
+	var completed map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
+			_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/organizations/current/credentials/oauth/sessions":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			if got := body["provider"]; got != "anthropic_claude_code" {
+				t.Errorf("provider = %#v", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"session_token":     "oauth_session",
+				"authorization_url": "https://claude.example.test/authorize",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/organizations/current/credentials/oauth/sessions/complete":
+			if err := json.NewDecoder(r.Body).Decode(&completed); err != nil {
+				t.Error(err)
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	originalOpenBrowser := openAgentBrowser
+	openAgentBrowser = func(string) bool { return false }
+	t.Cleanup(func() { openAgentBrowser = originalOpenBrowser })
+
+	var stderr strings.Builder
+	resolution, err := resolveClaudePersonalSubscription(
+		context.Background(),
+		api.New(server.URL),
+		strings.NewReader("\nhttp://localhost:53692/callback?code=test&state=test\n"),
+		&stderr,
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resolution.enabled || !resolution.decided || !resolution.preferenceChanged {
+		t.Fatalf("resolution = %#v, want enabled from default answer", resolution)
+	}
+	if got := completed["session_token"]; got != "oauth_session" {
+		t.Errorf("session_token = %#v", got)
+	}
+	if got := completed["authorization_response"]; got != "http://localhost:53692/callback?code=test&state=test" {
+		t.Errorf("authorization_response = %#v", got)
+	}
+	for _, text := range []string{
+		"Use your Claude Code personal subscription? [Y/n]",
+		"Open this URL to connect your Claude Code subscription",
+		"Connected your Claude Code personal subscription.",
+	} {
+		if !strings.Contains(stderr.String(), text) {
+			t.Errorf("stderr missing %q:\n%s", text, stderr.String())
+		}
+	}
+}
+
+func TestResolveClaudePersonalSubscriptionCompletesBrowserCallback(t *testing.T) {
+	var completed map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/organizations/current/credentials":
+			_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}})
+		case "/v1/organizations/current/credentials/oauth/sessions":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"session_token":     "oauth_session",
+				"authorization_url": "https://claude.example.test/authorize",
+			})
+		case "/v1/organizations/current/credentials/oauth/sessions/complete":
+			if err := json.NewDecoder(r.Body).Decode(&completed); err != nil {
+				t.Error(err)
+			}
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	originalOpenBrowser := openAgentBrowser
+	openAgentBrowser = func(string) bool {
+		response, err := http.Get("http://" + claudeOAuthCallbackAddress + "/callback?code=test&state=test")
+		if err != nil {
+			t.Error(err)
+			return false
+		}
+		response.Body.Close()
+		return true
+	}
+	t.Cleanup(func() { openAgentBrowser = originalOpenBrowser })
+
+	resolution, err := resolveClaudePersonalSubscription(
+		context.Background(),
+		api.New(server.URL),
+		strings.NewReader("\n"),
+		io.Discard,
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resolution.enabled {
+		t.Fatal("browser callback did not enable personal subscriptions")
+	}
+	if got := completed["authorization_response"]; got != "http://localhost:53692/callback?code=test&state=test" {
+		t.Errorf("authorization_response = %#v", got)
+	}
+}
+
+func TestResolveClaudePersonalSubscriptionAllowsImmediatePastedCallback(t *testing.T) {
+	var completed map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/organizations/current/credentials":
+			_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}})
+		case "/v1/organizations/current/credentials/oauth/sessions":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"session_token":     "oauth_session",
+				"authorization_url": "https://claude.example.test/authorize",
+			})
+		case "/v1/organizations/current/credentials/oauth/sessions/complete":
+			if err := json.NewDecoder(r.Body).Decode(&completed); err != nil {
+				t.Error(err)
+			}
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	originalOpenBrowser := openAgentBrowser
+	openAgentBrowser = func(string) bool { return true }
+	t.Cleanup(func() { openAgentBrowser = originalOpenBrowser })
+
+	var stderr strings.Builder
+	resolution, err := resolveClaudePersonalSubscription(
+		context.Background(),
+		api.New(server.URL),
+		strings.NewReader("\nhttp://localhost:53692/callback?code=pasted&state=test\n"),
+		&stderr,
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resolution.enabled {
+		t.Fatal("pasted callback did not enable personal subscriptions")
+	}
+	if got := completed["authorization_response"]; got != "http://localhost:53692/callback?code=pasted&state=test" {
+		t.Errorf("authorization_response = %#v", got)
+	}
+	if !strings.Contains(stderr.String(), "Paste localhost callback URL") {
+		t.Fatalf("stderr does not offer immediate paste input:\n%s", stderr.String())
+	}
+}
+
+func TestClaudeOAuthTUIUsesAgentPickerStyles(t *testing.T) {
+	output := strings.Join(claudeOAuthLines("https://claude.example.test/authorize", true, 80), "\n")
+	output += strings.Join(agentChoiceLines(
+		agentBannerLines("Connect Claude Code"),
+		"Complete Authorization",
+		[]agentChoiceOption{
+			{label: "Wait for automatic callback", note: "same-machine browser"},
+			{label: "Paste localhost callback URL", note: "remote browser"},
+		},
+		1,
+	), "\n")
+
+	for _, text := range []string{
+		dariBanner,
+		"Connect Claude Code",
+		ansiCoral,
+		ansiCyan,
+		ansiGreen,
+		"Anthropic login opened in your browser",
+		"Paste localhost callback URL",
+	} {
+		if !strings.Contains(output, text) {
+			t.Errorf("styled OAuth output missing %q:\n%s", text, output)
+		}
+	}
+}
+
+func TestClaudeCallbackInputIgnoresSplitTerminalEscapes(t *testing.T) {
+	input := claudeCallbackInputState{}
+	chunks := [][]byte{
+		[]byte("\x1b["),
+		[]byte("A\x1b[20"),
+		[]byte("0~http://localhost:53692/callback?code=test&state=test\x1b[2"),
+		[]byte("01~\r"),
+	}
+	var submitted, canceled bool
+	for _, chunk := range chunks {
+		submitted, canceled = input.update(chunk)
+	}
+	if !submitted || canceled {
+		t.Fatalf("submitted = %t, canceled = %t", submitted, canceled)
+	}
+	if want := "http://localhost:53692/callback?code=test&state=test"; input.value != want {
+		t.Fatalf("input = %q, want %q", input.value, want)
+	}
+}
+
+func TestClaudeCallbackInputCtrlCCancels(t *testing.T) {
+	input := claudeCallbackInputState{value: "partial"}
+	submitted, canceled := input.update([]byte{0x03})
+	if input.value != "partial" || submitted || !canceled {
+		t.Fatalf("input = %q, submitted = %t, canceled = %t", input.value, submitted, canceled)
+	}
+}
+
+func TestResolveClaudePersonalSubscriptionDoesNotDefaultOnEOF(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/organizations/current/credentials" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}})
+	}))
+	defer server.Close()
+
+	resolution, err := resolveClaudePersonalSubscription(
+		context.Background(),
+		api.New(server.URL),
+		strings.NewReader(""),
+		io.Discard,
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolution.enabled || resolution.decided || resolution.preferenceChanged {
+		t.Fatalf("resolution = %#v, want no decision on EOF", resolution)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want credentials request only", requests)
+	}
+}
+
+func TestResolveClaudePersonalSubscriptionPreservesOptOut(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/organizations/current/credentials" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}})
+	}))
+	defer server.Close()
+
+	var stderr strings.Builder
+	resolution, err := resolveClaudePersonalSubscription(
+		context.Background(),
+		api.New(server.URL),
+		strings.NewReader("\n"),
+		&stderr,
+		true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolution.enabled || !resolution.decided || resolution.preferenceChanged {
+		t.Fatalf("resolution = %#v, want persisted opt-out", resolution)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected prompt after persisted opt-out: %q", stderr.String())
+	}
+}
+
+func TestResolveClaudePersonalSubscriptionAllowsOptOut(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/organizations/current/credentials" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}})
+	}))
+	defer server.Close()
+
+	resolution, err := resolveClaudePersonalSubscription(
+		context.Background(),
+		api.New(server.URL),
+		strings.NewReader("n\n"),
+		io.Discard,
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolution.enabled || !resolution.decided || !resolution.preferenceChanged {
+		t.Fatalf("resolution = %#v, want saved opt-out", resolution)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
 	}
 }
 
@@ -314,6 +699,8 @@ func TestEnsureClaudeAgentRouterCreatesSeparateRouter(t *testing.T) {
 					"name": claudeRouterName,
 				},
 			}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
+			writeClaudeSubscriptionCredential(w)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-catalog":
 			writeAgentModelCatalog(t, w)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/organizations/current/routers":
@@ -349,6 +736,12 @@ func TestEnsureClaudeAgentRouterCreatesSeparateRouter(t *testing.T) {
 	if got := created["client_key"]; got != claudeRouterClientKey {
 		t.Errorf("client_key = %#v", got)
 	}
+	if got := created["personal_oauth_enabled"]; got != true {
+		t.Errorf("personal_oauth_enabled = %#v", got)
+	}
+	if got := created["personal_oauth_fallback_enabled"]; got != false {
+		t.Errorf("personal_oauth_fallback_enabled = %#v", got)
+	}
 	if got := stringSlice(created["enabled_models"]); !slices.Equal(got, []string{
 		"anthropic/claude-fable-5",
 		"anthropic/claude-opus-5",
@@ -371,19 +764,229 @@ func TestEnsureClaudeAgentRouterCreatesSeparateRouter(t *testing.T) {
 	}
 }
 
-func TestEnsureClaudeAgentRouterReusesClientKeyAfterRename(t *testing.T) {
-	var requests int
+func TestEnsureClaudeAgentRouterUsesManagedRouterAfterOptOut(t *testing.T) {
+	var created map[string]any
+	var putRequests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		if r.Method != http.MethodGet || r.URL.Path != "/v1/organizations/current/routers" {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers":
+			_ = json.NewEncoder(w).Encode(map[string]any{"routers": []map[string]any{
+				{
+					"id":                    "rtr_default",
+					"name":                  "Default",
+					"is_default":            true,
+					"enabled_models":        []string{"openai/gpt-5.6-sol"},
+					"model_thinking_levels": map[string][]string{"openai/gpt-5.6-sol": {"medium"}},
+				},
+				{
+					"id":                              "rtr_personal",
+					"name":                            claudeRouterName,
+					"client_key":                      claudeRouterClientKey,
+					"personal_oauth_enabled":          true,
+					"personal_oauth_fallback_enabled": false,
+				},
+			}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
+			_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-catalog":
+			writeAgentModelCatalog(t, w)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/organizations/current/routers":
+			if err := json.NewDecoder(r.Body).Decode(&created); err != nil {
+				t.Error(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "rtr_managed", "name": claudeManagedRouterName})
+		case r.Method == http.MethodPut:
+			putRequests++
+		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
-			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"routers": []map[string]any{
-			{"id": "rtr_default", "name": "Default", "is_default": true},
-			{"id": "rtr_claude", "name": "Renamed by user", "client_key": claudeRouterClientKey},
-		}})
+	}))
+	defer server.Close()
+
+	useTestAPIKey(t)
+	t.Setenv("DARI_API_URL", server.URL)
+	routerID, err := ensureAgentRouter(
+		context.Background(),
+		"claude",
+		agentRoutingAccess{apiURL: server.URL, scope: "test-org", key: "dari_route"},
+		strings.NewReader("n\n\n"),
+		io.Discard,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if routerID != "rtr_managed" {
+		t.Fatalf("router ID = %q", routerID)
+	}
+	if putRequests != 0 {
+		t.Fatalf("PUT requests = %d, want no mutation of personal router", putRequests)
+	}
+	if got := created["client_key"]; got != claudeManagedRouterClientKey {
+		t.Errorf("client_key = %#v", got)
+	}
+	if got := created["personal_oauth_enabled"]; got != false {
+		t.Errorf("personal_oauth_enabled = %#v", got)
+	}
+}
+
+func TestEnsureClaudeAgentRouterAvoidsPersonalRouterWithoutCredentialsOnEOF(t *testing.T) {
+	var writeRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers":
+			_ = json.NewEncoder(w).Encode(map[string]any{"routers": []map[string]any{
+				{"id": "rtr_default", "name": "Default", "is_default": true},
+				{
+					"id":                              "rtr_claude",
+					"name":                            claudeRouterName,
+					"client_key":                      claudeRouterClientKey,
+					"personal_oauth_enabled":          true,
+					"personal_oauth_fallback_enabled": false,
+				},
+			}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
+			_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}})
+		case r.Method == http.MethodPost || r.Method == http.MethodPut:
+			writeRequests++
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	useTestAPIKey(t)
+	routerID, err := ensureAgentRouter(
+		context.Background(),
+		"claude",
+		agentRoutingAccess{apiURL: server.URL, scope: "test-org", key: "dari_route"},
+		strings.NewReader(""),
+		io.Discard,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if routerID != "rtr_default" {
+		t.Fatalf("router ID = %q, want default router", routerID)
+	}
+	if writeRequests != 0 {
+		t.Fatalf("router write requests = %d, want 0", writeRequests)
+	}
+}
+
+func TestEnsureClaudeAgentRouterPrefersCachedManagedRouterOnEOF(t *testing.T) {
+	useTestAPIKey(t)
+	const scope = "test-org|agent:claude"
+	if err := state.SaveAgentRouterID(scope, "rtr_managed_cached"); err != nil {
+		t.Fatal(err)
+	}
+
+	var writeRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers":
+			_ = json.NewEncoder(w).Encode(map[string]any{"routers": []map[string]any{
+				{"id": "rtr_default", "name": "Default", "is_default": true},
+				{"id": "rtr_managed_other", "client_key": claudeManagedRouterClientKey},
+				{"id": "rtr_managed_cached", "client_key": claudeManagedRouterClientKey},
+				{"id": "rtr_personal", "client_key": claudeRouterClientKey},
+			}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
+			_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}})
+		case r.Method == http.MethodPost || r.Method == http.MethodPut:
+			writeRequests++
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	routerID, err := ensureAgentRouter(
+		context.Background(),
+		"claude",
+		agentRoutingAccess{apiURL: server.URL, scope: "test-org", key: "dari_route"},
+		strings.NewReader(""),
+		io.Discard,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if routerID != "rtr_managed_cached" {
+		t.Fatalf("router ID = %q, want cached managed router", routerID)
+	}
+	if writeRequests != 0 {
+		t.Fatalf("router write requests = %d, want 0", writeRequests)
+	}
+}
+
+func TestEnsureClaudeAgentRouterIgnoresCachedPersonalRouterOnEOF(t *testing.T) {
+	useTestAPIKey(t)
+	const scope = "test-org|agent:claude"
+	if err := state.SaveAgentRouterID(scope, "rtr_personal"); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers":
+			_ = json.NewEncoder(w).Encode(map[string]any{"routers": []map[string]any{
+				{"id": "rtr_default", "name": "Default", "is_default": true},
+				{"id": "rtr_managed", "client_key": claudeManagedRouterClientKey},
+				{"id": "rtr_personal", "client_key": claudeRouterClientKey},
+			}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
+			_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	routerID, err := ensureAgentRouter(
+		context.Background(),
+		"claude",
+		agentRoutingAccess{apiURL: server.URL, scope: "test-org", key: "dari_route"},
+		strings.NewReader(""),
+		io.Discard,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if routerID != "rtr_managed" {
+		t.Fatalf("router ID = %q, want managed router", routerID)
+	}
+}
+
+func TestEnsureClaudeAgentRouterRequiresSubscriptionAfterRename(t *testing.T) {
+	var updated map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers":
+			_ = json.NewEncoder(w).Encode(map[string]any{"routers": []map[string]any{
+				{"id": "rtr_default", "name": "Default", "is_default": true},
+				{
+					"id":                              "rtr_claude",
+					"name":                            "Renamed by user",
+					"client_key":                      claudeRouterClientKey,
+					"enabled_models":                  []string{"anthropic/claude-fable-5"},
+					"model_providers":                 map[string]string{"anthropic/claude-fable-5": "anthropic"},
+					"model_thinking_levels":           map[string][]string{"anthropic/claude-fable-5": {"high"}},
+					"personal_oauth_enabled":          false,
+					"personal_oauth_fallback_enabled": true,
+				},
+			}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
+			writeClaudeSubscriptionCredential(w)
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/organizations/current/routers/rtr_claude":
+			if err := json.NewDecoder(r.Body).Decode(&updated); err != nil {
+				t.Error(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "rtr_claude"})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
 	}))
 	defer server.Close()
 
@@ -401,13 +1004,70 @@ func TestEnsureClaudeAgentRouterReusesClientKeyAfterRename(t *testing.T) {
 	if routerID != "rtr_claude" {
 		t.Fatalf("router ID = %q", routerID)
 	}
-	if requests != 1 {
-		t.Fatalf("requests = %d, want one router list", requests)
+	if got := updated["personal_oauth_enabled"]; got != true {
+		t.Errorf("personal_oauth_enabled = %#v", got)
+	}
+	if got := updated["personal_oauth_fallback_enabled"]; got != false {
+		t.Errorf("personal_oauth_fallback_enabled = %#v", got)
+	}
+	if got := updated["name"]; got != "Renamed by user" {
+		t.Errorf("name = %#v", got)
+	}
+	if got := stringSlice(updated["enabled_models"]); !slices.Equal(got, []string{"anthropic/claude-fable-5"}) {
+		t.Errorf("enabled_models = %q", got)
+	}
+}
+
+func TestEnsureClaudeAgentRouterSkipsUpdateForCompliantRouter(t *testing.T) {
+	var putRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers":
+			_ = json.NewEncoder(w).Encode(map[string]any{"routers": []map[string]any{
+				{"id": "rtr_default", "name": "Default", "is_default": true},
+				{
+					"id":                              "rtr_claude",
+					"name":                            "Renamed by user",
+					"client_key":                      claudeRouterClientKey,
+					"personal_oauth_enabled":          true,
+					"personal_oauth_fallback_enabled": false,
+				},
+			}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
+			writeClaudeSubscriptionCredential(w)
+		case r.Method == http.MethodPut:
+			putRequests++
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "rtr_claude"})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	useTestAPIKey(t)
+	t.Setenv("DARI_API_URL", server.URL)
+	routerID, err := ensureAgentRouter(
+		context.Background(),
+		"claude",
+		agentRoutingAccess{apiURL: server.URL, scope: "test-org", key: "dari_route"},
+		strings.NewReader(""),
+		io.Discard,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if routerID != "rtr_claude" {
+		t.Fatalf("router ID = %q", routerID)
+	}
+	if putRequests != 0 {
+		t.Fatalf("PUT requests = %d, want 0", putRequests)
 	}
 }
 
 func TestEnsureClaudeAgentRouterRecoversFromConcurrentCreate(t *testing.T) {
 	var routerLists int
+	var subscriptionUpdated bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers":
@@ -417,14 +1077,27 @@ func TestEnsureClaudeAgentRouterRecoversFromConcurrentCreate(t *testing.T) {
 			}}
 			if routerLists > 1 {
 				routers = append(routers, map[string]any{
-					"id": "rtr_other_computer", "name": "Renamed", "client_key": claudeRouterClientKey,
+					"id":             "rtr_other_computer",
+					"name":           "Renamed",
+					"client_key":     claudeRouterClientKey,
+					"enabled_models": []string{"anthropic/claude-fable-5"},
 				})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"routers": routers})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
+			writeClaudeSubscriptionCredential(w)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-catalog":
 			writeAgentModelCatalog(t, w)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/organizations/current/routers":
 			http.Error(w, `{"detail":"client key already exists"}`, http.StatusConflict)
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/organizations/current/routers/rtr_other_computer":
+			var updated map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&updated); err != nil {
+				t.Error(err)
+			}
+			subscriptionUpdated = updated["personal_oauth_enabled"] == true &&
+				updated["personal_oauth_fallback_enabled"] == false
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "rtr_other_computer"})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
@@ -448,6 +1121,9 @@ func TestEnsureClaudeAgentRouterRecoversFromConcurrentCreate(t *testing.T) {
 	}
 	if routerLists != 2 {
 		t.Fatalf("router list requests = %d, want 2", routerLists)
+	}
+	if !subscriptionUpdated {
+		t.Fatal("recovered router was not updated to require a personal subscription")
 	}
 }
 
@@ -492,6 +1168,12 @@ func TestEnsureCodexAgentRouterPreservesDefaultOnEnter(t *testing.T) {
 	if putRequests != 0 {
 		t.Fatalf("PUT requests = %d, want 0", putRequests)
 	}
+}
+
+func writeClaudeSubscriptionCredential(w http.ResponseWriter) {
+	_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []map[string]any{{
+		"oauth_provider": "anthropic_claude_code",
+	}}})
 }
 
 func writeAgentModelCatalog(t *testing.T, w http.ResponseWriter) {
@@ -816,6 +1498,8 @@ func TestEnsureClaudeAgentRouterIgnoresMatchingDefaultRouter(t *testing.T) {
 					"zai-org/GLM-5.3-Flash":    {"medium"},
 				},
 			}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
+			writeClaudeSubscriptionCredential(w)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-catalog":
 			writeAgentModelCatalog(t, w)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/organizations/current/routers":

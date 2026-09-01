@@ -5,10 +5,10 @@ import (
 	"runtime"
 )
 
-// openBrowser launches the user's default browser pointed at url. Returns
+// OpenBrowser launches the user's default browser pointed at url. Returns
 // true if the launch command started successfully; callers should still
 // print the URL in case the user is headless or the launch silently failed.
-func openBrowser(url string) bool {
+func OpenBrowser(url string) bool {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":

@@ -12,9 +12,10 @@ import (
 const agentKeysFilename = "agent-keys.json"
 
 type agentKeysFile struct {
-	SchemaVersion  int               `json:"schema_version"`
-	RoutingKeys    map[string]string `json:"routing_keys"`
-	AgentRouterIDs map[string]string `json:"agent_router_ids,omitempty"`
+	SchemaVersion       int               `json:"schema_version"`
+	RoutingKeys         map[string]string `json:"routing_keys"`
+	AgentRouterIDs      map[string]string `json:"agent_router_ids,omitempty"`
+	SubscriptionOptOuts map[string]bool   `json:"subscription_opt_outs,omitempty"`
 }
 
 // EnsureRoutingKey returns the cached key for a launcher scope, or issues and
@@ -68,9 +69,10 @@ func loadAgentKeys(path string) (agentKeysFile, error) {
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return agentKeysFile{
-				SchemaVersion:  SchemaVersion,
-				RoutingKeys:    map[string]string{},
-				AgentRouterIDs: map[string]string{},
+				SchemaVersion:       SchemaVersion,
+				RoutingKeys:         map[string]string{},
+				AgentRouterIDs:      map[string]string{},
+				SubscriptionOptOuts: map[string]bool{},
 			}, nil
 		}
 		return agentKeysFile{}, fmt.Errorf("read agent keys: %w", err)
@@ -88,6 +90,9 @@ func loadAgentKeys(path string) (agentKeysFile, error) {
 	}
 	if keys.AgentRouterIDs == nil {
 		keys.AgentRouterIDs = map[string]string{}
+	}
+	if keys.SubscriptionOptOuts == nil {
+		keys.SubscriptionOptOuts = map[string]bool{}
 	}
 	return keys, nil
 }
@@ -128,6 +133,46 @@ func SaveAgentRouterID(scope, routerID string) error {
 		return err
 	}
 	keys.AgentRouterIDs[scope] = routerID
+	return saveAgentKeys(path, keys)
+}
+
+// AgentSubscriptionOptedOut reports whether this launcher scope previously declined a personal subscription.
+func AgentSubscriptionOptedOut(scope string) (bool, error) {
+	path, err := agentKeysPath()
+	if err != nil {
+		return false, err
+	}
+	keys, err := loadAgentKeys(path)
+	if err != nil {
+		return false, err
+	}
+	return keys.SubscriptionOptOuts[scope], nil
+}
+
+// SaveAgentSubscriptionOptOut remembers or clears a personal subscription opt-out.
+func SaveAgentSubscriptionOptOut(scope string, optedOut bool) error {
+	path, err := agentKeysPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create state dir: %w", err)
+	}
+	unlock, err := lock(path + ".lock")
+	if err != nil {
+		return fmt.Errorf("lock agent keys: %w", err)
+	}
+	defer unlock()
+
+	keys, err := loadAgentKeys(path)
+	if err != nil {
+		return err
+	}
+	if optedOut {
+		keys.SubscriptionOptOuts[scope] = true
+	} else {
+		delete(keys.SubscriptionOptOuts, scope)
+	}
 	return saveAgentKeys(path, keys)
 }
 

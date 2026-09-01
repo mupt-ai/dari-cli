@@ -101,7 +101,7 @@ func LoginWithOptions(ctx context.Context, apiURL string, opts LoginOptions) (*s
 	if err != nil {
 		return nil, err
 	}
-	if openBrowser(loginURL) {
+	if OpenBrowser(loginURL) {
 		fmt.Fprintf(os.Stderr, "Waiting for browser login. If it doesn't complete automatically, open this URL:\n  %s\n\nAfter signing in, paste the localhost callback URL below.\n", loginURL)
 	} else {
 		fmt.Fprintf(os.Stderr, "Open this URL in a browser to continue login:\n  %s\n\nAfter signing in, paste the localhost callback URL below.\n", loginURL)

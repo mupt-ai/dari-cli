@@ -87,6 +87,40 @@ func TestSaveAgentRouterIDRejectsEmptyID(t *testing.T) {
 	}
 }
 
+func TestAgentSubscriptionOptOutRoundTripAndScopeIsolation(t *testing.T) {
+	t.Setenv("DARI_CONFIG_DIR", t.TempDir())
+	unsetXDG(t)
+
+	const scope = "api|org:one|agent:claude"
+	if err := SaveAgentSubscriptionOptOut(scope, true); err != nil {
+		t.Fatal(err)
+	}
+	optedOut, err := AgentSubscriptionOptedOut(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !optedOut {
+		t.Fatal("saved opt-out was not returned")
+	}
+	other, err := AgentSubscriptionOptedOut("api|org:two|agent:claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other {
+		t.Fatal("opt-out leaked to another scope")
+	}
+	if err := SaveAgentSubscriptionOptOut(scope, false); err != nil {
+		t.Fatal(err)
+	}
+	optedOut, err = AgentSubscriptionOptedOut(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if optedOut {
+		t.Fatal("cleared opt-out was returned")
+	}
+}
+
 func TestConcurrentRoutingKeyCreationIssuesOnce(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("DARI_CONFIG_DIR", dir)

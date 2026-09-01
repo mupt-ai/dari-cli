@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 
@@ -21,8 +23,12 @@ import (
 )
 
 const (
-	claudeRouterName      = "Dari Claude Code"
-	claudeRouterClientKey = "dari-cli:claude-code"
+	claudeRouterName                 = "Dari Claude Code"
+	claudeManagedRouterName          = "Dari Claude Code (Managed)"
+	claudeRouterClientKey            = "dari-cli:claude-code"
+	claudeManagedRouterClientKey     = "dari-cli:claude-code-managed"
+	claudeOAuthCallbackAddress       = "127.0.0.1:53692"
+	claudeOAuthAutomaticWaitDuration = 30 * time.Second
 )
 
 // claudeDefaultModelIDs is the recommended Claude Code model set — distinct
@@ -32,6 +38,13 @@ var claudeDefaultModelIDs = []string{
 	"anthropic/claude-opus-5",
 	"zai-org/GLM-5.3-Flash",
 }
+
+var (
+	openAgentBrowser             = auth.OpenBrowser
+	claudeOAuthAutomaticWaitTime = claudeOAuthAutomaticWaitDuration
+)
+
+var errClaudeOAuthCallbackTimedOut = errors.New("timed out waiting for Anthropic authorization")
 
 var defaultAgentEvalIDs = []string{
 	"evl_public_aa_long_context_reasoning",
@@ -53,13 +66,15 @@ type agentRoutingAccess struct {
 }
 
 type agentRouter struct {
-	ID                  string              `json:"id"`
-	Name                string              `json:"name"`
-	ClientKey           string              `json:"client_key"`
-	IsDefault           bool                `json:"is_default"`
-	EnabledModels       []string            `json:"enabled_models"`
-	ModelProviders      map[string]string   `json:"model_providers"`
-	ModelThinkingLevels map[string][]string `json:"model_thinking_levels"`
+	ID                           string              `json:"id"`
+	Name                         string              `json:"name"`
+	ClientKey                    string              `json:"client_key"`
+	IsDefault                    bool                `json:"is_default"`
+	EnabledModels                []string            `json:"enabled_models"`
+	ModelProviders               map[string]string   `json:"model_providers"`
+	ModelThinkingLevels          map[string][]string `json:"model_thinking_levels"`
+	PersonalOAuthEnabled         bool                `json:"personal_oauth_enabled"`
+	PersonalOAuthFallbackEnabled bool                `json:"personal_oauth_fallback_enabled"`
 }
 
 type agentModel struct {
@@ -110,6 +125,35 @@ type agentRouterUpdateRequest struct {
 	ModelThinkingLevels map[string][]string `json:"model_thinking_levels"`
 }
 
+type claudeRouterSubscriptionUpdateRequest struct {
+	Name                         string              `json:"name"`
+	EnabledModels                []string            `json:"enabled_models"`
+	ModelProviders               map[string]string   `json:"model_providers,omitempty"`
+	ModelThinkingLevels          map[string][]string `json:"model_thinking_levels,omitempty"`
+	PersonalOAuthEnabled         bool                `json:"personal_oauth_enabled"`
+	PersonalOAuthFallbackEnabled bool                `json:"personal_oauth_fallback_enabled"`
+}
+
+type agentCredential struct {
+	OAuthProvider string `json:"oauth_provider"`
+}
+
+type agentSubscriptionOAuthStart struct {
+	SessionToken     string `json:"session_token"`
+	AuthorizationURL string `json:"authorization_url"`
+}
+
+type claudeSubscriptionResolution struct {
+	enabled           bool
+	decided           bool
+	preferenceChanged bool
+}
+
+type claudeOAuthCallbackServer struct {
+	server   *http.Server
+	response chan string
+}
+
 func resolveAgentRoutingAccess(
 	ctx context.Context,
 	stdin io.Reader,
@@ -142,10 +186,12 @@ func ensureAgentRouter(
 	}
 
 	scope := access.scope + "|agent:" + agent
-	if routerID, err := state.AgentRouterID(scope); err != nil {
+	cachedRouterID, err := state.AgentRouterID(scope)
+	if err != nil {
 		return "", err
-	} else if routerID != "" {
-		return routerID, nil
+	}
+	if cachedRouterID != "" && agent != "claude" {
+		return cachedRouterID, nil
 	}
 
 	client, err := auth.OrgKeyClient(access.apiURL)
@@ -163,10 +209,57 @@ func ensureAgentRouter(
 		return "", errors.New("organization has no default router")
 	}
 
+	usePersonalSubscription := false
+	claudeClientKey := ""
 	if agent == "claude" {
-		if existing, found := findAgentRouter(routers, func(router agentRouter) bool {
-			return router.ClientKey == claudeRouterClientKey
-		}); found {
+		preferenceScope, err := claudeSubscriptionPreferenceScope(access.scope)
+		if err != nil {
+			return "", err
+		}
+		previouslyOptedOut, err := state.AgentSubscriptionOptedOut(preferenceScope)
+		if err != nil {
+			return "", err
+		}
+		resolution, err := resolveClaudePersonalSubscription(
+			ctx,
+			client,
+			stdin,
+			stderr,
+			previouslyOptedOut,
+		)
+		if err != nil {
+			return "", err
+		}
+		if !resolution.decided {
+			if cached, found := findAgentRouter(routers, func(router agentRouter) bool {
+				return router.ID == cachedRouterID && router.ClientKey == claudeManagedRouterClientKey
+			}); found {
+				return cached.ID, nil
+			}
+			if existing, found := findAgentRouter(routers, func(router agentRouter) bool {
+				return router.ClientKey == claudeManagedRouterClientKey
+			}); found {
+				return existing.ID, nil
+			}
+			return defaultRouter.ID, nil
+		}
+		usePersonalSubscription = resolution.enabled
+		if resolution.preferenceChanged {
+			if err := state.SaveAgentSubscriptionOptOut(preferenceScope, !usePersonalSubscription); err != nil {
+				return "", err
+			}
+		}
+		claudeClientKey = claudeManagedRouterClientKey
+		if usePersonalSubscription {
+			claudeClientKey = claudeRouterClientKey
+		}
+		existing, found := findAgentRouter(routers, func(router agentRouter) bool {
+			return router.ClientKey == claudeClientKey
+		})
+		if found {
+			if err := setClaudeRouterSubscription(ctx, client, existing, usePersonalSubscription); err != nil {
+				return "", err
+			}
 			if err := state.SaveAgentRouterID(scope, existing.ID); err != nil {
 				return "", err
 			}
@@ -209,7 +302,7 @@ func ensureAgentRouter(
 		}
 		fmt.Fprintln(stderr, "Codex will use your existing default router.")
 	} else {
-		body := agentRouterCreateBody(models, choices)
+		body := agentRouterCreateBody(models, choices, claudeClientKey, usePersonalSubscription)
 		var created agentRouter
 		createErr := client.Do(ctx, http.MethodPost, "/v1/organizations/current/routers", body, &created)
 		if createErr == nil {
@@ -221,10 +314,13 @@ func ensureAgentRouter(
 				return "", err
 			}
 			existing, found := findAgentRouter(routers, func(router agentRouter) bool {
-				return router.ClientKey == claudeRouterClientKey
+				return router.ClientKey == claudeClientKey
 			})
 			if !found {
 				return "", api.HumanError(createErr)
+			}
+			if err := setClaudeRouterSubscription(ctx, client, existing, usePersonalSubscription); err != nil {
+				return "", err
 			}
 			routerID = existing.ID
 		} else {
@@ -235,6 +331,318 @@ func ensureAgentRouter(
 		return "", err
 	}
 	return routerID, nil
+}
+
+func claudeSubscriptionPreferenceScope(accessScope string) (string, error) {
+	scope := accessScope + "|agent:claude"
+	if !strings.Contains(accessScope, "|org:") {
+		return scope, nil
+	}
+	current, err := state.Load()
+	if err != nil {
+		return "", err
+	}
+	if current.SupabaseSession == nil || strings.TrimSpace(current.SupabaseSession.UserID) == "" {
+		return scope, nil
+	}
+	return scope + "|user:" + current.SupabaseSession.UserID, nil
+}
+
+func resolveClaudePersonalSubscription(
+	ctx context.Context,
+	client *api.Client,
+	stdin io.Reader,
+	stderr io.Writer,
+	previouslyOptedOut bool,
+) (claudeSubscriptionResolution, error) {
+	var listed struct {
+		Credentials []agentCredential `json:"credentials"`
+	}
+	if err := client.Do(ctx, http.MethodGet, "/v1/organizations/current/credentials", nil, &listed); err != nil {
+		return claudeSubscriptionResolution{}, api.HumanError(err)
+	}
+	if slices.ContainsFunc(listed.Credentials, func(credential agentCredential) bool {
+		return credential.OAuthProvider == "anthropic_claude_code"
+	}) {
+		return claudeSubscriptionResolution{enabled: true, decided: true, preferenceChanged: previouslyOptedOut}, nil
+	}
+	if previouslyOptedOut {
+		return claudeSubscriptionResolution{decided: true}, nil
+	}
+
+	var useSubscription, answered bool
+	if agentInputIsTerminal(stdin) {
+		choice, err := runAgentChoiceTUI(
+			stdin,
+			stderr,
+			"Connect Claude Code",
+			"Use your Claude Code personal subscription?",
+			[]agentChoiceOption{
+				{label: "Use Claude Code subscription", note: "recommended"},
+				{label: "Use Dari managed billing"},
+			},
+			nil,
+		)
+		if err != nil {
+			return claudeSubscriptionResolution{}, err
+		}
+		useSubscription = choice == 0
+		answered = true
+	} else {
+		var err error
+		useSubscription, answered, err = confirmDefaultYes(
+			stdin,
+			stderr,
+			"Use your Claude Code personal subscription? [Y/n] ",
+		)
+		if err != nil {
+			return claudeSubscriptionResolution{}, err
+		}
+	}
+	if !answered {
+		return claudeSubscriptionResolution{}, nil
+	}
+	if !useSubscription {
+		return claudeSubscriptionResolution{decided: true, preferenceChanged: true}, nil
+	}
+	if err := connectClaudePersonalSubscription(ctx, client, stdin, stderr); err != nil {
+		return claudeSubscriptionResolution{}, err
+	}
+	return claudeSubscriptionResolution{enabled: true, decided: true, preferenceChanged: true}, nil
+}
+
+func connectClaudePersonalSubscription(
+	ctx context.Context,
+	client *api.Client,
+	stdin io.Reader,
+	stderr io.Writer,
+) error {
+	var started agentSubscriptionOAuthStart
+	if err := client.Do(
+		ctx,
+		http.MethodPost,
+		"/v1/organizations/current/credentials/oauth/sessions",
+		map[string]string{"provider": "anthropic_claude_code"},
+		&started,
+	); err != nil {
+		return api.HumanError(err)
+	}
+	if strings.TrimSpace(started.SessionToken) == "" || strings.TrimSpace(started.AuthorizationURL) == "" {
+		return errors.New("Dari returned an incomplete Claude Code authorization session")
+	}
+
+	callback, callbackErr := startClaudeOAuthCallbackServer()
+	if callback != nil {
+		defer callback.Close()
+	}
+	styled := agentInputIsTerminal(stdin)
+	opened := openAgentBrowser(started.AuthorizationURL)
+	if styled {
+		authorizationResponse, err := runClaudeOAuthTUI(
+			stdin,
+			stderr,
+			started.AuthorizationURL,
+			opened,
+			callback,
+		)
+		if err != nil {
+			return err
+		}
+		return completeClaudePersonalSubscription(ctx, client, stderr, started.SessionToken, authorizationResponse, true)
+	}
+
+	writeClaudeOAuthInstructions(stderr, started.AuthorizationURL, opened)
+	var (
+		authorizationResponse string
+		err                   error
+	)
+	if opened && callbackErr == nil {
+		if response, received := callback.Try(); received {
+			authorizationResponse = response
+		} else {
+			fmt.Fprint(stderr, "Paste localhost callback URL, or press Enter to wait automatically: ")
+			manualResponse, readErr := readAgentLine(stdin)
+			if readErr != nil && !errors.Is(readErr, io.EOF) {
+				return fmt.Errorf("read Claude Code callback URL: %w", readErr)
+			}
+			if strings.TrimSpace(manualResponse) != "" {
+				callback.Close()
+				authorizationResponse = manualResponse
+			} else {
+				fmt.Fprintln(stderr, "Waiting for Anthropic authorization…")
+				authorizationResponse, err = callback.Wait(ctx, claudeOAuthAutomaticWaitTime)
+				if errors.Is(err, errClaudeOAuthCallbackTimedOut) {
+					callback.Close()
+					fmt.Fprintln(stderr, "Automatic callback was not received. Copy the full localhost URL from your browser; the error page is expected.")
+					fmt.Fprint(stderr, "Paste localhost URL: ")
+					authorizationResponse, err = readAgentLine(stdin)
+				}
+			}
+		}
+	} else {
+		fmt.Fprintln(stderr, "After approving, copy the full localhost URL from your browser. The error page is expected.")
+		fmt.Fprint(stderr, "Paste localhost URL: ")
+		authorizationResponse, err = readAgentLine(stdin)
+	}
+	if err != nil {
+		return fmt.Errorf("complete Claude Code authorization: %w", err)
+	}
+	return completeClaudePersonalSubscription(ctx, client, stderr, started.SessionToken, authorizationResponse, false)
+}
+
+func completeClaudePersonalSubscription(
+	ctx context.Context,
+	client *api.Client,
+	stderr io.Writer,
+	sessionToken string,
+	authorizationResponse string,
+	styled bool,
+) error {
+	if strings.TrimSpace(authorizationResponse) == "" {
+		return errors.New("Claude Code authorization was not completed")
+	}
+	if err := client.Do(
+		ctx,
+		http.MethodPost,
+		"/v1/organizations/current/credentials/oauth/sessions/complete",
+		map[string]string{
+			"session_token":          sessionToken,
+			"authorization_response": authorizationResponse,
+		},
+		nil,
+	); err != nil {
+		return api.HumanError(err)
+	}
+	if styled {
+		fmt.Fprintln(stderr, ansiGreen+"✓ Claude Code personal subscription connected."+ansiReset)
+	} else {
+		fmt.Fprintln(stderr, "Connected your Claude Code personal subscription.")
+	}
+	return nil
+}
+
+func writeClaudeOAuthInstructions(stderr io.Writer, authorizationURL string, opened bool) {
+	if opened {
+		fmt.Fprintf(stderr, "Opened Anthropic login in your browser. If it did not open, visit:\n  %s\n", authorizationURL)
+	} else {
+		fmt.Fprintf(stderr, "Open this URL to connect your Claude Code subscription:\n  %s\n", authorizationURL)
+	}
+}
+
+func startClaudeOAuthCallbackServer() (*claudeOAuthCallbackServer, error) {
+	listener, err := net.Listen("tcp", claudeOAuthCallbackAddress)
+	if err != nil {
+		return nil, err
+	}
+	callback := &claudeOAuthCallbackServer{
+		response: make(chan string, 1),
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/callback", func(w http.ResponseWriter, request *http.Request) {
+		select {
+		case callback.response <- request.URL.String():
+		default:
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = io.WriteString(w, "Claude Code subscription connected. You can close this tab.\n")
+	})
+	callback.server = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	go func() { _ = callback.server.Serve(listener) }()
+	return callback, nil
+}
+
+func (callback *claudeOAuthCallbackServer) Try() (string, bool) {
+	select {
+	case response := <-callback.response:
+		return "http://localhost:53692" + response, true
+	default:
+		return "", false
+	}
+}
+
+func (callback *claudeOAuthCallbackServer) Wait(ctx context.Context, timeout time.Duration) (string, error) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case response := <-callback.response:
+		return "http://localhost:53692" + response, nil
+	case <-timer.C:
+		return "", errClaudeOAuthCallbackTimedOut
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+func (callback *claudeOAuthCallbackServer) Close() {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_ = callback.server.Shutdown(ctx)
+}
+
+func confirmDefaultYes(stdin io.Reader, stderr io.Writer, prompt string) (bool, bool, error) {
+	fmt.Fprint(stderr, prompt)
+	answer, err := readAgentLine(stdin)
+	if errors.Is(err, io.EOF) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, err
+	}
+	switch strings.ToLower(strings.TrimSpace(answer)) {
+	case "", "y", "yes":
+		return true, true, nil
+	case "n", "no":
+		return false, true, nil
+	default:
+		return false, true, fmt.Errorf("expected yes or no, got %q", strings.TrimSpace(answer))
+	}
+}
+
+func readAgentLine(stdin io.Reader) (string, error) {
+	var line strings.Builder
+	for {
+		var chunk [1]byte
+		n, readErr := stdin.Read(chunk[:])
+		if n > 0 {
+			if chunk[0] == '\n' {
+				return line.String(), nil
+			}
+			line.WriteByte(chunk[0])
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) && line.Len() > 0 {
+				return line.String(), nil
+			}
+			return "", readErr
+		}
+	}
+}
+
+func setClaudeRouterSubscription(
+	ctx context.Context,
+	client *api.Client,
+	router agentRouter,
+	enabled bool,
+) error {
+	if router.PersonalOAuthEnabled == enabled && !router.PersonalOAuthFallbackEnabled {
+		return nil
+	}
+	if strings.TrimSpace(router.Name) == "" || len(router.EnabledModels) == 0 {
+		return errors.New("Dari returned an incomplete Claude Code router")
+	}
+	body := claudeRouterSubscriptionUpdateRequest{
+		Name:                         router.Name,
+		EnabledModels:                router.EnabledModels,
+		ModelProviders:               router.ModelProviders,
+		ModelThinkingLevels:          router.ModelThinkingLevels,
+		PersonalOAuthEnabled:         enabled,
+		PersonalOAuthFallbackEnabled: false,
+	}
+	path := "/v1/organizations/current/routers/" + url.PathEscape(router.ID)
+	if err := client.Do(ctx, http.MethodPut, path, body, &router); err != nil {
+		return api.HumanError(err)
+	}
+	return nil
 }
 
 func listAgentRouters(ctx context.Context, client *api.Client) ([]agentRouter, error) {
@@ -316,7 +724,7 @@ func selectAgentModels(
 	currentLevels map[string][]string,
 	recommendedLevels map[string][]string,
 ) ([]agentModelChoice, error) {
-	if file, ok := stdin.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
+	if agentInputIsTerminal(stdin) {
 		return runAgentPicker(stdin, stderr, title, models, defaults, currentLevels, recommendedLevels)
 	}
 	return selectAgentModelsByNumber(stdin, stderr, title, models, defaults, currentLevels, recommendedLevels)
@@ -347,26 +755,13 @@ func selectAgentModelsByNumber(
 	fmt.Fprintln(stderr, "\nEnter model numbers separated by commas, or press Enter to keep the checked models.")
 	fmt.Fprint(stderr, "> ")
 
-	// Read one byte at a time so unconsumed stdin still reaches the agent
+	// Read via readAgentLine so unconsumed stdin still reaches the agent
 	// process launched after setup.
-	var line strings.Builder
-	for {
-		var chunk [1]byte
-		n, readErr := stdin.Read(chunk[:])
-		if n > 0 {
-			if chunk[0] == '\n' {
-				break
-			}
-			line.WriteByte(chunk[0])
-		}
-		if readErr != nil {
-			if !errors.Is(readErr, io.EOF) {
-				return nil, fmt.Errorf("read model selection: %w", readErr)
-			}
-			break
-		}
+	line, readErr := readAgentLine(stdin)
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return nil, fmt.Errorf("read model selection: %w", readErr)
 	}
-	input := strings.TrimSpace(line.String())
+	input := strings.TrimSpace(line)
 	if input == "" {
 		if len(defaults) == 0 {
 			return nil, errors.New("at least one model must be selected")
@@ -610,6 +1005,11 @@ const (
 
 const dariBanner = "DARI ROUTER"
 
+func agentInputIsTerminal(stdin io.Reader) bool {
+	file, ok := stdin.(*os.File)
+	return ok && term.IsTerminal(int(file.Fd()))
+}
+
 // agentBannerLines draws the boxed "DARI ROUTER" header with the task
 // title centered beneath it.
 func agentBannerLines(title string) []string {
@@ -632,15 +1032,17 @@ func agentBannerLines(title string) []string {
 }
 
 func renderAgentPicker(stderr io.Writer, title string, p *agentPickerState, termWidth int) {
-	// The banner box is centered; the checklist below stays left-aligned.
-	banner := agentBannerLines(title)
+	renderAgentScreen(stderr, agentPickerLines(title, p), termWidth)
+}
+
+func renderAgentScreen(stderr io.Writer, lines []string, termWidth int) {
+	banner := agentBannerLines("")
 	bannerPad := 0
-	if termWidth > 0 {
-		if w := ansiVisibleWidth(banner[0]); termWidth > w {
+	if termWidth > 0 && len(lines) > 0 {
+		if w := ansiVisibleWidth(lines[0]); termWidth > w {
 			bannerPad = (termWidth - w) / 2
 		}
 	}
-	lines := agentPickerLines(title, p)
 	bannerLineCount := len(banner)
 	var frame strings.Builder
 	// Raw mode disables output post-processing, so newlines must be \r\n or
@@ -799,32 +1201,20 @@ func runAgentPicker(
 	currentLevels map[string][]string,
 	recommendedLevels map[string][]string,
 ) ([]agentModelChoice, error) {
-	file, ok := stdin.(*os.File)
-	if !ok {
-		return nil, errors.New("interactive selection requires a terminal")
-	}
 	p := newAgentPickerState(models, defaults, currentLevels, recommendedLevels)
 	if len(p.rows) == 0 {
 		return nil, errors.New("no managed-key models are available")
 	}
-
-	fd := int(file.Fd())
-	oldState, err := term.MakeRaw(fd)
+	session, err := startAgentTUISession(stdin, stderr)
 	if err != nil {
-		return nil, fmt.Errorf("enter interactive mode: %w", err)
+		return nil, err
 	}
-	defer func() { _ = term.Restore(fd, oldState) }()
-	termWidth := 0
-	if w, _, err := term.GetSize(fd); err == nil {
-		termWidth = w
-	}
-	fmt.Fprint(stderr, "\033[?25l")
-	defer fmt.Fprint(stderr, "\033[?25h")
+	defer session.Close()
 
 	buf := make([]byte, 16)
 	for {
-		renderAgentPicker(stderr, title, p, termWidth)
-		n, readErr := file.Read(buf)
+		renderAgentPicker(stderr, title, p, session.width)
+		n, readErr := session.file.Read(buf)
 		for _, key := range parseAgentPickerKeys(buf[:n]) {
 			done, canceled := p.handleKey(key)
 			if canceled {
@@ -904,16 +1294,25 @@ func sameStringSet(a, b []string) bool {
 	return true
 }
 
-func agentRouterCreateBody(models []agentModel, choices []agentModelChoice) agentRouterCreateRequest {
+func agentRouterCreateBody(
+	models []agentModel,
+	choices []agentModelChoice,
+	clientKey string,
+	usePersonalSubscription bool,
+) agentRouterCreateRequest {
 	ids := choiceIDs(choices)
 	providers := agentProvidersFor(models, ids)
 	providerSources := map[string]string{}
 	for _, provider := range providers {
 		providerSources[provider] = "managed"
 	}
+	name := claudeRouterName
+	if clientKey == claudeManagedRouterClientKey {
+		name = claudeManagedRouterName
+	}
 	return agentRouterCreateRequest{
-		Name:                              claudeRouterName,
-		ClientKey:                         claudeRouterClientKey,
+		Name:                              name,
+		ClientKey:                         clientKey,
 		EnabledModels:                     ids,
 		ModelProviders:                    providers,
 		ProviderKeySources:                providerSources,
@@ -924,7 +1323,7 @@ func agentRouterCreateBody(models []agentModel, choices []agentModelChoice) agen
 		PrimaryRetries:                    3,
 		ModelFallbackEnabled:              true,
 		FallbackRequiresDifferentProvider: true,
-		PersonalOAuthEnabled:              false,
+		PersonalOAuthEnabled:              usePersonalSubscription,
 		PersonalOAuthFallbackEnabled:      false,
 		EvalScoreImputation:               true,
 	}
