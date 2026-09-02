@@ -18,6 +18,7 @@ func init() {
 			newEvalCreateCmd(gf),
 			newEvalListCmd(gf),
 			newEvalGetCmd(gf),
+			newEvalOfficialCmd(gf),
 		)
 		root.AddCommand(cmd)
 	})
@@ -36,6 +37,42 @@ func newEvalListCmd(gf *globalFlags) *cobra.Command {
 			return printJSON(resp)
 		},
 	}
+}
+
+func newEvalOfficialCmd(gf *globalFlags) *cobra.Command {
+	var modelIDs []string
+	var benchmarks []string
+	var publishers []string
+	cmd := &cobra.Command{
+		Use:   "official",
+		Short: "List Dari eval results from official model-company reports",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			params := url.Values{}
+			for _, value := range modelIDs {
+				params.Add("model_id", value)
+			}
+			for _, value := range benchmarks {
+				params.Add("benchmark", value)
+			}
+			for _, value := range publishers {
+				params.Add("publisher", value)
+			}
+			path := "/v1/organizations/current/dari-evals"
+			if query := params.Encode(); query != "" {
+				path += "?" + query
+			}
+			var response map[string]any
+			if err := orgKeyRequest(cmd, gf, http.MethodGet, path, nil, &response); err != nil {
+				return err
+			}
+			return printJSON(response)
+		},
+	}
+	cmd.Flags().StringSliceVar(&modelIDs, "model", nil, "Filter by exact Dari model slug (repeatable)")
+	cmd.Flags().StringSliceVar(&benchmarks, "benchmark", nil, "Filter by exact benchmark name (repeatable)")
+	cmd.Flags().StringSliceVar(&publishers, "publisher", nil, "Filter by exact publisher name (repeatable)")
+	return cmd
 }
 
 func newEvalGetCmd(gf *globalFlags) *cobra.Command {
