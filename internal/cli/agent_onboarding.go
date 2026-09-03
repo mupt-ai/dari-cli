@@ -31,14 +31,6 @@ const (
 	claudeOAuthAutomaticWaitDuration = 30 * time.Second
 )
 
-// claudeDefaultModelIDs is the recommended Claude Code model set — distinct
-// from the Sol-based org default router Codex keeps.
-var claudeDefaultModelIDs = []string{
-	"anthropic/claude-fable-5",
-	"anthropic/claude-opus-5",
-	"zai-org/GLM-5.3-Flash",
-}
-
 var (
 	openAgentBrowser             = auth.OpenBrowser
 	claudeOAuthAutomaticWaitTime = claudeOAuthAutomaticWaitDuration
@@ -273,11 +265,16 @@ func ensureAgentRouter(
 	recommendedLevels := agentRouterRecommendedLevels(defaultRouter)
 	if agent == "claude" {
 		// Claude Code gets its own recommendation, independent of the org
-		// default router Codex uses, so the two stay distinct.
+		// default router Codex uses, so the two stay distinct. It comes from
+		// the backend so every client shares one recommendation list.
+		suggestion, err := fetchAgentModelSuggestion(ctx, client, "claude-code")
+		if err != nil {
+			return "", err
+		}
 		title = "Configure a router for Claude Code"
-		defaultIDs = claudeDefaultModelIDs
+		defaultIDs = suggestion.modelIDs
 		currentLevels = nil
-		recommendedLevels = claudeRecommendedLevels()
+		recommendedLevels = suggestion.levels
 	}
 	models, err := listAgentModels(ctx, client)
 	if err != nil {
@@ -802,9 +799,6 @@ func defaultLevelsFor(model agentModel, current, recommended []string) []string 
 	}
 	if len(recommended) > 0 {
 		return append([]string(nil), recommended...)
-	}
-	if levels := recommendedAgentThinkingLevels(model.ID); len(levels) > 0 {
-		return levels
 	}
 	if model.DefaultThinkingLevel != "" {
 		return []string{model.DefaultThinkingLevel}
@@ -1358,12 +1352,49 @@ func agentRouterUpdateBody(
 	}
 }
 
-func claudeRecommendedLevels() map[string][]string {
-	levels := make(map[string][]string, len(claudeDefaultModelIDs))
-	for _, modelID := range claudeDefaultModelIDs {
-		levels[modelID] = recommendedAgentThinkingLevels(modelID)
+// agentModelSuggestion is one recommended model set from the backend — the
+// same list the frontend suggestion picker shows.
+type agentModelSuggestion struct {
+	modelIDs []string
+	levels   map[string][]string
+}
+
+// fetchAgentModelSuggestion returns the named suggestion from the shared
+// backend config so the CLI never hardcodes its own recommendations.
+func fetchAgentModelSuggestion(
+	ctx context.Context,
+	client *api.Client,
+	suggestionID string,
+) (agentModelSuggestion, error) {
+	var payload struct {
+		Suggestions []struct {
+			ID     string              `json:"id"`
+			Models map[string][]string `json:"models"`
+		} `json:"suggestions"`
 	}
-	return levels
+	if err := client.Do(
+		ctx,
+		http.MethodGet,
+		"/v1/organizations/current/routers/model-suggestions",
+		nil,
+		&payload,
+	); err != nil {
+		return agentModelSuggestion{}, api.HumanError(err)
+	}
+	for _, suggestion := range payload.Suggestions {
+		if suggestion.ID != suggestionID {
+			continue
+		}
+		modelIDs := make([]string, 0, len(suggestion.Models))
+		for modelID := range suggestion.Models {
+			modelIDs = append(modelIDs, modelID)
+		}
+		sort.Strings(modelIDs)
+		return agentModelSuggestion{modelIDs: modelIDs, levels: suggestion.Models}, nil
+	}
+	return agentModelSuggestion{}, fmt.Errorf(
+		"no %q model suggestion is configured on the backend", suggestionID,
+	)
 }
 
 func agentRouterRecommendedLevels(router agentRouter) map[string][]string {
@@ -1374,17 +1405,4 @@ func agentRouterRecommendedLevels(router agentRouter) map[string][]string {
 		}
 	}
 	return levels
-}
-
-func recommendedAgentThinkingLevels(modelID string) []string {
-	switch {
-	case modelID == "openai/gpt-5.6-sol":
-		return []string{"medium", "xhigh"}
-	case modelID == "anthropic/claude-fable-5", modelID == "anthropic/claude-opus-5":
-		return []string{"high"}
-	case strings.HasPrefix(modelID, "zai-org/GLM-5.3"):
-		return []string{"high"}
-	default:
-		return nil
-	}
 }

@@ -177,8 +177,8 @@ func TestAgentPickerRecommendationsAreAgentSpecific(t *testing.T) {
 	if codex.rows[0].usesRecommended() {
 		t.Fatal("Codex marked Fable as recommended")
 	}
-	if got := codex.rows[0].checkedLevels(); !slices.Equal(got, []string{"high"}) {
-		t.Fatalf("Codex Fable levels = %q, want Dari default [high]", got)
+	if got := codex.rows[0].checkedLevels(); !slices.Equal(got, []string{"medium"}) {
+		t.Fatalf("Codex Fable levels = %q, want catalog default [medium]", got)
 	}
 	if !codex.rows[2].usesRecommended() {
 		t.Fatal("Codex did not mark Sol as recommended")
@@ -703,6 +703,8 @@ func TestEnsureClaudeAgentRouterCreatesSeparateRouter(t *testing.T) {
 			writeClaudeSubscriptionCredential(w)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-catalog":
 			writeAgentModelCatalog(t, w)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-suggestions":
+			writeAgentModelSuggestions(t, w)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/organizations/current/routers":
 			if err := json.NewDecoder(r.Body).Decode(&created); err != nil {
 				t.Error(err)
@@ -743,7 +745,7 @@ func TestEnsureClaudeAgentRouterCreatesSeparateRouter(t *testing.T) {
 		t.Errorf("personal_oauth_fallback_enabled = %#v", got)
 	}
 	if got := stringSlice(created["enabled_models"]); !slices.Equal(got, []string{
-		"anthropic/claude-fable-5",
+		"anthropic/claude-fable-5-1",
 		"anthropic/claude-opus-5",
 		"zai-org/GLM-5.3-Flash",
 	}) {
@@ -754,7 +756,7 @@ func TestEnsureClaudeAgentRouterCreatesSeparateRouter(t *testing.T) {
 	}
 	levels, _ := created["model_thinking_levels"].(map[string]any)
 	for _, modelID := range []string{
-		"anthropic/claude-fable-5",
+		"anthropic/claude-fable-5-1",
 		"anthropic/claude-opus-5",
 		"zai-org/GLM-5.3-Flash",
 	} {
@@ -790,6 +792,8 @@ func TestEnsureClaudeAgentRouterUsesManagedRouterAfterOptOut(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-catalog":
 			writeAgentModelCatalog(t, w)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-suggestions":
+			writeAgentModelSuggestions(t, w)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/organizations/current/routers":
 			if err := json.NewDecoder(r.Body).Decode(&created); err != nil {
 				t.Error(err)
@@ -1088,6 +1092,8 @@ func TestEnsureClaudeAgentRouterRecoversFromConcurrentCreate(t *testing.T) {
 			writeClaudeSubscriptionCredential(w)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-catalog":
 			writeAgentModelCatalog(t, w)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-suggestions":
+			writeAgentModelSuggestions(t, w)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/organizations/current/routers":
 			http.Error(w, `{"detail":"client key already exists"}`, http.StatusConflict)
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/organizations/current/routers/rtr_other_computer":
@@ -1182,12 +1188,26 @@ func writeAgentModelCatalog(t *testing.T, w http.ResponseWriter) {
 		"provider":             "managed",
 		"supports_managed_key": true,
 		"models": []map[string]any{
-			{"id": "anthropic/claude-fable-5", "display_name": "Fable", "provider": "anthropic", "default_provider": "anthropic", "default_thinking_level": "high", "supports_managed_key": true},
+			{"id": "anthropic/claude-fable-5-1", "display_name": "Fable 5.1", "provider": "anthropic", "default_provider": "anthropic", "default_thinking_level": "high", "supports_managed_key": true},
 			{"id": "anthropic/claude-opus-5", "display_name": "Opus", "provider": "anthropic", "default_provider": "anthropic", "default_thinking_level": "high", "supports_managed_key": true},
 			{"id": "zai-org/GLM-5.3-Flash", "display_name": "GLM Flash", "provider": "fireworks", "default_provider": "fireworks", "default_thinking_level": "high", "supports_managed_key": true},
 			{"id": "zai-org/GLM-5.3", "display_name": "GLM", "provider": "fireworks", "default_provider": "fireworks", "default_thinking_level": "high", "supports_managed_key": true},
 		},
 	}}})
+}
+
+func writeAgentModelSuggestions(t *testing.T, w http.ResponseWriter) {
+	t.Helper()
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"suggestions": []map[string]any{{
+			"id": "claude-code",
+			"models": map[string]any{
+				"anthropic/claude-fable-5-1": []string{"high"},
+				"anthropic/claude-opus-5":    []string{"high"},
+				"zai-org/GLM-5.3-Flash":      []string{"high"},
+			},
+		}},
+	})
 }
 
 func stringSlice(value any) []string {
@@ -1502,6 +1522,8 @@ func TestEnsureClaudeAgentRouterIgnoresMatchingDefaultRouter(t *testing.T) {
 			writeClaudeSubscriptionCredential(w)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-catalog":
 			writeAgentModelCatalog(t, w)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-suggestions":
+			writeAgentModelSuggestions(t, w)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/organizations/current/routers":
 			if err := json.NewDecoder(r.Body).Decode(&created); err != nil {
 				t.Error(err)
@@ -1531,9 +1553,9 @@ func TestEnsureClaudeAgentRouterIgnoresMatchingDefaultRouter(t *testing.T) {
 	}
 	levels, _ := created["model_thinking_levels"].(map[string]any)
 	for modelID, want := range map[string][]string{
-		"anthropic/claude-fable-5": {"high"},
-		"anthropic/claude-opus-5":  {"high"},
-		"zai-org/GLM-5.3-Flash":    {"high"},
+		"anthropic/claude-fable-5-1": {"high"},
+		"anthropic/claude-opus-5":    {"high"},
+		"zai-org/GLM-5.3-Flash":      {"high"},
 	} {
 		if got := stringSlice(levels[modelID]); !slices.Equal(got, want) {
 			t.Errorf("%s levels = %q, want recommended %q", modelID, got, want)
