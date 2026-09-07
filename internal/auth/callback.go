@@ -96,6 +96,9 @@ func (cb *callbackServer) WaitOrInput(ctx context.Context, r io.Reader, timeout 
 		r = os.Stdin
 	}
 	fmt.Fprint(os.Stderr, "Paste callback URL: ")
+	if file, ok := r.(*os.File); ok && supportsCallbackPolling {
+		return cb.waitFileInput(ctx, file, timeout)
+	}
 
 	lineCh := make(chan string, 1)
 	errCh := make(chan error, 1)
