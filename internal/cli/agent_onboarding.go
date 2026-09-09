@@ -353,10 +353,18 @@ func resolveClaudePersonalSubscription(
 	previouslyOptedOut bool,
 ) (claudeSubscriptionResolution, error) {
 	var listed struct {
-		Credentials []agentCredential `json:"credentials"`
+		Credentials                  []agentCredential `json:"credentials"`
+		PersonalSubscriptionsAllowed *bool             `json:"personal_subscriptions_allowed"`
 	}
 	if err := client.Do(ctx, http.MethodGet, "/v1/organizations/current/credentials", nil, &listed); err != nil {
 		return claudeSubscriptionResolution{}, api.HumanError(err)
+	}
+	// Personal subscriptions need the organization's Pro plan (or an admin
+	// override). Without it Dari would ignore the connection anyway, so use
+	// managed billing and keep the user's opt-out preference untouched.
+	if listed.PersonalSubscriptionsAllowed != nil && !*listed.PersonalSubscriptionsAllowed {
+		fmt.Fprintln(stderr, "Personal subscriptions need the Pro plan for this organization; using Dari managed billing.")
+		return claudeSubscriptionResolution{decided: true}, nil
 	}
 	if slices.ContainsFunc(listed.Credentials, func(credential agentCredential) bool {
 		return credential.OAuthProvider == "anthropic_claude_code"

@@ -375,6 +375,42 @@ func TestResolveClaudePersonalSubscriptionUsesExistingConnection(t *testing.T) {
 	}
 }
 
+func TestResolveClaudePersonalSubscriptionUsesManagedBillingWithoutProPlan(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/organizations/current/credentials" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"credentials":                    []any{map[string]any{"oauth_provider": "anthropic_claude_code"}},
+			"personal_subscriptions_allowed": false,
+		})
+	}))
+	defer server.Close()
+
+	var stderr strings.Builder
+	resolution, err := resolveClaudePersonalSubscription(
+		context.Background(),
+		api.New(server.URL),
+		strings.NewReader("y\n"),
+		&stderr,
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolution.enabled || !resolution.decided || resolution.preferenceChanged {
+		t.Fatalf("resolution = %#v, want managed billing without touching the opt-out", resolution)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
+	}
+	if !strings.Contains(stderr.String(), "Pro plan") {
+		t.Fatalf("stderr does not explain the plan requirement:\n%s", stderr.String())
+	}
+}
+
 func TestResolveClaudePersonalSubscriptionDefaultsToConnect(t *testing.T) {
 	var completed map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

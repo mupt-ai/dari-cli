@@ -46,7 +46,7 @@ dari --codex
 dari --pi
 ```
 
-On first launch, Dari signs you in if needed and creates and privately caches one Routing key. Claude asks whether to use your Claude Code personal subscription, defaulting to yes. If it is not connected to Dari yet, the launcher opens Anthropic login and finishes the connection before continuing; later launches reuse it automatically.
+On first launch, Dari signs you in if needed and creates and privately caches one Routing key. Claude asks whether to use your Claude Code personal subscription, defaulting to yes. If it is not connected to Dari yet, the launcher opens Anthropic login and finishes the connection before continuing; later launches reuse it automatically. Personal subscriptions require the organization's Pro plan; without it the launcher says so and uses Dari managed billing.
 
 The first Claude or Codex launch also opens an arrow-key model checklist: up/down moves, space toggles a model, and the right arrow opens its thinking levels, where any combination can be checked. Recommended defaults are preselected and clearly marked. Codex keeps your organization's default router and its current models unless you change the selection. Claude Code gets a separate router with Claude Fable 5, Claude Opus 5, and GLM 5.3 Flash preselected. Dari applies recommended reasoning levels and managed providers to selected models; the Claude router also uses the current default public eval set.
 
