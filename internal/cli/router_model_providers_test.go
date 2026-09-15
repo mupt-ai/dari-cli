@@ -152,3 +152,25 @@ routing_strategy: slm
 		t.Fatalf("provider_keys = %v", createBody["provider_keys"])
 	}
 }
+
+func TestManifestSavedCredentialsBindBuiltInCloudProviders(t *testing.T) {
+	for _, provider := range []string{"amazon-bedrock", "azure"} {
+		if !manifestProviderUsesManifestCredentials(provider) {
+			t.Fatalf("%s should take manifest credentials like other built-in providers", provider)
+		}
+		err := validateManifestProviderKeys(
+			"router.yml",
+			map[string]string{provider: "user"},
+			map[string]string{provider: "cred_saved"},
+			[]string{"openai/gpt-5.6-sol"},
+			map[string]string{"openai/gpt-5.6-sol": provider},
+			nil,
+		)
+		if err != nil {
+			t.Fatalf("%s manifest with a saved credential: %v", provider, err)
+		}
+	}
+	if manifestProviderUsesManifestCredentials("acme") {
+		t.Fatal("custom providers resolve credentials from the model catalog")
+	}
+}
