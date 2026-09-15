@@ -42,6 +42,7 @@ func newProviderCredentialsCmd(gf *globalFlags) *cobra.Command {
 
 type providerCredentialSecretFlags struct {
 	valueStdin      bool
+	azureEndpoint   string
 	awsRegion       string
 	awsRoleARN      string
 	accessKeyIDEnv  string
@@ -51,6 +52,7 @@ type providerCredentialSecretFlags struct {
 
 func (flags *providerCredentialSecretFlags) register(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&flags.valueStdin, "value-stdin", false, "Read an API key from standard input")
+	cmd.Flags().StringVar(&flags.azureEndpoint, "azure-endpoint", "", "Microsoft Azure resource endpoint, for example https://my-resource.services.ai.azure.com")
 	cmd.Flags().StringVar(&flags.awsRegion, "aws-region", "", "AWS region for Bedrock AWS IAM or AWS Role authentication")
 	cmd.Flags().StringVar(&flags.awsRoleARN, "aws-role-arn", "", "IAM role ARN Dari assumes for Bedrock requests (AWS Role authentication)")
 	cmd.Flags().StringVar(&flags.accessKeyIDEnv, "aws-access-key-id-env", "", "Environment variable containing the AWS access key ID")
@@ -67,10 +69,17 @@ func (flags *providerCredentialSecretFlags) usingStaticKeys() bool {
 func (flags *providerCredentialSecretFlags) auth(label string, explicitValue *string) (map[string]string, error) {
 	roleARN := strings.TrimSpace(flags.awsRoleARN)
 	usingAWS := strings.TrimSpace(flags.awsRegion) != "" || roleARN != "" || flags.usingStaticKeys()
+	azureEndpoint := strings.TrimSpace(flags.azureEndpoint)
+	if azureEndpoint != "" && usingAWS {
+		return nil, errors.New("--azure-endpoint cannot be combined with AWS flags")
+	}
 	if !usingAWS {
 		value, err := resolveCredentialValue(label, explicitValue, flags.valueStdin)
 		if err != nil {
 			return nil, err
+		}
+		if azureEndpoint != "" {
+			return map[string]string{"type": "azure_api_key", "api_key": value, "endpoint": azureEndpoint}, nil
 		}
 		return map[string]string{"type": "api_key", "api_key": value}, nil
 	}
@@ -131,7 +140,7 @@ func newProviderCredentialAddCmd(gf *globalFlags) *cobra.Command {
 	flags := &providerCredentialSecretFlags{}
 	cmd := &cobra.Command{
 		Use:   "add <provider> <label> [api_key]",
-		Short: "Save an API key, AWS IAM, or AWS Role credential",
+		Short: "Save an API key, Microsoft Azure, AWS IAM, or AWS Role credential",
 		Args:  cobra.RangeArgs(2, 3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var explicitValue *string
@@ -173,8 +182,8 @@ func newProviderCredentialUpdateCmd(gf *globalFlags) *cobra.Command {
 			body := map[string]any{
 				"label": strings.TrimSpace(args[1]),
 			}
-			if region, ok := flags.regionOnlyUpdate(explicitValue); ok {
-				body["region"] = region
+			if field, value, ok := flags.metadataOnlyUpdate(explicitValue); ok {
+				body[field] = value
 			} else {
 				auth, err := flags.auth(args[1], explicitValue)
 				if err != nil {
@@ -194,10 +203,22 @@ func newProviderCredentialUpdateCmd(gf *globalFlags) *cobra.Command {
 	return cmd
 }
 
-func (flags *providerCredentialSecretFlags) regionOnlyUpdate(explicitValue *string) (string, bool) {
+// metadataOnlyUpdate reports the AWS region or Azure endpoint to change when
+// no secret material accompanies it; the stored secret is then kept.
+func (flags *providerCredentialSecretFlags) metadataOnlyUpdate(explicitValue *string) (string, string, bool) {
+	if explicitValue != nil || flags.valueStdin ||
+		strings.TrimSpace(flags.awsRoleARN) != "" || flags.usingStaticKeys() {
+		return "", "", false
+	}
 	region := strings.TrimSpace(flags.awsRegion)
-	return region, region != "" && explicitValue == nil && !flags.valueStdin &&
-		strings.TrimSpace(flags.awsRoleARN) == "" && !flags.usingStaticKeys()
+	endpoint := strings.TrimSpace(flags.azureEndpoint)
+	switch {
+	case region != "" && endpoint == "":
+		return "region", region, true
+	case endpoint != "" && region == "":
+		return "endpoint", endpoint, true
+	}
+	return "", "", false
 }
 
 func newProviderCredentialRemoveCmd(gf *globalFlags) *cobra.Command {

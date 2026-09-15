@@ -37,6 +37,8 @@ func TestProviderCredentialCommandsSendTypedPayloads(t *testing.T) {
 		{"--api-url", srv.URL, "credentials", "provider", "update", "cred_aws", "Bedrock Production", "--aws-region", "us-east-1", "--aws-access-key-id-env", "TEST_AWS_ACCESS_KEY_ID", "--aws-secret-access-key-env", "TEST_AWS_SECRET_ACCESS_KEY"},
 		{"--api-url", srv.URL, "credentials", "provider", "update", "cred_aws", "Bedrock Production", "--aws-region", "us-west-2"},
 		{"--api-url", srv.URL, "credentials", "provider", "add", "amazon-bedrock", "Bedrock Role", "--aws-region", "us-east-1", "--aws-role-arn", "arn:aws:iam::123456789012:role/dari-bedrock"},
+		{"--api-url", srv.URL, "credentials", "provider", "add", "azure", "Azure Production", "azure-key", "--azure-endpoint", "https://dari.services.ai.azure.com"},
+		{"--api-url", srv.URL, "credentials", "provider", "update", "cred_azure", "Azure Production", "--azure-endpoint", "https://dari-eu.openai.azure.com"},
 		{"--api-url", srv.URL, "credentials", "provider", "remove", "cred_old"},
 	}
 	for _, args := range commands {
@@ -95,6 +97,27 @@ func TestProviderCredentialCommandsSendTypedPayloads(t *testing.T) {
 			},
 		},
 		{
+			"method": http.MethodPost,
+			"path":   "/v1/organizations/current/credentials/provider-credentials",
+			"body": map[string]any{
+				"provider": "azure",
+				"label":    "Azure Production",
+				"auth": map[string]any{
+					"type":     "azure_api_key",
+					"api_key":  "azure-key",
+					"endpoint": "https://dari.services.ai.azure.com",
+				},
+			},
+		},
+		{
+			"method": http.MethodPut,
+			"path":   "/v1/organizations/current/credentials/provider-credentials/cred_azure",
+			"body": map[string]any{
+				"label":    "Azure Production",
+				"endpoint": "https://dari-eu.openai.azure.com",
+			},
+		},
+		{
 			"method": http.MethodDelete,
 			"path":   "/v1/organizations/current/credentials/provider-credentials/cred_old",
 			"body":   map[string]any(nil),
@@ -102,6 +125,16 @@ func TestProviderCredentialCommandsSendTypedPayloads(t *testing.T) {
 	}
 	if !reflect.DeepEqual(requests, want) {
 		t.Fatalf("requests = %#v, want %#v", requests, want)
+	}
+}
+
+func TestProviderCredentialAzureEndpointRejectsAwsFlags(t *testing.T) {
+	flags := &providerCredentialSecretFlags{
+		azureEndpoint: "https://dari.services.ai.azure.com",
+		awsRegion:     "us-east-1",
+	}
+	if _, err := flags.auth("Azure Production", nil); err == nil {
+		t.Fatal("expected Azure endpoint combined with AWS flags to fail")
 	}
 }
 
