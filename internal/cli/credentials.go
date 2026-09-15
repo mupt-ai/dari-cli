@@ -43,6 +43,7 @@ func newProviderCredentialsCmd(gf *globalFlags) *cobra.Command {
 type providerCredentialSecretFlags struct {
 	valueStdin      bool
 	awsRegion       string
+	awsRoleARN      string
 	accessKeyIDEnv  string
 	secretKeyEnv    string
 	sessionTokenEnv string
@@ -50,17 +51,22 @@ type providerCredentialSecretFlags struct {
 
 func (flags *providerCredentialSecretFlags) register(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&flags.valueStdin, "value-stdin", false, "Read an API key from standard input")
-	cmd.Flags().StringVar(&flags.awsRegion, "aws-region", "", "AWS region for Bedrock SigV4 authentication")
+	cmd.Flags().StringVar(&flags.awsRegion, "aws-region", "", "AWS region for Bedrock AWS IAM or AWS Role authentication")
+	cmd.Flags().StringVar(&flags.awsRoleARN, "aws-role-arn", "", "IAM role ARN Dari assumes for Bedrock requests (AWS Role authentication)")
 	cmd.Flags().StringVar(&flags.accessKeyIDEnv, "aws-access-key-id-env", "", "Environment variable containing the AWS access key ID")
 	cmd.Flags().StringVar(&flags.secretKeyEnv, "aws-secret-access-key-env", "", "Environment variable containing the AWS secret access key")
 	cmd.Flags().StringVar(&flags.sessionTokenEnv, "aws-session-token-env", "", "Optional environment variable containing an AWS session token")
 }
 
-func (flags *providerCredentialSecretFlags) auth(label string, explicitValue *string) (map[string]string, error) {
-	usingAWS := strings.TrimSpace(flags.awsRegion) != "" ||
-		strings.TrimSpace(flags.accessKeyIDEnv) != "" ||
+func (flags *providerCredentialSecretFlags) usingStaticKeys() bool {
+	return strings.TrimSpace(flags.accessKeyIDEnv) != "" ||
 		strings.TrimSpace(flags.secretKeyEnv) != "" ||
 		strings.TrimSpace(flags.sessionTokenEnv) != ""
+}
+
+func (flags *providerCredentialSecretFlags) auth(label string, explicitValue *string) (map[string]string, error) {
+	roleARN := strings.TrimSpace(flags.awsRoleARN)
+	usingAWS := strings.TrimSpace(flags.awsRegion) != "" || roleARN != "" || flags.usingStaticKeys()
 	if !usingAWS {
 		value, err := resolveCredentialValue(label, explicitValue, flags.valueStdin)
 		if err != nil {
@@ -69,11 +75,21 @@ func (flags *providerCredentialSecretFlags) auth(label string, explicitValue *st
 		return map[string]string{"type": "api_key", "api_key": value}, nil
 	}
 	if explicitValue != nil || flags.valueStdin {
-		return nil, errors.New("API key VALUE and --value-stdin cannot be combined with AWS IAM flags")
+		return nil, errors.New("API key VALUE and --value-stdin cannot be combined with AWS flags")
 	}
 	region := strings.TrimSpace(flags.awsRegion)
 	if region == "" {
-		return nil, errors.New("--aws-region is required for AWS IAM credentials")
+		return nil, errors.New("--aws-region is required for AWS credentials")
+	}
+	if roleARN != "" {
+		if flags.usingStaticKeys() {
+			return nil, errors.New("--aws-role-arn cannot be combined with AWS access key flags")
+		}
+		return map[string]string{
+			"type":     "aws_assume_role",
+			"region":   region,
+			"role_arn": roleARN,
+		}, nil
 	}
 	accessKeyID, err := credentialEnvValue("--aws-access-key-id-env", flags.accessKeyIDEnv)
 	if err != nil {
@@ -115,7 +131,7 @@ func newProviderCredentialAddCmd(gf *globalFlags) *cobra.Command {
 	flags := &providerCredentialSecretFlags{}
 	cmd := &cobra.Command{
 		Use:   "add <provider> <label> [api_key]",
-		Short: "Save an API key or AWS IAM credential",
+		Short: "Save an API key, AWS IAM, or AWS Role credential",
 		Args:  cobra.RangeArgs(2, 3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var explicitValue *string
@@ -181,9 +197,7 @@ func newProviderCredentialUpdateCmd(gf *globalFlags) *cobra.Command {
 func (flags *providerCredentialSecretFlags) regionOnlyUpdate(explicitValue *string) (string, bool) {
 	region := strings.TrimSpace(flags.awsRegion)
 	return region, region != "" && explicitValue == nil && !flags.valueStdin &&
-		strings.TrimSpace(flags.accessKeyIDEnv) == "" &&
-		strings.TrimSpace(flags.secretKeyEnv) == "" &&
-		strings.TrimSpace(flags.sessionTokenEnv) == ""
+		strings.TrimSpace(flags.awsRoleARN) == "" && !flags.usingStaticKeys()
 }
 
 func newProviderCredentialRemoveCmd(gf *globalFlags) *cobra.Command {

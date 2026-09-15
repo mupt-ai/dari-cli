@@ -36,6 +36,7 @@ func TestProviderCredentialCommandsSendTypedPayloads(t *testing.T) {
 		{"--api-url", srv.URL, "credentials", "provider", "add", "openrouter", "OpenRouter Production", "sk-test"},
 		{"--api-url", srv.URL, "credentials", "provider", "update", "cred_aws", "Bedrock Production", "--aws-region", "us-east-1", "--aws-access-key-id-env", "TEST_AWS_ACCESS_KEY_ID", "--aws-secret-access-key-env", "TEST_AWS_SECRET_ACCESS_KEY"},
 		{"--api-url", srv.URL, "credentials", "provider", "update", "cred_aws", "Bedrock Production", "--aws-region", "us-west-2"},
+		{"--api-url", srv.URL, "credentials", "provider", "add", "amazon-bedrock", "Bedrock Role", "--aws-region", "us-east-1", "--aws-role-arn", "arn:aws:iam::123456789012:role/dari-bedrock"},
 		{"--api-url", srv.URL, "credentials", "provider", "remove", "cred_old"},
 	}
 	for _, args := range commands {
@@ -81,6 +82,19 @@ func TestProviderCredentialCommandsSendTypedPayloads(t *testing.T) {
 			},
 		},
 		{
+			"method": http.MethodPost,
+			"path":   "/v1/organizations/current/credentials/provider-credentials",
+			"body": map[string]any{
+				"provider": "amazon-bedrock",
+				"label":    "Bedrock Role",
+				"auth": map[string]any{
+					"type":     "aws_assume_role",
+					"region":   "us-east-1",
+					"role_arn": "arn:aws:iam::123456789012:role/dari-bedrock",
+				},
+			},
+		},
+		{
 			"method": http.MethodDelete,
 			"path":   "/v1/organizations/current/credentials/provider-credentials/cred_old",
 			"body":   map[string]any(nil),
@@ -88,6 +102,21 @@ func TestProviderCredentialCommandsSendTypedPayloads(t *testing.T) {
 	}
 	if !reflect.DeepEqual(requests, want) {
 		t.Fatalf("requests = %#v, want %#v", requests, want)
+	}
+}
+
+func TestProviderCredentialRoleFlagsRejectStaticKeys(t *testing.T) {
+	flags := &providerCredentialSecretFlags{
+		awsRegion:      "us-east-1",
+		awsRoleARN:     "arn:aws:iam::123456789012:role/dari-bedrock",
+		accessKeyIDEnv: "TEST_AWS_ACCESS_KEY_ID",
+	}
+	if _, err := flags.auth("Bedrock Role", nil); err == nil {
+		t.Fatal("expected role ARN combined with access key flags to fail")
+	}
+	flags = &providerCredentialSecretFlags{awsRoleARN: "arn:aws:iam::123456789012:role/dari-bedrock"}
+	if _, err := flags.auth("Bedrock Role", nil); err == nil {
+		t.Fatal("expected missing --aws-region to fail")
 	}
 }
 
