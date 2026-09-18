@@ -97,6 +97,7 @@ type routerCustomConfig struct {
 }
 
 type routerCreateRequest struct {
+	AllowLongContext      bool                `json:"allow_long_context,omitempty"`
 	Name                  string              `json:"name"`
 	EnabledModels         []string            `json:"enabled_models"`
 	ModelProviders        map[string]string   `json:"model_providers,omitempty"`
@@ -111,6 +112,7 @@ type routerCreateRequest struct {
 }
 
 type routerUpdateRequest struct {
+	AllowLongContext      *bool             `json:"allow_long_context,omitempty"`
 	Name                  string            `json:"name"`
 	EnabledModels         []string          `json:"enabled_models"`
 	ProviderKeys          map[string]string `json:"provider_keys,omitempty"`
@@ -127,6 +129,7 @@ type routerCurrent struct {
 }
 
 type routerCreateManifest struct {
+	AllowLongContext      bool                `yaml:"allow_long_context"`
 	Name                  string              `yaml:"name"`
 	EnabledModels         []string            `yaml:"enabled_models"`
 	ModelProviders        map[string]string   `yaml:"model_providers"`
@@ -142,6 +145,7 @@ type routerCreateManifest struct {
 }
 
 type routerConfigFlags struct {
+	allowLongContext    bool
 	models              []string
 	providerKeyPairs    []string
 	providerKeyEnvs     []string
@@ -167,6 +171,7 @@ func (rf *routerConfigFlags) register(cmd *cobra.Command) {
 	cmd.Flags().StringSliceVar(&rf.managedKeyProvider, name("managed-key"), nil, "Use the Dari-managed key for this provider (repeatable or comma-separated)")
 	cmd.Flags().StringSliceVar(&rf.evalIDs, name("eval"), nil, "Eval scorecard ID to import (repeatable or comma-separated); run 'dari eval list' for IDs")
 	cmd.Flags().StringVar(&rf.strategy, name("strategy"), "", "Routing strategy: slm; use a manifest for custom rules")
+	cmd.Flags().BoolVar(&rf.allowLongContext, name("allow-long-context"), false, "Allow provider long-context surcharges (off by default)")
 }
 
 func (rf *routerConfigFlags) changed(cmd *cobra.Command) bool {
@@ -258,8 +263,9 @@ func newRouterCreateCmd(gf *globalFlags) *cobra.Command {
 				return fmt.Errorf("at least one --model is required; run 'dari router models' for the catalog")
 			}
 			body := routerCreateRequest{
-				Name:          strings.TrimSpace(args[0]),
-				EnabledModels: rf.models,
+				AllowLongContext: rf.allowLongContext,
+				Name:             strings.TrimSpace(args[0]),
+				EnabledModels:    rf.models,
 			}
 			keys, err := rf.providerKeys(cmd.ErrOrStderr())
 			if err != nil {
@@ -341,6 +347,9 @@ func newRouterUpdateCmd(gf *globalFlags) *cobra.Command {
 			body := routerUpdateRequest{
 				Name:          current.Name,
 				EnabledModels: current.EnabledModels,
+			}
+			if cmd.Flags().Changed("allow-long-context") {
+				body.AllowLongContext = &rf.allowLongContext
 			}
 			if cmd.Flags().Changed("name") {
 				body.Name = strings.TrimSpace(name)
@@ -631,9 +640,10 @@ func (manifest routerCreateManifest) createRequest(path string, resolveCatalogDe
 		return routerCreateRequest{}, err
 	}
 	body := routerCreateRequest{
-		Name:           name,
-		EnabledModels:  models,
-		ModelProviders: modelProviders,
+		Name:             name,
+		AllowLongContext: manifest.AllowLongContext,
+		EnabledModels:    models,
+		ModelProviders:   modelProviders,
 	}
 	if len(providerKeys) > 0 {
 		body.ProviderKeys = providerKeys
