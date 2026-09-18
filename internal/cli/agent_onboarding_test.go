@@ -262,13 +262,14 @@ func TestAgentPickerRowKeepsCustomCurrentLevels(t *testing.T) {
 	}
 }
 
-func TestAgentRouterCreateBodyUsesCurrentDefaultEvals(t *testing.T) {
+func TestAgentRouterCreateBodyUsesPresetEvals(t *testing.T) {
+	evalIDs := testAgentEvalIDs()
 	body := agentRouterCreateBody(testAgentModels(), []agentModelChoice{
 		{ID: "anthropic/claude-fable-5", Levels: []string{"high"}},
 		{ID: "zai-org/GLM-5.3", Levels: []string{"high"}},
-	}, claudeRouterClientKey, true)
-	if !slices.Equal(body.EvalIDs, defaultAgentEvalIDs) {
-		t.Fatalf("eval_ids = %q, want %q", body.EvalIDs, defaultAgentEvalIDs)
+	}, evalIDs, claudeRouterClientKey, true)
+	if !slices.Equal(body.EvalIDs, evalIDs) {
+		t.Fatalf("eval_ids = %q, want %q", body.EvalIDs, evalIDs)
 	}
 	if !body.PersonalOAuthEnabled {
 		t.Error("personal OAuth is disabled")
@@ -281,7 +282,7 @@ func TestAgentRouterCreateBodyUsesCurrentDefaultEvals(t *testing.T) {
 	}
 	withoutSubscription := agentRouterCreateBody(testAgentModels(), []agentModelChoice{
 		{ID: "anthropic/claude-fable-5", Levels: []string{"high"}},
-	}, claudeManagedRouterClientKey, false)
+	}, evalIDs, claudeManagedRouterClientKey, false)
 	if withoutSubscription.PersonalOAuthEnabled {
 		t.Error("personal OAuth is enabled after opt-out")
 	}
@@ -790,22 +791,24 @@ func TestEnsureClaudeAgentRouterCreatesSeparateRouter(t *testing.T) {
 	}
 	if got := stringSlice(created["enabled_models"]); !slices.Equal(got, []string{
 		"anthropic/claude-fable-5-1",
-		"anthropic/claude-opus-5",
 		"zai-org/GLM-5.3-Flash",
+		"xai/grok-4.6",
+		"openai/gpt-5.6-sol",
 	}) {
 		t.Errorf("enabled_models = %q", got)
 	}
-	if got := stringSlice(created["eval_ids"]); !slices.Equal(got, defaultAgentEvalIDs) {
+	if got := stringSlice(created["eval_ids"]); !slices.Equal(got, testAgentEvalIDs()) {
 		t.Errorf("eval_ids = %q", got)
 	}
 	levels, _ := created["model_thinking_levels"].(map[string]any)
-	for _, modelID := range []string{
-		"anthropic/claude-fable-5-1",
-		"anthropic/claude-opus-5",
-		"zai-org/GLM-5.3-Flash",
+	for modelID, want := range map[string][]string{
+		"anthropic/claude-fable-5-1": {"high"},
+		"zai-org/GLM-5.3-Flash":      {"high"},
+		"xai/grok-4.6":               {"high"},
+		"openai/gpt-5.6-sol":         {"medium"},
 	} {
-		if got := stringSlice(levels[modelID]); !slices.Equal(got, []string{"high"}) {
-			t.Errorf("%s thinking levels = %q, want [high]", modelID, got)
+		if got := stringSlice(levels[modelID]); !slices.Equal(got, want) {
+			t.Errorf("%s thinking levels = %q, want %q", modelID, got, want)
 		}
 	}
 }
@@ -1251,8 +1254,9 @@ func writeAgentModelCatalog(t *testing.T, w http.ResponseWriter) {
 		"supports_managed_key": true,
 		"models": []map[string]any{
 			{"id": "anthropic/claude-fable-5-1", "display_name": "Fable 5.1", "provider": "anthropic", "default_provider": "anthropic", "default_thinking_level": "high", "supports_managed_key": true},
-			{"id": "anthropic/claude-opus-5", "display_name": "Opus", "provider": "anthropic", "default_provider": "anthropic", "default_thinking_level": "high", "supports_managed_key": true},
+			{"id": "openai/gpt-5.6-sol", "display_name": "Sol", "provider": "openai", "default_provider": "openai", "default_thinking_level": "medium", "supports_managed_key": true},
 			{"id": "zai-org/GLM-5.3-Flash", "display_name": "GLM Flash", "provider": "fireworks", "default_provider": "fireworks", "default_thinking_level": "high", "supports_managed_key": true},
+			{"id": "xai/grok-4.6", "display_name": "Grok", "provider": "xai", "default_provider": "xai", "default_thinking_level": "high", "supports_managed_key": true},
 			{"id": "zai-org/GLM-5.3", "display_name": "GLM", "provider": "fireworks", "default_provider": "fireworks", "default_thinking_level": "high", "supports_managed_key": true},
 		},
 	}}})
@@ -1262,14 +1266,37 @@ func writeAgentModelSuggestions(t *testing.T, w http.ResponseWriter) {
 	t.Helper()
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"suggestions": []map[string]any{{
-			"id": "claude",
+			"id":       "claude",
+			"eval_ids": testAgentEvalIDs(),
+			"model_ids": []string{
+				"anthropic/claude-fable-5-1",
+				"zai-org/GLM-5.3-Flash",
+				"xai/grok-4.6",
+				"openai/gpt-5.6-sol",
+			},
 			"models": map[string]any{
 				"anthropic/claude-fable-5-1": []string{"high"},
-				"anthropic/claude-opus-5":    []string{"high"},
 				"zai-org/GLM-5.3-Flash":      []string{"high"},
+				"xai/grok-4.6":               []string{"high"},
+				"openai/gpt-5.6-sol":         []string{"medium"},
 			},
 		}},
 	})
+}
+
+func testAgentEvalIDs() []string {
+	return []string{
+		"evl_public_aa_intelligence_index",
+		"evl_public_aa_hle",
+		"evl_public_vals_terminal_bench_2_1",
+		"evl_public_vals_vibe_code_bench",
+		"evl_public_aa_gdpval",
+		"evl_public_aa_scicode",
+		"evl_public_vals_skillsbench",
+		"evl_public_vals_code_migration",
+		"evl_public_aa_automationbench",
+		"evl_public_vals_live_code_bench",
+	}
 }
 
 func stringSlice(value any) []string {
@@ -1624,8 +1651,9 @@ func TestEnsureClaudeAgentRouterIgnoresMatchingDefaultRouter(t *testing.T) {
 	levels, _ := created["model_thinking_levels"].(map[string]any)
 	for modelID, want := range map[string][]string{
 		"anthropic/claude-fable-5-1": {"high"},
-		"anthropic/claude-opus-5":    {"high"},
 		"zai-org/GLM-5.3-Flash":      {"high"},
+		"xai/grok-4.6":               {"high"},
+		"openai/gpt-5.6-sol":         {"medium"},
 	} {
 		if got := stringSlice(levels[modelID]); !slices.Equal(got, want) {
 			t.Errorf("%s levels = %q, want recommended %q", modelID, got, want)

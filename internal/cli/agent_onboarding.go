@@ -38,19 +38,6 @@ var (
 
 var errAgentOAuthCallbackTimedOut = errors.New("timed out waiting for subscription authorization")
 
-var defaultAgentEvalIDs = []string{
-	"evl_public_aa_long_context_reasoning",
-	"evl_public_designarena_code_overall",
-	"evl_public_aa_intelligence_index",
-	"evl_public_designarena_data_viz",
-	"evl_public_designarena_website",
-	"evl_public_aa_hle",
-	"evl_public_vals_terminal_bench_2_1",
-	"evl_public_vals_vibe_code_bench",
-	"evl_public_aa_gdpval",
-	"evl_public_aa_scicode",
-}
-
 type agentRoutingAccess struct {
 	apiURL string
 	scope  string
@@ -303,7 +290,13 @@ func ensureAgentRouter(
 		}
 		fmt.Fprintln(stderr, "Codex will use your existing default router.")
 	} else {
-		body := agentRouterCreateBody(models, choices, claudeClientKey, usePersonalSubscription)
+		body := agentRouterCreateBody(
+			models,
+			choices,
+			suggestion.evalIDs,
+			claudeClientKey,
+			usePersonalSubscription,
+		)
 		var created agentRouter
 		createErr := client.Do(ctx, http.MethodPost, "/v1/organizations/current/routers", body, &created)
 		if createErr == nil {
@@ -1341,6 +1334,7 @@ func sameStringSet(a, b []string) bool {
 func agentRouterCreateBody(
 	models []agentModel,
 	choices []agentModelChoice,
+	evalIDs []string,
 	clientKey string,
 	usePersonalSubscription bool,
 ) agentRouterCreateRequest {
@@ -1360,7 +1354,7 @@ func agentRouterCreateBody(
 		EnabledModels:                     ids,
 		ModelProviders:                    providers,
 		ProviderKeySources:                providerSources,
-		EvalIDs:                           defaultAgentEvalIDs,
+		EvalIDs:                           append([]string(nil), evalIDs...),
 		ModelThinkingLevels:               choiceLevels(choices),
 		RoutingStrategy:                   "slm",
 		SpeculativeRouting:                true,
@@ -1407,6 +1401,7 @@ func agentRouterUpdateBody(
 type agentModelSuggestion struct {
 	modelIDs []string
 	levels   map[string][]string
+	evalIDs  []string
 }
 
 // fetchAgentModelSuggestion returns the named suggestion from the shared
@@ -1418,8 +1413,10 @@ func fetchAgentModelSuggestion(
 ) (agentModelSuggestion, error) {
 	var payload struct {
 		Suggestions []struct {
-			ID     string              `json:"id"`
-			Models map[string][]string `json:"models"`
+			ID       string              `json:"id"`
+			ModelIDs []string            `json:"model_ids"`
+			Models   map[string][]string `json:"models"`
+			EvalIDs  []string            `json:"eval_ids"`
 		} `json:"suggestions"`
 	}
 	if err := client.Do(
@@ -1435,12 +1432,19 @@ func fetchAgentModelSuggestion(
 		if suggestion.ID != suggestionID {
 			continue
 		}
-		modelIDs := make([]string, 0, len(suggestion.Models))
-		for modelID := range suggestion.Models {
-			modelIDs = append(modelIDs, modelID)
+		modelIDs := append([]string(nil), suggestion.ModelIDs...)
+		if len(modelIDs) == 0 {
+			modelIDs = make([]string, 0, len(suggestion.Models))
+			for modelID := range suggestion.Models {
+				modelIDs = append(modelIDs, modelID)
+			}
+			sort.Strings(modelIDs)
 		}
-		sort.Strings(modelIDs)
-		return agentModelSuggestion{modelIDs: modelIDs, levels: suggestion.Models}, nil
+		return agentModelSuggestion{
+			modelIDs: modelIDs,
+			levels:   suggestion.Models,
+			evalIDs:  append([]string(nil), suggestion.EvalIDs...),
+		}, nil
 	}
 	return agentModelSuggestion{}, fmt.Errorf(
 		"no %q model suggestion is configured on the backend", suggestionID,
