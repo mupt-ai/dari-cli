@@ -84,7 +84,7 @@ func runAgentChoiceTUI(
 			case "enter":
 				return cursor, nil
 			case "quit", "esc":
-				return 0, errors.New("Claude Code onboarding canceled")
+				return 0, errors.New("agent onboarding canceled")
 			}
 		}
 		if readErr != nil {
@@ -111,15 +111,16 @@ func agentChoiceLines(lines []string, prompt string, options []agentChoiceOption
 	return append(lines, "", ansiGray+"↑/↓ move   enter confirm   q cancel"+ansiReset)
 }
 
-func runClaudeOAuthTUI(
+func runAgentOAuthTUI(
+	provider agentSubscriptionProvider,
 	stdin io.Reader,
 	stderr io.Writer,
 	authorizationURL string,
 	opened bool,
-	callback *claudeOAuthCallbackServer,
+	callback *agentOAuthCallbackServer,
 ) (string, error) {
 	if callback == nil {
-		return runClaudeCallbackInputTUI(stdin, stderr, authorizationURL, opened, "")
+		return runAgentCallbackInputTUI(provider, stdin, stderr, authorizationURL, opened, "")
 	}
 
 	status := ""
@@ -130,14 +131,14 @@ func runClaudeOAuthTUI(
 		choice, err := runAgentChoiceTUI(
 			stdin,
 			stderr,
-			"Connect Claude Code",
+			"Connect "+provider.name,
 			"Complete Authorization",
 			[]agentChoiceOption{
 				{label: "Use automatic callback", note: "same-machine browser"},
 				{label: "Paste localhost callback URL", note: "remote browser"},
 			},
 			func(width int) []string {
-				lines := claudeOAuthDetails(authorizationURL, opened, width)
+				lines := agentOAuthDetails(provider, authorizationURL, opened, width)
 				if status != "" {
 					lines = append(lines, ansiCoral+status+ansiReset, "")
 				}
@@ -152,20 +153,20 @@ func runClaudeOAuthTUI(
 		}
 		if choice == 1 {
 			callback.Close()
-			return runClaudeCallbackInputTUI(stdin, stderr, authorizationURL, opened, "")
+			return runAgentCallbackInputTUI(provider, stdin, stderr, authorizationURL, opened, "")
 		}
 		status = "Callback not received yet. Finish authorization in the browser, then press Enter again."
 	}
 }
 
-func claudeOAuthLines(authorizationURL string, opened bool, width int) []string {
-	return append(agentBannerLines("Connect Claude Code"), claudeOAuthDetails(authorizationURL, opened, width)...)
+func agentOAuthLines(provider agentSubscriptionProvider, authorizationURL string, opened bool, width int) []string {
+	return append(agentBannerLines("Connect "+provider.name), agentOAuthDetails(provider, authorizationURL, opened, width)...)
 }
 
-func claudeOAuthDetails(authorizationURL string, opened bool, width int) []string {
+func agentOAuthDetails(provider agentSubscriptionProvider, authorizationURL string, opened bool, width int) []string {
 	lines := []string{}
 	if opened {
-		lines = append(lines, ansiGreen+"✓ Anthropic login opened in your browser."+ansiReset)
+		lines = append(lines, ansiGreen+"✓ "+provider.name+" login opened in your browser."+ansiReset)
 	} else {
 		lines = append(lines, ansiBold+"Open this URL in a browser:"+ansiReset)
 	}
@@ -180,7 +181,8 @@ func claudeOAuthDetails(authorizationURL string, opened bool, width int) []strin
 	return append(lines, ansiCyan+authorizationURL+ansiReset, "")
 }
 
-func runClaudeCallbackInputTUI(
+func runAgentCallbackInputTUI(
+	provider agentSubscriptionProvider,
 	stdin io.Reader,
 	stderr io.Writer,
 	authorizationURL string,
@@ -193,10 +195,10 @@ func runClaudeCallbackInputTUI(
 	}
 	defer session.Close()
 
-	input := claudeCallbackInputState{}
+	input := agentCallbackInputState{}
 	buf := make([]byte, 256)
 	for {
-		lines := claudeOAuthLines(authorizationURL, opened, session.width)
+		lines := agentOAuthLines(provider, authorizationURL, opened, session.width)
 		if message != "" {
 			lines = append(lines, ansiCoral+message+ansiReset, "")
 		}
@@ -213,24 +215,24 @@ func runClaudeCallbackInputTUI(
 		n, readErr := session.file.Read(buf)
 		submitted, canceled := input.update(buf[:n])
 		if canceled {
-			return "", errors.New("Claude Code authorization canceled")
+			return "", fmt.Errorf("%s authorization canceled", provider.name)
 		}
 		if submitted && strings.TrimSpace(input.value) != "" {
 			return input.value, nil
 		}
 		if readErr != nil {
-			return "", fmt.Errorf("read Claude Code callback URL: %w", readErr)
+			return "", fmt.Errorf("read %s callback URL: %w", provider.name, readErr)
 		}
 	}
 }
 
-type claudeCallbackInputState struct {
+type agentCallbackInputState struct {
 	value  string
 	escape bool
 	csi    bool
 }
 
-func (input *claudeCallbackInputState) update(raw []byte) (bool, bool) {
+func (input *agentCallbackInputState) update(raw []byte) (bool, bool) {
 	for _, value := range raw {
 		if input.escape {
 			if input.csi {

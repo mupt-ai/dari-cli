@@ -64,15 +64,11 @@ func runAgentLaunch(ctx context.Context, launch agentLaunch, stdin io.Reader, st
 	key := "unused"
 	routerID := "default"
 	if !onlyRequestsAgentInfo(launch.args) {
-		if launch.name == "pi" {
-			key, err = resolveAgentRoutingKey(ctx, stdin, stderr)
-		} else {
-			var access agentRoutingAccess
-			access, err = resolveAgentRoutingAccess(ctx, stdin, stderr)
-			if err == nil {
-				key = access.key
-				routerID, err = ensureAgentRouter(ctx, launch.name, access, stdin, stderr)
-			}
+		var access agentRoutingAccess
+		access, err = resolveAgentRoutingAccess(ctx, stdin, stderr)
+		if err == nil {
+			key = access.key
+			routerID, err = ensureAgentRouter(ctx, launch.name, access, stdin, stderr)
 		}
 		if err != nil {
 			fmt.Fprintln(stderr, err)

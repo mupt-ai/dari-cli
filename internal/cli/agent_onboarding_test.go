@@ -320,7 +320,7 @@ func TestClaudeSubscriptionPreferenceScopeIncludesLoggedInUser(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	scope, err := claudeSubscriptionPreferenceScope("https://api.example.test|org:org_one")
+	scope, err := agentSubscriptionPreferenceScope("https://api.example.test|org:org_one", "claude")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +332,7 @@ func TestClaudeSubscriptionPreferenceScopeIncludesLoggedInUser(t *testing.T) {
 
 func TestClaudeSubscriptionPreferenceScopeKeepsAPIKeyScope(t *testing.T) {
 	t.Setenv("DARI_CONFIG_DIR", t.TempDir())
-	scope, err := claudeSubscriptionPreferenceScope("https://api.example.test|key:abc")
+	scope, err := agentSubscriptionPreferenceScope("https://api.example.test|key:abc", "claude")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,8 +354,9 @@ func TestResolveClaudePersonalSubscriptionUsesExistingConnection(t *testing.T) {
 	defer server.Close()
 
 	var stderr strings.Builder
-	resolution, err := resolveClaudePersonalSubscription(
+	resolution, err := resolveAgentPersonalSubscription(
 		context.Background(),
+		claudeSubscription,
 		api.New(server.URL),
 		strings.NewReader("n\n"),
 		&stderr,
@@ -390,18 +391,19 @@ func TestResolveClaudePersonalSubscriptionUsesManagedBillingWithoutProPlan(t *te
 	defer server.Close()
 
 	var stderr strings.Builder
-	resolution, err := resolveClaudePersonalSubscription(
+	resolution, err := resolveAgentPersonalSubscription(
 		context.Background(),
+		claudeSubscription,
 		api.New(server.URL),
-		strings.NewReader("y\n"),
+		strings.NewReader("3\n"),
 		&stderr,
 		false,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolution.enabled || !resolution.decided || resolution.preferenceChanged {
-		t.Fatalf("resolution = %#v, want managed billing without touching the opt-out", resolution)
+	if resolution.enabled || !resolution.decided || !resolution.preferenceChanged {
+		t.Fatalf("resolution = %#v, want managed billing with an explicit opt-out", resolution)
 	}
 	if requests != 1 {
 		t.Fatalf("requests = %d, want 1", requests)
@@ -445,8 +447,9 @@ func TestResolveClaudePersonalSubscriptionDefaultsToConnect(t *testing.T) {
 	t.Cleanup(func() { openAgentBrowser = originalOpenBrowser })
 
 	var stderr strings.Builder
-	resolution, err := resolveClaudePersonalSubscription(
+	resolution, err := resolveAgentPersonalSubscription(
 		context.Background(),
+		claudeSubscription,
 		api.New(server.URL),
 		strings.NewReader("\nhttp://localhost:53692/callback?code=test&state=test\n"),
 		&stderr,
@@ -508,8 +511,9 @@ func TestResolveClaudePersonalSubscriptionCompletesBrowserCallback(t *testing.T)
 	}
 	t.Cleanup(func() { openAgentBrowser = originalOpenBrowser })
 
-	resolution, err := resolveClaudePersonalSubscription(
+	resolution, err := resolveAgentPersonalSubscription(
 		context.Background(),
+		claudeSubscription,
 		api.New(server.URL),
 		strings.NewReader("\n"),
 		io.Discard,
@@ -552,8 +556,9 @@ func TestResolveClaudePersonalSubscriptionAllowsImmediatePastedCallback(t *testi
 	t.Cleanup(func() { openAgentBrowser = originalOpenBrowser })
 
 	var stderr strings.Builder
-	resolution, err := resolveClaudePersonalSubscription(
+	resolution, err := resolveAgentPersonalSubscription(
 		context.Background(),
+		claudeSubscription,
 		api.New(server.URL),
 		strings.NewReader("\nhttp://localhost:53692/callback?code=pasted&state=test\n"),
 		&stderr,
@@ -574,7 +579,7 @@ func TestResolveClaudePersonalSubscriptionAllowsImmediatePastedCallback(t *testi
 }
 
 func TestClaudeOAuthTUIUsesAgentPickerStyles(t *testing.T) {
-	output := strings.Join(claudeOAuthLines("https://claude.example.test/authorize", true, 80), "\n")
+	output := strings.Join(agentOAuthLines(claudeSubscription, "https://claude.example.test/authorize", true, 80), "\n")
 	output += strings.Join(agentChoiceLines(
 		agentBannerLines("Connect Claude Code"),
 		"Complete Authorization",
@@ -591,7 +596,7 @@ func TestClaudeOAuthTUIUsesAgentPickerStyles(t *testing.T) {
 		ansiCoral,
 		ansiCyan,
 		ansiGreen,
-		"Anthropic login opened in your browser",
+		"Claude Code login opened in your browser",
 		"Paste localhost callback URL",
 	} {
 		if !strings.Contains(output, text) {
@@ -601,7 +606,7 @@ func TestClaudeOAuthTUIUsesAgentPickerStyles(t *testing.T) {
 }
 
 func TestClaudeCallbackInputIgnoresSplitTerminalEscapes(t *testing.T) {
-	input := claudeCallbackInputState{}
+	input := agentCallbackInputState{}
 	chunks := [][]byte{
 		[]byte("\x1b["),
 		[]byte("A\x1b[20"),
@@ -621,7 +626,7 @@ func TestClaudeCallbackInputIgnoresSplitTerminalEscapes(t *testing.T) {
 }
 
 func TestClaudeCallbackInputCtrlCCancels(t *testing.T) {
-	input := claudeCallbackInputState{value: "partial"}
+	input := agentCallbackInputState{value: "partial"}
 	submitted, canceled := input.update([]byte{0x03})
 	if input.value != "partial" || submitted || !canceled {
 		t.Fatalf("input = %q, submitted = %t, canceled = %t", input.value, submitted, canceled)
@@ -639,8 +644,9 @@ func TestResolveClaudePersonalSubscriptionDoesNotDefaultOnEOF(t *testing.T) {
 	}))
 	defer server.Close()
 
-	resolution, err := resolveClaudePersonalSubscription(
+	resolution, err := resolveAgentPersonalSubscription(
 		context.Background(),
+		claudeSubscription,
 		api.New(server.URL),
 		strings.NewReader(""),
 		io.Discard,
@@ -667,8 +673,9 @@ func TestResolveClaudePersonalSubscriptionPreservesOptOut(t *testing.T) {
 	defer server.Close()
 
 	var stderr strings.Builder
-	resolution, err := resolveClaudePersonalSubscription(
+	resolution, err := resolveAgentPersonalSubscription(
 		context.Background(),
+		claudeSubscription,
 		api.New(server.URL),
 		strings.NewReader("\n"),
 		&stderr,
@@ -696,8 +703,9 @@ func TestResolveClaudePersonalSubscriptionAllowsOptOut(t *testing.T) {
 	}))
 	defer server.Close()
 
-	resolution, err := resolveClaudePersonalSubscription(
+	resolution, err := resolveAgentPersonalSubscription(
 		context.Background(),
+		claudeSubscription,
 		api.New(server.URL),
 		strings.NewReader("n\n"),
 		io.Discard,
@@ -1169,10 +1177,18 @@ func TestEnsureClaudeAgentRouterRecoversFromConcurrentCreate(t *testing.T) {
 	}
 }
 
-func TestEnsureCodexAgentRouterPreservesDefaultOnEnter(t *testing.T) {
+func TestEnsureCodexAgentRouterUsesPresetInsteadOfSavedDefault(t *testing.T) {
 	var putRequests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-suggestions":
+			_ = json.NewEncoder(w).Encode(map[string]any{"suggestions": []map[string]any{{
+				"id": "codex", "models": map[string][]string{"anthropic/claude-fable-5": {"high"}, "zai-org/GLM-5.3": {"high"}},
+			}}})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
+			_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}, "personal_subscriptions_allowed": false})
+
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers":
 			_ = json.NewEncoder(w).Encode(map[string]any{"routers": []map[string]any{{
 				"id":             "rtr_default",
@@ -1184,6 +1200,16 @@ func TestEnsureCodexAgentRouterPreservesDefaultOnEnter(t *testing.T) {
 			writeAgentModelCatalog(t, w)
 		case r.Method == http.MethodPut:
 			putRequests++
+			var body agentRouterUpdateRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(body.EnabledModels, []string{"anthropic/claude-fable-5", "zai-org/GLM-5.3"}) {
+				t.Fatalf("models = %v", body.EnabledModels)
+			}
+			if !slices.Equal(body.ModelThinkingLevels["zai-org/GLM-5.3"], []string{"high"}) {
+				t.Fatalf("levels = %v", body.ModelThinkingLevels)
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "rtr_default"})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -1198,7 +1224,7 @@ func TestEnsureCodexAgentRouterPreservesDefaultOnEnter(t *testing.T) {
 		context.Background(),
 		"codex",
 		agentRoutingAccess{apiURL: server.URL, scope: "test-org", key: "dari_route"},
-		strings.NewReader("\n"),
+		strings.NewReader("3\n\n"),
 		io.Discard,
 	)
 	if err != nil {
@@ -1207,8 +1233,8 @@ func TestEnsureCodexAgentRouterPreservesDefaultOnEnter(t *testing.T) {
 	if routerID != "rtr_default" {
 		t.Fatalf("router ID = %q", routerID)
 	}
-	if putRequests != 0 {
-		t.Fatalf("PUT requests = %d, want 0", putRequests)
+	if putRequests != 1 {
+		t.Fatalf("PUT requests = %d, want 1", putRequests)
 	}
 }
 
@@ -1236,7 +1262,7 @@ func writeAgentModelSuggestions(t *testing.T, w http.ResponseWriter) {
 	t.Helper()
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"suggestions": []map[string]any{{
-			"id": "claude-code",
+			"id": "claude",
 			"models": map[string]any{
 				"anthropic/claude-fable-5-1": []string{"high"},
 				"anthropic/claude-opus-5":    []string{"high"},
@@ -1297,6 +1323,14 @@ func TestEnsureCodexAgentRouterSkipsPutForUnchangedSelectionInAnyOrder(t *testin
 	var putRequests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-suggestions":
+			_ = json.NewEncoder(w).Encode(map[string]any{"suggestions": []map[string]any{{
+				"id": "codex", "models": map[string][]string{"anthropic/claude-fable-5": {"high"}, "zai-org/GLM-5.3": {"high"}},
+			}}})
+
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
+			_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}, "personal_subscriptions_allowed": false})
+
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers":
 			// Default router lists the same models as the picker defaults,
 			// but in the opposite order.
@@ -1326,7 +1360,7 @@ func TestEnsureCodexAgentRouterSkipsPutForUnchangedSelectionInAnyOrder(t *testin
 		context.Background(),
 		"codex",
 		agentRoutingAccess{apiURL: server.URL, scope: "test-org", key: "dari_route"},
-		strings.NewReader("\n"),
+		strings.NewReader("3\n\n"),
 		io.Discard,
 	)
 	if err != nil {

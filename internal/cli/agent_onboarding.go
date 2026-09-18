@@ -23,20 +23,20 @@ import (
 )
 
 const (
-	claudeRouterName                 = "Dari Claude Code"
-	claudeManagedRouterName          = "Dari Claude Code (Managed)"
-	claudeRouterClientKey            = "dari-cli:claude-code"
-	claudeManagedRouterClientKey     = "dari-cli:claude-code-managed"
-	claudeOAuthCallbackAddress       = "127.0.0.1:53692"
-	claudeOAuthAutomaticWaitDuration = 30 * time.Second
+	claudeRouterName                = "Dari Claude Code"
+	claudeManagedRouterName         = "Dari Claude Code (Managed)"
+	claudeRouterClientKey           = "dari-cli:claude-code"
+	claudeManagedRouterClientKey    = "dari-cli:claude-code-managed"
+	claudeOAuthCallbackAddress      = "127.0.0.1:53692"
+	agentOAuthAutomaticWaitDuration = 30 * time.Second
 )
 
 var (
-	openAgentBrowser             = auth.OpenBrowser
-	claudeOAuthAutomaticWaitTime = claudeOAuthAutomaticWaitDuration
+	openAgentBrowser            = auth.OpenBrowser
+	agentOAuthAutomaticWaitTime = agentOAuthAutomaticWaitDuration
 )
 
-var errClaudeOAuthCallbackTimedOut = errors.New("timed out waiting for Anthropic authorization")
+var errAgentOAuthCallbackTimedOut = errors.New("timed out waiting for subscription authorization")
 
 var defaultAgentEvalIDs = []string{
 	"evl_public_aa_long_context_reasoning",
@@ -117,7 +117,7 @@ type agentRouterUpdateRequest struct {
 	ModelThinkingLevels map[string][]string `json:"model_thinking_levels"`
 }
 
-type claudeRouterSubscriptionUpdateRequest struct {
+type agentRouterSubscriptionUpdateRequest struct {
 	Name                         string              `json:"name"`
 	EnabledModels                []string            `json:"enabled_models"`
 	ModelProviders               map[string]string   `json:"model_providers,omitempty"`
@@ -133,15 +133,17 @@ type agentCredential struct {
 type agentSubscriptionOAuthStart struct {
 	SessionToken     string `json:"session_token"`
 	AuthorizationURL string `json:"authorization_url"`
+	UserCode         string `json:"user_code,omitempty"`
 }
 
-type claudeSubscriptionResolution struct {
+type agentSubscriptionResolution struct {
 	enabled           bool
 	decided           bool
 	preferenceChanged bool
 }
 
-type claudeOAuthCallbackServer struct {
+type agentOAuthCallbackServer struct {
+	baseURL  string
 	server   *http.Server
 	response chan string
 }
@@ -173,7 +175,7 @@ func ensureAgentRouter(
 	stdin io.Reader,
 	stderr io.Writer,
 ) (string, error) {
-	if agent != "claude" && agent != "codex" {
+	if agent != "claude" && agent != "codex" && agent != "pi" {
 		return "default", nil
 	}
 
@@ -181,9 +183,6 @@ func ensureAgentRouter(
 	cachedRouterID, err := state.AgentRouterID(scope)
 	if err != nil {
 		return "", err
-	}
-	if cachedRouterID != "" && agent != "claude" {
-		return cachedRouterID, nil
 	}
 
 	client, err := auth.OrgKeyClient(access.apiURL)
@@ -201,10 +200,19 @@ func ensureAgentRouter(
 		return "", errors.New("organization has no default router")
 	}
 
+	if agent != "claude" {
+		if err := ensureDefaultAgentSubscription(ctx, agent, access, client, defaultRouter, stdin, stderr); err != nil {
+			return "", err
+		}
+		if agent == "pi" || cachedRouterID != "" {
+			return defaultRouter.ID, nil
+		}
+	}
+
 	usePersonalSubscription := false
 	claudeClientKey := ""
 	if agent == "claude" {
-		preferenceScope, err := claudeSubscriptionPreferenceScope(access.scope)
+		preferenceScope, err := agentSubscriptionPreferenceScope(access.scope, agent)
 		if err != nil {
 			return "", err
 		}
@@ -212,8 +220,9 @@ func ensureAgentRouter(
 		if err != nil {
 			return "", err
 		}
-		resolution, err := resolveClaudePersonalSubscription(
+		resolution, err := resolveAgentPersonalSubscription(
 			ctx,
+			claudeSubscription,
 			client,
 			stdin,
 			stderr,
@@ -249,7 +258,7 @@ func ensureAgentRouter(
 			return router.ClientKey == claudeClientKey
 		})
 		if found {
-			if err := setClaudeRouterSubscription(ctx, client, existing, usePersonalSubscription); err != nil {
+			if err := setAgentRouterSubscription(ctx, client, existing, usePersonalSubscription, false); err != nil {
 				return "", err
 			}
 			if err := state.SaveAgentRouterID(scope, existing.ID); err != nil {
@@ -260,22 +269,17 @@ func ensureAgentRouter(
 	}
 
 	title := "Configure the default router for Codex"
-	defaultIDs := defaultRouter.EnabledModels
-	currentLevels := defaultRouter.ModelThinkingLevels
-	recommendedLevels := agentRouterRecommendedLevels(defaultRouter)
 	if agent == "claude" {
-		// Claude Code gets its own recommendation, independent of the org
-		// default router Codex uses, so the two stay distinct. It comes from
-		// the backend so every client shares one recommendation list.
-		suggestion, err := fetchAgentModelSuggestion(ctx, client, "claude-code")
-		if err != nil {
-			return "", err
-		}
 		title = "Configure a router for Claude Code"
-		defaultIDs = suggestion.modelIDs
-		currentLevels = nil
-		recommendedLevels = suggestion.levels
 	}
+	// Both launchers use the same named presets exposed to the frontend.
+	suggestion, err := fetchAgentModelSuggestion(ctx, client, agent)
+	if err != nil {
+		return "", err
+	}
+	defaultIDs := suggestion.modelIDs
+	recommendedLevels := suggestion.levels
+
 	models, err := listAgentModels(ctx, client)
 	if err != nil {
 		return "", err
@@ -283,7 +287,7 @@ func ensureAgentRouter(
 	if agent != "claude" {
 		models = includeCurrentAgentModels(models, defaultRouter)
 	}
-	choices, err := selectAgentModels(stdin, stderr, title, models, defaultIDs, currentLevels, recommendedLevels)
+	choices, err := selectAgentModels(stdin, stderr, title, models, defaultIDs, nil, recommendedLevels)
 	if err != nil {
 		return "", err
 	}
@@ -316,7 +320,7 @@ func ensureAgentRouter(
 			if !found {
 				return "", api.HumanError(createErr)
 			}
-			if err := setClaudeRouterSubscription(ctx, client, existing, usePersonalSubscription); err != nil {
+			if err := setAgentRouterSubscription(ctx, client, existing, usePersonalSubscription, false); err != nil {
 				return "", err
 			}
 			routerID = existing.ID
@@ -330,8 +334,8 @@ func ensureAgentRouter(
 	return routerID, nil
 }
 
-func claudeSubscriptionPreferenceScope(accessScope string) (string, error) {
-	scope := accessScope + "|agent:claude"
+func agentSubscriptionPreferenceScope(accessScope, agent string) (string, error) {
+	scope := accessScope + "|agent:" + agent
 	if !strings.Contains(accessScope, "|org:") {
 		return scope, nil
 	}
@@ -345,34 +349,35 @@ func claudeSubscriptionPreferenceScope(accessScope string) (string, error) {
 	return scope + "|user:" + current.SupabaseSession.UserID, nil
 }
 
-func resolveClaudePersonalSubscription(
+func resolveAgentPersonalSubscription(
 	ctx context.Context,
+	provider agentSubscriptionProvider,
 	client *api.Client,
 	stdin io.Reader,
 	stderr io.Writer,
 	previouslyOptedOut bool,
-) (claudeSubscriptionResolution, error) {
-	var listed struct {
-		Credentials                  []agentCredential `json:"credentials"`
-		PersonalSubscriptionsAllowed *bool             `json:"personal_subscriptions_allowed"`
-	}
+) (agentSubscriptionResolution, error) {
+	var listed agentSubscriptionStatus
 	if err := client.Do(ctx, http.MethodGet, "/v1/organizations/current/credentials", nil, &listed); err != nil {
-		return claudeSubscriptionResolution{}, api.HumanError(err)
+		return agentSubscriptionResolution{}, api.HumanError(err)
 	}
-	// Personal subscriptions need the organization's Pro plan (or an admin
-	// override). Without it Dari would ignore the connection anyway, so use
-	// managed billing and keep the user's opt-out preference untouched.
-	if listed.PersonalSubscriptionsAllowed != nil && !*listed.PersonalSubscriptionsAllowed {
-		fmt.Fprintln(stderr, "Personal subscriptions need the Pro plan for this organization; using Dari managed billing.")
-		return claudeSubscriptionResolution{decided: true}, nil
+	if previouslyOptedOut && listed.Allowed != nil && !*listed.Allowed {
+		return agentSubscriptionResolution{decided: true}, nil
+	}
+	allowed, err := ensureAgentSubscriptionPlan(ctx, client, stdin, stderr, &listed)
+	if err != nil {
+		return agentSubscriptionResolution{}, err
+	}
+	if !allowed {
+		return agentSubscriptionResolution{decided: true, preferenceChanged: true}, nil
 	}
 	if slices.ContainsFunc(listed.Credentials, func(credential agentCredential) bool {
-		return credential.OAuthProvider == "anthropic_claude_code"
+		return credential.OAuthProvider == provider.id
 	}) {
-		return claudeSubscriptionResolution{enabled: true, decided: true, preferenceChanged: previouslyOptedOut}, nil
+		return agentSubscriptionResolution{enabled: true, decided: true, preferenceChanged: previouslyOptedOut}, nil
 	}
 	if previouslyOptedOut {
-		return claudeSubscriptionResolution{decided: true}, nil
+		return agentSubscriptionResolution{decided: true}, nil
 	}
 
 	var useSubscription, answered bool
@@ -380,16 +385,16 @@ func resolveClaudePersonalSubscription(
 		choice, err := runAgentChoiceTUI(
 			stdin,
 			stderr,
-			"Connect Claude Code",
-			"Use your Claude Code personal subscription?",
+			"Connect "+provider.name,
+			"Use your "+provider.name+" personal subscription?",
 			[]agentChoiceOption{
-				{label: "Use Claude Code subscription", note: "recommended"},
+				{label: "Use " + provider.name + " Subscription", note: "recommended"},
 				{label: "Use Dari managed billing"},
 			},
 			nil,
 		)
 		if err != nil {
-			return claudeSubscriptionResolution{}, err
+			return agentSubscriptionResolution{}, err
 		}
 		useSubscription = choice == 0
 		answered = true
@@ -398,26 +403,27 @@ func resolveClaudePersonalSubscription(
 		useSubscription, answered, err = confirmDefaultYes(
 			stdin,
 			stderr,
-			"Use your Claude Code personal subscription? [Y/n] ",
+			"Use your "+provider.name+" personal subscription? [Y/n] ",
 		)
 		if err != nil {
-			return claudeSubscriptionResolution{}, err
+			return agentSubscriptionResolution{}, err
 		}
 	}
 	if !answered {
-		return claudeSubscriptionResolution{}, nil
+		return agentSubscriptionResolution{}, nil
 	}
 	if !useSubscription {
-		return claudeSubscriptionResolution{decided: true, preferenceChanged: true}, nil
+		return agentSubscriptionResolution{decided: true, preferenceChanged: true}, nil
 	}
-	if err := connectClaudePersonalSubscription(ctx, client, stdin, stderr); err != nil {
-		return claudeSubscriptionResolution{}, err
+	if err := connectAgentPersonalSubscription(ctx, provider, client, stdin, stderr); err != nil {
+		return agentSubscriptionResolution{}, err
 	}
-	return claudeSubscriptionResolution{enabled: true, decided: true, preferenceChanged: true}, nil
+	return agentSubscriptionResolution{enabled: true, decided: true, preferenceChanged: true}, nil
 }
 
-func connectClaudePersonalSubscription(
+func connectAgentPersonalSubscription(
 	ctx context.Context,
+	provider agentSubscriptionProvider,
 	client *api.Client,
 	stdin io.Reader,
 	stderr io.Writer,
@@ -427,23 +433,31 @@ func connectClaudePersonalSubscription(
 		ctx,
 		http.MethodPost,
 		"/v1/organizations/current/credentials/oauth/sessions",
-		map[string]string{"provider": "anthropic_claude_code"},
+		map[string]string{"provider": provider.id},
 		&started,
 	); err != nil {
 		return api.HumanError(err)
 	}
 	if strings.TrimSpace(started.SessionToken) == "" || strings.TrimSpace(started.AuthorizationURL) == "" {
-		return errors.New("Dari returned an incomplete Claude Code authorization session")
+		return fmt.Errorf("Dari returned an incomplete %s authorization session", provider.name)
 	}
 
-	callback, callbackErr := startClaudeOAuthCallbackServer()
+	if provider.id == codexSubscription.id {
+		if strings.TrimSpace(started.UserCode) == "" {
+			return errors.New("Dari returned a ChatGPT authorization session without a device code")
+		}
+		return connectAgentDeviceCodeSubscription(ctx, provider, client, stdin, stderr, started)
+	}
+
+	callback, callbackErr := startAgentOAuthCallbackServer(provider)
 	if callback != nil {
 		defer callback.Close()
 	}
 	styled := agentInputIsTerminal(stdin)
 	opened := openAgentBrowser(started.AuthorizationURL)
 	if styled {
-		authorizationResponse, err := runClaudeOAuthTUI(
+		authorizationResponse, err := runAgentOAuthTUI(
+			provider,
 			stdin,
 			stderr,
 			started.AuthorizationURL,
@@ -453,10 +467,10 @@ func connectClaudePersonalSubscription(
 		if err != nil {
 			return err
 		}
-		return completeClaudePersonalSubscription(ctx, client, stderr, started.SessionToken, authorizationResponse, true)
+		return completeAgentPersonalSubscription(ctx, provider, client, stderr, started.SessionToken, authorizationResponse, true)
 	}
 
-	writeClaudeOAuthInstructions(stderr, started.AuthorizationURL, opened)
+	writeAgentOAuthInstructions(provider, stderr, started.AuthorizationURL, opened)
 	var (
 		authorizationResponse string
 		err                   error
@@ -468,15 +482,15 @@ func connectClaudePersonalSubscription(
 			fmt.Fprint(stderr, "Paste localhost callback URL, or press Enter to wait automatically: ")
 			manualResponse, readErr := readAgentLine(stdin)
 			if readErr != nil && !errors.Is(readErr, io.EOF) {
-				return fmt.Errorf("read Claude Code callback URL: %w", readErr)
+				return fmt.Errorf("read %s callback URL: %w", provider.name, readErr)
 			}
 			if strings.TrimSpace(manualResponse) != "" {
 				callback.Close()
 				authorizationResponse = manualResponse
 			} else {
-				fmt.Fprintln(stderr, "Waiting for Anthropic authorization…")
-				authorizationResponse, err = callback.Wait(ctx, claudeOAuthAutomaticWaitTime)
-				if errors.Is(err, errClaudeOAuthCallbackTimedOut) {
+				fmt.Fprintf(stderr, "Waiting for %s authorization…\n", provider.name)
+				authorizationResponse, err = callback.Wait(ctx, agentOAuthAutomaticWaitTime)
+				if errors.Is(err, errAgentOAuthCallbackTimedOut) {
 					callback.Close()
 					fmt.Fprintln(stderr, "Automatic callback was not received. Copy the full localhost URL from your browser; the error page is expected.")
 					fmt.Fprint(stderr, "Paste localhost URL: ")
@@ -490,21 +504,47 @@ func connectClaudePersonalSubscription(
 		authorizationResponse, err = readAgentLine(stdin)
 	}
 	if err != nil {
-		return fmt.Errorf("complete Claude Code authorization: %w", err)
+		return fmt.Errorf("complete %s authorization: %w", provider.name, err)
 	}
-	return completeClaudePersonalSubscription(ctx, client, stderr, started.SessionToken, authorizationResponse, false)
+	return completeAgentPersonalSubscription(ctx, provider, client, stderr, started.SessionToken, authorizationResponse, false)
 }
 
-func completeClaudePersonalSubscription(
+func connectAgentDeviceCodeSubscription(
 	ctx context.Context,
+	provider agentSubscriptionProvider,
+	client *api.Client,
+	stdin io.Reader,
+	stderr io.Writer,
+	started agentSubscriptionOAuthStart,
+) error {
+	opened := openAgentBrowser(started.AuthorizationURL)
+	writeAgentOAuthInstructions(provider, stderr, started.AuthorizationURL, opened)
+	fmt.Fprintf(stderr, "Enter this code at OpenAI: %s\n", started.UserCode)
+	for {
+		fmt.Fprintln(stderr, "After approving access, press Enter here to finish connecting.")
+		if _, err := readAgentLine(stdin); err != nil {
+			return fmt.Errorf("read %s approval: %w", provider.name, err)
+		}
+		err := completeAgentPersonalSubscription(ctx, provider, client, stderr, started.SessionToken, "", false)
+		if err != nil && strings.HasPrefix(err.Error(), "OpenAI approval is still pending.") {
+			fmt.Fprintln(stderr, err)
+			continue
+		}
+		return err
+	}
+}
+
+func completeAgentPersonalSubscription(
+	ctx context.Context,
+	provider agentSubscriptionProvider,
 	client *api.Client,
 	stderr io.Writer,
 	sessionToken string,
 	authorizationResponse string,
 	styled bool,
 ) error {
-	if strings.TrimSpace(authorizationResponse) == "" {
-		return errors.New("Claude Code authorization was not completed")
+	if strings.TrimSpace(authorizationResponse) == "" && provider.id != codexSubscription.id {
+		return fmt.Errorf("%s authorization was not completed", provider.name)
 	}
 	if err := client.Do(
 		ctx,
@@ -519,66 +559,67 @@ func completeClaudePersonalSubscription(
 		return api.HumanError(err)
 	}
 	if styled {
-		fmt.Fprintln(stderr, ansiGreen+"✓ Claude Code personal subscription connected."+ansiReset)
+		fmt.Fprintln(stderr, ansiGreen+"✓ "+provider.name+" personal subscription connected."+ansiReset)
 	} else {
-		fmt.Fprintln(stderr, "Connected your Claude Code personal subscription.")
+		fmt.Fprintf(stderr, "Connected your %s personal subscription.\n", provider.name)
 	}
 	return nil
 }
 
-func writeClaudeOAuthInstructions(stderr io.Writer, authorizationURL string, opened bool) {
+func writeAgentOAuthInstructions(provider agentSubscriptionProvider, stderr io.Writer, authorizationURL string, opened bool) {
 	if opened {
-		fmt.Fprintf(stderr, "Opened Anthropic login in your browser. If it did not open, visit:\n  %s\n", authorizationURL)
+		fmt.Fprintf(stderr, "Opened %s login in your browser. If it did not open, visit:\n  %s\n", provider.name, authorizationURL)
 	} else {
-		fmt.Fprintf(stderr, "Open this URL to connect your Claude Code subscription:\n  %s\n", authorizationURL)
+		fmt.Fprintf(stderr, "Open this URL to connect your %s subscription:\n  %s\n", provider.name, authorizationURL)
 	}
 }
 
-func startClaudeOAuthCallbackServer() (*claudeOAuthCallbackServer, error) {
-	listener, err := net.Listen("tcp", claudeOAuthCallbackAddress)
+func startAgentOAuthCallbackServer(provider agentSubscriptionProvider) (*agentOAuthCallbackServer, error) {
+	listener, err := net.Listen("tcp", provider.callbackAddress)
 	if err != nil {
 		return nil, err
 	}
-	callback := &claudeOAuthCallbackServer{
+	callback := &agentOAuthCallbackServer{
+		baseURL:  provider.callbackBaseURL,
 		response: make(chan string, 1),
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/callback", func(w http.ResponseWriter, request *http.Request) {
+	mux.HandleFunc(provider.callbackPath, func(w http.ResponseWriter, request *http.Request) {
 		select {
 		case callback.response <- request.URL.String():
 		default:
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = io.WriteString(w, "Claude Code subscription connected. You can close this tab.\n")
+		_, _ = io.WriteString(w, "Authorization received. Return to Dari to finish connecting your subscription.\n")
 	})
 	callback.server = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = callback.server.Serve(listener) }()
 	return callback, nil
 }
 
-func (callback *claudeOAuthCallbackServer) Try() (string, bool) {
+func (callback *agentOAuthCallbackServer) Try() (string, bool) {
 	select {
 	case response := <-callback.response:
-		return "http://localhost:53692" + response, true
+		return callback.baseURL + response, true
 	default:
 		return "", false
 	}
 }
 
-func (callback *claudeOAuthCallbackServer) Wait(ctx context.Context, timeout time.Duration) (string, error) {
+func (callback *agentOAuthCallbackServer) Wait(ctx context.Context, timeout time.Duration) (string, error) {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
 	case response := <-callback.response:
-		return "http://localhost:53692" + response, nil
+		return callback.baseURL + response, nil
 	case <-timer.C:
-		return "", errClaudeOAuthCallbackTimedOut
+		return "", errAgentOAuthCallbackTimedOut
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
 }
 
-func (callback *claudeOAuthCallbackServer) Close() {
+func (callback *agentOAuthCallbackServer) Close() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	_ = callback.server.Shutdown(ctx)
@@ -623,25 +664,26 @@ func readAgentLine(stdin io.Reader) (string, error) {
 	}
 }
 
-func setClaudeRouterSubscription(
+func setAgentRouterSubscription(
 	ctx context.Context,
 	client *api.Client,
 	router agentRouter,
 	enabled bool,
+	fallbackEnabled bool,
 ) error {
-	if router.PersonalOAuthEnabled == enabled && !router.PersonalOAuthFallbackEnabled {
+	if router.PersonalOAuthEnabled == enabled && router.PersonalOAuthFallbackEnabled == fallbackEnabled {
 		return nil
 	}
 	if strings.TrimSpace(router.Name) == "" || len(router.EnabledModels) == 0 {
-		return errors.New("Dari returned an incomplete Claude Code router")
+		return errors.New("Dari returned an incomplete agent router")
 	}
-	body := claudeRouterSubscriptionUpdateRequest{
+	body := agentRouterSubscriptionUpdateRequest{
 		Name:                         router.Name,
 		EnabledModels:                router.EnabledModels,
 		ModelProviders:               router.ModelProviders,
 		ModelThinkingLevels:          router.ModelThinkingLevels,
 		PersonalOAuthEnabled:         enabled,
-		PersonalOAuthFallbackEnabled: false,
+		PersonalOAuthFallbackEnabled: fallbackEnabled,
 	}
 	path := "/v1/organizations/current/routers/" + url.PathEscape(router.ID)
 	if err := client.Do(ctx, http.MethodPut, path, body, &router); err != nil {
@@ -1403,14 +1445,4 @@ func fetchAgentModelSuggestion(
 	return agentModelSuggestion{}, fmt.Errorf(
 		"no %q model suggestion is configured on the backend", suggestionID,
 	)
-}
-
-func agentRouterRecommendedLevels(router agentRouter) map[string][]string {
-	levels := make(map[string][]string, len(router.EnabledModels))
-	for _, modelID := range router.EnabledModels {
-		if configured := router.ModelThinkingLevels[modelID]; len(configured) > 0 {
-			levels[modelID] = append([]string(nil), configured...)
-		}
-	}
-	return levels
 }
