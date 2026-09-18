@@ -85,6 +85,12 @@ func runAgentLaunch(ctx context.Context, launch agentLaunch, stdin io.Reader, st
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	if launch.name == "codex" && !onlyRequestsAgentInfo(launch.args) {
+		if err := prepareCodexCatalog(ctx, &command, key, agentRoutingBaseURL(routerID)); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
 	if command.cleanup != nil {
 		defer command.cleanup()
 	}
@@ -248,58 +254,20 @@ func issueAgentRoutingKey(ctx context.Context, apiURL string) (string, error) {
 }
 
 func buildAgentCommand(path string, launch agentLaunch, key, routerID string) (agentCommand, error) {
-	env := withEnvironment(os.Environ(), map[string]string{routingAPIKeyEnv: key})
-	var (
-		ownedArgs []string
-		cleanup   func()
-	)
-
+	command := agentCommand{path: path, args: launch.args, env: withEnvironment(os.Environ(), map[string]string{routingAPIKeyEnv: key})}
 	switch launch.name {
 	case "claude":
-		baseURL := routingBaseURL
-		if routerID != "" && routerID != "default" {
-			baseURL += "/" + routerID
-		}
-		env = withEnvironment(env, map[string]string{
-			"ANTHROPIC_BASE_URL":             baseURL,
-			"ANTHROPIC_AUTH_TOKEN":           key,
-			"ANTHROPIC_API_KEY":              "",
-			"CLAUDE_CODE_EFFORT_LEVEL":       "auto",
-			"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000",
-			"CLAUDE_CODE_SUBAGENT_MODEL":     routingModel,
-		})
-		ownedArgs = []string{"--model", routingModel}
+		configureClaudeCommand(&command, key, routerID)
 	case "codex":
-		ownedArgs = []string{
-			"--config", `model="dari/routing"`,
-			"--config", `model_provider="dari"`,
-			"--config", `model_reasoning_summary="none"`,
-			"--config", `model_providers.dari.name="Dari"`,
-			"--config", `model_providers.dari.base_url="https://routing.dari.dev/v1"`,
-			"--config", `model_providers.dari.env_key="DARI_ROUTING_API_KEY"`,
-			"--config", `model_providers.dari.wire_api="responses"`,
-		}
+		configureCodexCommand(&command, routerID)
 	case "pi":
-		extensionPath, err := writePiProviderExtension()
-		if err != nil {
+		if err := configurePiCommand(&command); err != nil {
 			return agentCommand{}, err
-		}
-		cleanup = func() { _ = os.Remove(extensionPath) }
-		ownedArgs = []string{
-			"--extension", extensionPath,
-			"--provider", "dari",
-			"--model", routingModel,
 		}
 	default:
 		return agentCommand{}, fmt.Errorf("unsupported coding agent %q", launch.name)
 	}
-
-	return agentCommand{
-		path:    path,
-		args:    insertBeforeDoubleDash(launch.args, ownedArgs),
-		env:     env,
-		cleanup: cleanup,
-	}, nil
+	return command, nil
 }
 
 func insertBeforeDoubleDash(args, inserted []string) []string {
@@ -317,6 +285,14 @@ func insertBeforeDoubleDash(args, inserted []string) []string {
 	return result
 }
 
+func agentRoutingBaseURL(routerID string) string {
+	baseURL := routingBaseURL
+	if routerID != "" && routerID != "default" {
+		baseURL += "/" + routerID
+	}
+	return baseURL
+}
+
 func withEnvironment(base []string, values map[string]string) []string {
 	result := make([]string, 0, len(base)+len(values))
 	for _, entry := range base {
@@ -329,49 +305,4 @@ func withEnvironment(base []string, values map[string]string) []string {
 		result = append(result, name+"="+value)
 	}
 	return result
-}
-
-const piProviderExtension = `export default function (pi: any) {
-  pi.registerProvider("dari", {
-    name: "Dari",
-    baseUrl: "https://routing.dari.dev/v1",
-    apiKey: "$DARI_ROUTING_API_KEY",
-    api: "openai-completions",
-    compat: { sendSessionAffinityHeaders: true },
-    models: [{
-      id: "dari/routing",
-      name: "Dari Router",
-      reasoning: false,
-      input: ["text", "image"],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: 1000000,
-      maxTokens: 128000
-    }]
-  });
-}
-`
-
-func writePiProviderExtension() (string, error) {
-	file, err := os.CreateTemp("", "dari-pi-provider-*.ts")
-	if err != nil {
-		return "", fmt.Errorf("create temporary Pi provider: %w", err)
-	}
-	path := file.Name()
-	defer func() {
-		if err != nil {
-			_ = os.Remove(path)
-		}
-	}()
-	if err = file.Chmod(0o600); err != nil {
-		_ = file.Close()
-		return "", fmt.Errorf("set Pi provider permissions: %w", err)
-	}
-	if _, err = file.WriteString(piProviderExtension); err != nil {
-		_ = file.Close()
-		return "", fmt.Errorf("write Pi provider: %w", err)
-	}
-	if err = file.Close(); err != nil {
-		return "", fmt.Errorf("close Pi provider: %w", err)
-	}
-	return path, nil
 }
