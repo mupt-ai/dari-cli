@@ -34,6 +34,16 @@ func TestBuildPiAgentCommandUsesTemporaryProviderExtension(t *testing.T) {
 	if !strings.Contains(content, `pi.registerProvider("dari"`) {
 		t.Errorf("extension does not register Dari: %s", content)
 	}
+	for _, want := range []string{
+		`pi.on("after_provider_response"`,
+		`x-dari-selected-model`,
+		`x-dari-lease-turns-remaining`,
+		`ctx.ui.setStatus("dari"`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("extension does not show routing status (%s missing): %s", want, content)
+		}
+	}
 	if strings.Contains(content, "dari_route") {
 		t.Fatal("extension contains the secret key")
 	}
