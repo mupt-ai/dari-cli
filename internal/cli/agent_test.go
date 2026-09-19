@@ -170,9 +170,23 @@ func TestBuildAgentCommandInsertsSettingsBeforeDoubleDash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"--print", "--model", routingModel, "--", "--help"}
-	if !slices.Equal(command.args, want) {
-		t.Fatalf("args = %q, want %q", command.args, want)
+	if command.cleanup != nil {
+		defer command.cleanup()
+	}
+	settingsIndex := slices.Index(command.args, "--settings")
+	modelIndex := slices.Index(command.args, "--model")
+	dashIndex := slices.Index(command.args, "--")
+	if settingsIndex < 0 || settingsIndex > dashIndex {
+		t.Fatalf("args do not insert --settings before --: %q", command.args)
+	}
+	if modelIndex < 0 || modelIndex+1 >= dashIndex {
+		t.Fatalf("args do not insert --model before --: %q", command.args)
+	}
+	if command.args[modelIndex+1] != routingModel {
+		t.Fatalf("model = %q", command.args[modelIndex+1])
+	}
+	if command.args[0] != "--print" || command.args[len(command.args)-1] != "--help" {
+		t.Fatalf("args = %q", command.args)
 	}
 	if onlyRequestsAgentInfo([]string{"--", "--help"}) {
 		t.Fatal("prompt after -- was mistaken for the agent help flag")

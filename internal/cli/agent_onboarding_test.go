@@ -307,6 +307,9 @@ func TestBuildClaudeAgentCommandTargetsAgentRouter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if command.cleanup != nil {
+		defer command.cleanup()
+	}
 	if got := environmentValue(command.env, "ANTHROPIC_BASE_URL"); got != routingBaseURL+"/rtr_claude" {
 		t.Fatalf("ANTHROPIC_BASE_URL = %q", got)
 	}

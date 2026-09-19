@@ -253,7 +253,9 @@ func buildAgentCommand(path string, launch agentLaunch, key, routerID string) (a
 	command := agentCommand{path: path, args: launch.args, env: withEnvironment(os.Environ(), map[string]string{routingAPIKeyEnv: key})}
 	switch launch.name {
 	case "claude":
-		configureClaudeCommand(&command, key, routerID)
+		if err := configureClaudeCommand(&command, key, routerID); err != nil {
+			return agentCommand{}, err
+		}
 	case "codex":
 		configureCodexCommand(&command, routerID)
 	case "pi":
