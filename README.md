@@ -130,6 +130,7 @@ dari activity conversations --from 2026-07-01T00:00:00Z --to 2026-07-08T00:00:00
 dari activity tools list --from 2026-07-01T00:00:00Z --to 2026-07-08T00:00:00Z
 dari activity skills list --from 2026-07-01T00:00:00Z --to 2026-07-08T00:00:00Z
 dari eval list
+dari eval list --model anthropic/claude-fable-5:medium,high --model openai/gpt-5.6-sol
 dari eval get <eval_id>
 ```
 

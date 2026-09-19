@@ -24,18 +24,27 @@ func init() {
 }
 
 func newEvalListCmd(gf *globalFlags) *cobra.Command {
-	return &cobra.Command{
+	var models []string
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List eval scorecards visible to the current org",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			query := url.Values{}
+			setRepeatedQuery(query, "model", models)
+			path := "/v1/organizations/current/evals"
+			if len(query) > 0 {
+				path += "?" + query.Encode()
+			}
 			var resp map[string]any
-			if err := orgKeyRequest(cmd, gf, http.MethodGet, "/v1/organizations/current/evals", nil, &resp); err != nil {
+			if err := orgKeyRequest(cmd, gf, http.MethodGet, path, nil, &resp); err != nil {
 				return err
 			}
 			return printJSON(resp)
 		},
 	}
+	cmd.Flags().StringArrayVar(&models, "model", nil, "Keep evals that score this model ID; append :<level>,<level> to require any of those thinking levels (repeatable, every model must match)")
+	return cmd
 }
 
 func newEvalGetCmd(gf *globalFlags) *cobra.Command {

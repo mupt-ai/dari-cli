@@ -1003,6 +1003,9 @@ func TestEvalCommandsUseAPIKeyRoutes(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/v1/organizations/current/evals":
+			if models := r.URL.Query()["model"]; len(models) > 0 {
+				seen["models "+strings.Join(models, " ")] = true
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"evals": []any{map[string]any{"id": "eval_123"}}})
 		case "/v1/organizations/current/evals/eval_123":
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "eval_123", "name": "Code quality"})
@@ -1015,6 +1018,7 @@ func TestEvalCommandsUseAPIKeyRoutes(t *testing.T) {
 
 	for _, args := range [][]string{
 		{"--api-url", srv.URL, "eval", "list"},
+		{"--api-url", srv.URL, "eval", "list", "--model", "anthropic/claude-fable-5:medium,high", "--model", "openai/gpt-5.6-sol"},
 		{"--api-url", srv.URL, "eval", "get", "eval_123"},
 	} {
 		cmd := newRootCmd("dev")
@@ -1026,6 +1030,7 @@ func TestEvalCommandsUseAPIKeyRoutes(t *testing.T) {
 
 	for _, want := range []string{
 		"GET /v1/organizations/current/evals",
+		"models anthropic/claude-fable-5:medium,high openai/gpt-5.6-sol",
 		"GET /v1/organizations/current/evals/eval_123",
 	} {
 		if !seen[want] {
