@@ -22,6 +22,7 @@ func init() {
 			newCredentialsAddCmd(gf),
 			newCredentialsRemoveCmd(gf),
 			newProviderCredentialsCmd(gf),
+			newSubscriptionCredentialsCmd(gf),
 		)
 		root.AddCommand(cmd)
 	})
@@ -298,6 +299,38 @@ func newCredentialsRemoveCmd(gf *globalFlags) *cobra.Command {
 			return printJSON(resp)
 		},
 	}
+}
+
+// Personal subscription credentials are stored under one fixed name per
+// provider; the CLI accepts the short provider aliases the agent flow uses.
+var subscriptionCredentialNames = map[string]string{
+	"claude-code": "ANTHROPIC_CLAUDE_CODE_OAUTH_TOKEN",
+	"codex":       "OPENAI_CODEX_OAUTH_TOKEN",
+}
+
+func newSubscriptionCredentialsCmd(gf *globalFlags) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "subscription",
+		Short: "Manage your personal Claude Code and ChatGPT subscriptions",
+	}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "mark-available <claude-code|codex>",
+		Short: "Clear a usage-limit hold so routers use the subscription again",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name, ok := subscriptionCredentialNames[strings.ToLower(strings.TrimSpace(args[0]))]
+			if !ok {
+				return fmt.Errorf("unknown subscription %q: expected claude-code or codex", args[0])
+			}
+			var resp map[string]any
+			if err := orgKeyRequest(cmd, gf, http.MethodPost,
+				"/v1/organizations/current/credentials/"+url.PathEscape(name)+"/mark-available", nil, &resp); err != nil {
+				return err
+			}
+			return printJSON(resp)
+		},
+	})
+	return cmd
 }
 
 // resolveCredentialValue mirrors the Python CLI's logic: positional value,

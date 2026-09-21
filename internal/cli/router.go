@@ -84,6 +84,15 @@ func newRouterModelsCmd(gf *globalFlags) *cobra.Command {
 	}
 }
 
+// The model served while a provider's personal subscription is exhausted. It
+// runs on a different provider than the subscription with one thinking level.
+type routerSubscriptionFallback struct {
+	Model         string `json:"model" yaml:"model"`
+	Provider      string `json:"provider,omitempty" yaml:"provider"`
+	ThinkingLevel string `json:"thinking_level,omitempty" yaml:"thinking_level"`
+	FastMode      bool   `json:"fast_mode" yaml:"fast_mode"`
+}
+
 type routerCustomRule struct {
 	When          string  `json:"when" yaml:"when"`
 	Use           string  `json:"use" yaml:"use"`
@@ -109,17 +118,21 @@ type routerCreateRequest struct {
 	CustomConfig          *routerCustomConfig `json:"custom_config,omitempty"`
 	ModelThinkingLevels   map[string][]string `json:"model_thinking_levels,omitempty"`
 	FastModels            []string            `json:"fast_models,omitempty"`
+	// Model provider -> fallback served while that provider's personal
+	// subscription is exhausted.
+	SubscriptionFallbackModels map[string]*routerSubscriptionFallback `json:"subscription_fallback_models,omitempty"`
 }
 
 type routerUpdateRequest struct {
-	AllowLongContext      *bool             `json:"allow_long_context,omitempty"`
-	Name                  string            `json:"name"`
-	EnabledModels         []string          `json:"enabled_models"`
-	ProviderKeys          map[string]string `json:"provider_keys,omitempty"`
-	ProviderCredentialIDs map[string]string `json:"provider_credential_ids,omitempty"`
-	ProviderKeySources    map[string]string `json:"provider_key_sources,omitempty"`
-	EvalIDs               *[]string         `json:"eval_ids,omitempty"`
-	RoutingStrategy       string            `json:"routing_strategy,omitempty"`
+	AllowLongContext           *bool                                  `json:"allow_long_context,omitempty"`
+	Name                       string                                 `json:"name"`
+	EnabledModels              []string                               `json:"enabled_models"`
+	ProviderKeys               map[string]string                      `json:"provider_keys,omitempty"`
+	ProviderCredentialIDs      map[string]string                      `json:"provider_credential_ids,omitempty"`
+	ProviderKeySources         map[string]string                      `json:"provider_key_sources,omitempty"`
+	EvalIDs                    *[]string                              `json:"eval_ids,omitempty"`
+	RoutingStrategy            string                                 `json:"routing_strategy,omitempty"`
+	SubscriptionFallbackModels map[string]*routerSubscriptionFallback `json:"subscription_fallback_models,omitempty"`
 }
 
 type routerCurrent struct {
@@ -129,32 +142,34 @@ type routerCurrent struct {
 }
 
 type routerCreateManifest struct {
-	AllowLongContext      bool                `yaml:"allow_long_context"`
-	Name                  string              `yaml:"name"`
-	EnabledModels         []string            `yaml:"enabled_models"`
-	ModelProviders        map[string]string   `yaml:"model_providers"`
-	ProviderKeys          map[string]string   `yaml:"provider_keys"`
-	ProviderKeyEnvs       map[string]string   `yaml:"provider_key_envs"`
-	ProviderCredentialIDs map[string]string   `yaml:"provider_credential_ids"`
-	ProviderKeySources    map[string]string   `yaml:"provider_key_sources"`
-	EvalIDs               []string            `yaml:"eval_ids"`
-	RoutingStrategy       string              `yaml:"routing_strategy"`
-	CustomConfig          *routerCustomConfig `yaml:"custom_config"`
-	ModelThinkingLevels   map[string][]string `yaml:"model_thinking_levels"`
-	FastModels            []string            `yaml:"fast_models"`
+	AllowLongContext           bool                                  `yaml:"allow_long_context"`
+	Name                       string                                `yaml:"name"`
+	EnabledModels              []string                              `yaml:"enabled_models"`
+	ModelProviders             map[string]string                     `yaml:"model_providers"`
+	ProviderKeys               map[string]string                     `yaml:"provider_keys"`
+	ProviderKeyEnvs            map[string]string                     `yaml:"provider_key_envs"`
+	ProviderCredentialIDs      map[string]string                     `yaml:"provider_credential_ids"`
+	ProviderKeySources         map[string]string                     `yaml:"provider_key_sources"`
+	EvalIDs                    []string                              `yaml:"eval_ids"`
+	RoutingStrategy            string                                `yaml:"routing_strategy"`
+	CustomConfig               *routerCustomConfig                   `yaml:"custom_config"`
+	ModelThinkingLevels        map[string][]string                   `yaml:"model_thinking_levels"`
+	FastModels                 []string                              `yaml:"fast_models"`
+	SubscriptionFallbackModels map[string]routerSubscriptionFallback `yaml:"subscription_fallback_models"`
 }
 
 type routerConfigFlags struct {
-	allowLongContext    bool
-	models              []string
-	providerKeyPairs    []string
-	providerKeyEnvs     []string
-	providerCredentials []string
-	managedKeyProvider  []string
-	evalIDs             []string
-	clearEvals          bool
-	strategy            string
-	flagNames           []string
+	allowLongContext           bool
+	models                     []string
+	subscriptionFallbackModels []string
+	providerKeyPairs           []string
+	providerKeyEnvs            []string
+	providerCredentials        []string
+	managedKeyProvider         []string
+	evalIDs                    []string
+	clearEvals                 bool
+	strategy                   string
+	flagNames                  []string
 }
 
 func (rf *routerConfigFlags) register(cmd *cobra.Command) {
@@ -172,6 +187,59 @@ func (rf *routerConfigFlags) register(cmd *cobra.Command) {
 	cmd.Flags().StringSliceVar(&rf.evalIDs, name("eval"), nil, "Eval scorecard ID to import (repeatable or comma-separated); run 'dari eval list' for IDs")
 	cmd.Flags().StringVar(&rf.strategy, name("strategy"), "", "Routing strategy: slm; use a manifest for custom rules")
 	cmd.Flags().BoolVar(&rf.allowLongContext, name("allow-long-context"), false, "Allow provider long-context surcharges (off by default)")
+	cmd.Flags().StringArrayVar(&rf.subscriptionFallbackModels, name("subscription-fallback-model"), nil, "Model served while a personal subscription is exhausted, as provider=MODEL_ID[,via=PROVIDER][,thinking=LEVEL][,fast] (anthropic or openai; repeatable); provider= clears it")
+}
+
+// A bare "provider=" clears that provider's fallback on update, so the value
+// is nullable rather than omitted.
+func (rf *routerConfigFlags) subscriptionFallbacks() (map[string]*routerSubscriptionFallback, error) {
+	if len(rf.subscriptionFallbackModels) == 0 {
+		return nil, nil
+	}
+	fallbacks := map[string]*routerSubscriptionFallback{}
+	for _, pair := range rf.subscriptionFallbackModels {
+		provider, spec, ok := strings.Cut(pair, "=")
+		provider = strings.ToLower(strings.TrimSpace(provider))
+		if !ok || provider == "" {
+			return nil, fmt.Errorf("invalid --subscription-fallback-model %q: expected provider=MODEL_ID[,via=PROVIDER][,thinking=LEVEL][,fast]", pair)
+		}
+		spec = strings.TrimSpace(spec)
+		if spec == "" {
+			fallbacks[provider] = nil
+			continue
+		}
+		fallback, err := parseSubscriptionFallbackSpec(spec)
+		if err != nil {
+			return nil, fmt.Errorf("invalid --subscription-fallback-model %q: %w", pair, err)
+		}
+		fallbacks[provider] = fallback
+	}
+	return fallbacks, nil
+}
+
+// MODEL_ID followed by optional comma-separated options: via=PROVIDER,
+// thinking=LEVEL, fast.
+func parseSubscriptionFallbackSpec(spec string) (*routerSubscriptionFallback, error) {
+	parts := strings.Split(spec, ",")
+	fallback := &routerSubscriptionFallback{Model: strings.TrimSpace(parts[0])}
+	if fallback.Model == "" {
+		return nil, errors.New("expected MODEL_ID")
+	}
+	for _, option := range parts[1:] {
+		key, value, _ := strings.Cut(strings.TrimSpace(option), "=")
+		value = strings.TrimSpace(value)
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "via":
+			fallback.Provider = strings.ToLower(value)
+		case "thinking":
+			fallback.ThinkingLevel = strings.ToLower(value)
+		case "fast":
+			fallback.FastMode = value == "" || value == "true"
+		default:
+			return nil, fmt.Errorf("unknown option %q; expected via=PROVIDER, thinking=LEVEL, or fast", option)
+		}
+	}
+	return fallback, nil
 }
 
 func (rf *routerConfigFlags) changed(cmd *cobra.Command) bool {
@@ -267,6 +335,11 @@ func newRouterCreateCmd(gf *globalFlags) *cobra.Command {
 				Name:             strings.TrimSpace(args[0]),
 				EnabledModels:    rf.models,
 			}
+			fallbacks, err := rf.subscriptionFallbacks()
+			if err != nil {
+				return err
+			}
+			body.SubscriptionFallbackModels = fallbacks
 			keys, err := rf.providerKeys(cmd.ErrOrStderr())
 			if err != nil {
 				return err
@@ -350,6 +423,9 @@ func newRouterUpdateCmd(gf *globalFlags) *cobra.Command {
 			}
 			if cmd.Flags().Changed("allow-long-context") {
 				body.AllowLongContext = &rf.allowLongContext
+			}
+			if body.SubscriptionFallbackModels, err = rf.subscriptionFallbacks(); err != nil {
+				return err
 			}
 			if cmd.Flags().Changed("name") {
 				body.Name = strings.TrimSpace(name)
@@ -663,6 +739,14 @@ func (manifest routerCreateManifest) createRequest(path string, resolveCatalogDe
 	body.CustomConfig = customConfig
 	body.ModelThinkingLevels = modelThinkingLevels
 	body.FastModels = fastModels
+	if len(manifest.SubscriptionFallbackModels) > 0 {
+		body.SubscriptionFallbackModels = map[string]*routerSubscriptionFallback{}
+		for provider, fallback := range manifest.SubscriptionFallbackModels {
+			fallback := fallback
+			fallback.Model = strings.TrimSpace(fallback.Model)
+			body.SubscriptionFallbackModels[strings.ToLower(strings.TrimSpace(provider))] = &fallback
+		}
+	}
 	return body, nil
 }
 
