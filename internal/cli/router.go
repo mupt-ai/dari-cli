@@ -84,8 +84,8 @@ func newRouterModelsCmd(gf *globalFlags) *cobra.Command {
 	}
 }
 
-// The model served while a provider's personal subscription is exhausted. It
-// runs on a different provider than the subscription with one thinking level.
+// The replacement served for one model while its personal subscription is
+// exhausted. It runs on a different provider with one thinking level.
 type routerSubscriptionFallback struct {
 	Model         string `json:"model" yaml:"model"`
 	Provider      string `json:"provider,omitempty" yaml:"provider"`
@@ -118,8 +118,7 @@ type routerCreateRequest struct {
 	CustomConfig          *routerCustomConfig `json:"custom_config,omitempty"`
 	ModelThinkingLevels   map[string][]string `json:"model_thinking_levels,omitempty"`
 	FastModels            []string            `json:"fast_models,omitempty"`
-	// Model provider -> fallback served while that provider's personal
-	// subscription is exhausted.
+	// Source model -> replacement served while its personal subscription is exhausted.
 	SubscriptionFallbackModels map[string]*routerSubscriptionFallback `json:"subscription_fallback_models,omitempty"`
 }
 
@@ -187,32 +186,32 @@ func (rf *routerConfigFlags) register(cmd *cobra.Command) {
 	cmd.Flags().StringSliceVar(&rf.evalIDs, name("eval"), nil, "Eval scorecard ID to import (repeatable or comma-separated); run 'dari eval list' for IDs")
 	cmd.Flags().StringVar(&rf.strategy, name("strategy"), "", "Routing strategy: slm; use a manifest for custom rules")
 	cmd.Flags().BoolVar(&rf.allowLongContext, name("allow-long-context"), false, "Allow provider long-context surcharges (off by default)")
-	cmd.Flags().StringArrayVar(&rf.subscriptionFallbackModels, name("subscription-fallback-model"), nil, "Model served while a personal subscription is exhausted, as provider=MODEL_ID[,via=PROVIDER][,thinking=LEVEL][,fast] (anthropic or openai; repeatable); provider= clears it")
+	cmd.Flags().StringArrayVar(&rf.subscriptionFallbackModels, name("subscription-fallback-model"), nil, "Replacement served while a model's personal subscription is exhausted, as SOURCE_MODEL=FALLBACK_MODEL[,via=PROVIDER][,thinking=LEVEL][,fast] (repeatable); SOURCE_MODEL= clears it")
 }
 
-// A bare "provider=" clears that provider's fallback on update, so the value
-// is nullable rather than omitted.
+// A bare "SOURCE_MODEL=" clears that model's fallback on update, so the value
+// is nullable rather than omitted. Legacy provider keys remain accepted.
 func (rf *routerConfigFlags) subscriptionFallbacks() (map[string]*routerSubscriptionFallback, error) {
 	if len(rf.subscriptionFallbackModels) == 0 {
 		return nil, nil
 	}
 	fallbacks := map[string]*routerSubscriptionFallback{}
 	for _, pair := range rf.subscriptionFallbackModels {
-		provider, spec, ok := strings.Cut(pair, "=")
-		provider = strings.ToLower(strings.TrimSpace(provider))
-		if !ok || provider == "" {
-			return nil, fmt.Errorf("invalid --subscription-fallback-model %q: expected provider=MODEL_ID[,via=PROVIDER][,thinking=LEVEL][,fast]", pair)
+		sourceModel, spec, ok := strings.Cut(pair, "=")
+		sourceModel = strings.ToLower(strings.TrimSpace(sourceModel))
+		if !ok || sourceModel == "" {
+			return nil, fmt.Errorf("invalid --subscription-fallback-model %q: expected SOURCE_MODEL=FALLBACK_MODEL[,via=PROVIDER][,thinking=LEVEL][,fast]", pair)
 		}
 		spec = strings.TrimSpace(spec)
 		if spec == "" {
-			fallbacks[provider] = nil
+			fallbacks[sourceModel] = nil
 			continue
 		}
 		fallback, err := parseSubscriptionFallbackSpec(spec)
 		if err != nil {
 			return nil, fmt.Errorf("invalid --subscription-fallback-model %q: %w", pair, err)
 		}
-		fallbacks[provider] = fallback
+		fallbacks[sourceModel] = fallback
 	}
 	return fallbacks, nil
 }
@@ -741,10 +740,10 @@ func (manifest routerCreateManifest) createRequest(path string, resolveCatalogDe
 	body.FastModels = fastModels
 	if len(manifest.SubscriptionFallbackModels) > 0 {
 		body.SubscriptionFallbackModels = map[string]*routerSubscriptionFallback{}
-		for provider, fallback := range manifest.SubscriptionFallbackModels {
+		for sourceModel, fallback := range manifest.SubscriptionFallbackModels {
 			fallback := fallback
 			fallback.Model = strings.TrimSpace(fallback.Model)
-			body.SubscriptionFallbackModels[strings.ToLower(strings.TrimSpace(provider))] = &fallback
+			body.SubscriptionFallbackModels[strings.ToLower(strings.TrimSpace(sourceModel))] = &fallback
 		}
 	}
 	return body, nil

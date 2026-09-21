@@ -127,6 +127,7 @@ type agentSubscriptionResolution struct {
 	enabled           bool
 	decided           bool
 	preferenceChanged bool
+	connectedNow      bool
 }
 
 type agentOAuthCallbackServer struct {
@@ -411,7 +412,7 @@ func resolveAgentPersonalSubscription(
 	if err := connectAgentPersonalSubscription(ctx, provider, client, stdin, stderr); err != nil {
 		return agentSubscriptionResolution{}, err
 	}
-	return agentSubscriptionResolution{enabled: true, decided: true, preferenceChanged: true}, nil
+	return agentSubscriptionResolution{enabled: true, decided: true, preferenceChanged: true, connectedNow: true}, nil
 }
 
 func connectAgentPersonalSubscription(

@@ -53,11 +53,10 @@ func ensureDefaultAgentSubscription(ctx context.Context, agent string, access ag
 		connected := slices.ContainsFunc(listed.Credentials, func(c agentCredential) bool {
 			return c.OAuthProvider == codexSubscription.id || c.OAuthProvider == claudeSubscription.id
 		})
+		// A stored credential is not a request to turn the shared default router
+		// back on. Later launches must leave the router's subscription toggle alone.
 		if connected {
-			if err := state.SaveAgentSubscriptionOptOut(scope, false); err != nil {
-				return err
-			}
-			return setAgentRouterSubscription(ctx, client, router, true, router.PersonalOAuthFallbackEnabled)
+			return nil
 		}
 		if optedOut {
 			return nil
@@ -111,8 +110,10 @@ func ensureDefaultAgentSubscription(ctx context.Context, agent string, access ag
 			return err
 		}
 	}
-	// Do not disable a shared router's subscription when another user opts out.
-	if resolution.enabled {
+	// Enable the shared router only when this launch newly connected a
+	// subscription. Do not disable it when another user opts out, and do not
+	// re-enable it just because a credential already exists.
+	if resolution.connectedNow {
 		return setAgentRouterSubscription(ctx, client, router, true, router.PersonalOAuthFallbackEnabled)
 	}
 	return nil

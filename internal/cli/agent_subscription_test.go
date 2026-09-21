@@ -165,6 +165,49 @@ func TestDefaultAgentSubscriptionDeclineAndEOF(t *testing.T) {
 	}
 }
 
+func TestDefaultAgentSubscriptionDoesNotEnableRouterWhenAlreadyConnected(t *testing.T) {
+	for _, tc := range []struct{ agent, provider string }{
+		{"codex", "openai_codex"},
+		{"pi", "openai_codex"},
+		{"pi", "anthropic_claude_code"},
+	} {
+		t.Run(tc.agent+"/"+tc.provider, func(t *testing.T) {
+			useTestAPIKey(t)
+			var putRequests int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.Method + " " + r.URL.Path {
+				case "GET /v1/organizations/current/credentials":
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"credentials":                    []agentCredential{{OAuthProvider: tc.provider}},
+						"personal_subscriptions_allowed": true,
+					})
+				default:
+					if r.Method == http.MethodPut {
+						putRequests++
+					}
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			access := agentRoutingAccess{apiURL: server.URL, scope: "test"}
+			router := agentRouter{
+				ID:            "default",
+				Name:          "Dari Recommended Router",
+				IsDefault:     true,
+				EnabledModels: []string{"openai/test"},
+			}
+			err := ensureDefaultAgentSubscription(context.Background(), tc.agent, access, api.New(server.URL), router, strings.NewReader(""), io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if putRequests != 0 {
+				t.Fatalf("PUT requests = %d, want 0", putRequests)
+			}
+		})
+	}
+}
+
 func TestCodexDeviceCodeSubscriptionUsesCodeAndEmptyCompletion(t *testing.T) {
 	useTestAPIKey(t)
 	var completed map[string]any
