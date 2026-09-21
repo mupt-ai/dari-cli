@@ -795,7 +795,7 @@ func TestEnsureClaudeAgentRouterCreatesSeparateRouter(t *testing.T) {
 	if got := stringSlice(created["enabled_models"]); !slices.Equal(got, []string{
 		"anthropic/claude-fable-5-1",
 		"zai-org/GLM-5.3-Flash",
-		"xai/grok-4.6",
+		"xai/grok-4.7",
 		"openai/gpt-5.6-sol",
 	}) {
 		t.Errorf("enabled_models = %q", got)
@@ -807,7 +807,7 @@ func TestEnsureClaudeAgentRouterCreatesSeparateRouter(t *testing.T) {
 	for modelID, want := range map[string][]string{
 		"anthropic/claude-fable-5-1": {"high"},
 		"zai-org/GLM-5.3-Flash":      {"high"},
-		"xai/grok-4.6":               {"high"},
+		"xai/grok-4.7":               {"high"},
 		"openai/gpt-5.6-sol":         {"medium"},
 	} {
 		if got := stringSlice(levels[modelID]); !slices.Equal(got, want) {
@@ -1259,7 +1259,7 @@ func writeAgentModelCatalog(t *testing.T, w http.ResponseWriter) {
 			{"id": "anthropic/claude-fable-5-1", "display_name": "Fable 5.1", "provider": "anthropic", "default_provider": "anthropic", "default_thinking_level": "high", "supports_managed_key": true},
 			{"id": "openai/gpt-5.6-sol", "display_name": "Sol", "provider": "openai", "default_provider": "openai", "default_thinking_level": "medium", "supports_managed_key": true},
 			{"id": "zai-org/GLM-5.3-Flash", "display_name": "GLM Flash", "provider": "fireworks", "default_provider": "fireworks", "default_thinking_level": "high", "supports_managed_key": true},
-			{"id": "xai/grok-4.6", "display_name": "Grok", "provider": "xai", "default_provider": "xai", "default_thinking_level": "high", "supports_managed_key": true},
+			{"id": "xai/grok-4.7", "display_name": "Grok", "provider": "xai", "default_provider": "xai", "default_thinking_level": "high", "supports_managed_key": true},
 			{"id": "zai-org/GLM-5.3", "display_name": "GLM", "provider": "fireworks", "default_provider": "fireworks", "default_thinking_level": "high", "supports_managed_key": true},
 		},
 	}}})
@@ -1274,13 +1274,13 @@ func writeAgentModelSuggestions(t *testing.T, w http.ResponseWriter) {
 			"model_ids": []string{
 				"anthropic/claude-fable-5-1",
 				"zai-org/GLM-5.3-Flash",
-				"xai/grok-4.6",
+				"xai/grok-4.7",
 				"openai/gpt-5.6-sol",
 			},
 			"models": map[string]any{
 				"anthropic/claude-fable-5-1": []string{"high"},
 				"zai-org/GLM-5.3-Flash":      []string{"high"},
-				"xai/grok-4.6":               []string{"high"},
+				"xai/grok-4.7":               []string{"high"},
 				"openai/gpt-5.6-sol":         []string{"medium"},
 			},
 		}},
@@ -1655,7 +1655,7 @@ func TestEnsureClaudeAgentRouterIgnoresMatchingDefaultRouter(t *testing.T) {
 	for modelID, want := range map[string][]string{
 		"anthropic/claude-fable-5-1": {"high"},
 		"zai-org/GLM-5.3-Flash":      {"high"},
-		"xai/grok-4.6":               {"high"},
+		"xai/grok-4.7":               {"high"},
 		"openai/gpt-5.6-sol":         {"medium"},
 	} {
 		if got := stringSlice(levels[modelID]); !slices.Equal(got, want) {
