@@ -102,7 +102,7 @@ func TestRouterCreateSendsPayload(t *testing.T) {
 		"--model", "fireworks/deepseek-ai/DeepSeek-V4-Pro,fireworks/deepseek-ai/DeepSeek-V4-Flash",
 		"--provider-key-env", "fireworks=TEST_FIREWORKS_KEY",
 		"--eval", "eval_123",
-		"--strategy", "slm",
+		"--strategy", "dari",
 	})
 	if err := captureStdout(t, func() error { return cmd.Execute() }); err != nil {
 		t.Fatalf("dari router create: %v", err)
@@ -113,7 +113,7 @@ func TestRouterCreateSendsPayload(t *testing.T) {
 		"enabled_models":   []any{"fireworks/deepseek-ai/DeepSeek-V4-Pro", "fireworks/deepseek-ai/DeepSeek-V4-Flash"},
 		"provider_keys":    map[string]any{"fireworks": "sk-fireworks-env"},
 		"eval_ids":         []any{"eval_123"},
-		"routing_strategy": "slm",
+		"routing_strategy": "dari",
 	}
 	if !reflect.DeepEqual(body, want) {
 		t.Fatalf("create body = %#v, want %#v", body, want)
@@ -172,7 +172,7 @@ provider_key_sources:
   baseten: user
 provider_key_envs:
   baseten: TEST_BASETEN_KEY
-routing_strategy: slm
+routing_strategy: dari
 eval_ids:
   - eval_123
 `), 0o644); err != nil {
@@ -209,7 +209,7 @@ eval_ids:
 		"provider_keys":        map[string]any{"baseten": "sk-baseten-env"},
 		"provider_key_sources": map[string]any{"openai": "managed", "baseten": "user"},
 		"eval_ids":             []any{"eval_123"},
-		"routing_strategy":     "slm",
+		"routing_strategy":     "dari",
 	}
 	if !reflect.DeepEqual(body, want) {
 		t.Fatalf("create body = %#v, want %#v", body, want)
@@ -351,7 +351,7 @@ enabled_models:
   - openai/gpt-5.5
 provider_key_sources:
   openai: managed
-routing_strategy: slm
+routing_strategy: dari
 `), 0o644); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
@@ -382,7 +382,7 @@ routing_strategy: slm
 		"name":                 "Managed Router",
 		"enabled_models":       []any{"openai/gpt-5.5"},
 		"provider_key_sources": map[string]any{"openai": "managed"},
-		"routing_strategy":     "slm",
+		"routing_strategy":     "dari",
 	}
 	if !reflect.DeepEqual(body, want) {
 		t.Fatalf("create body = %#v, want %#v", body, want)
@@ -513,13 +513,13 @@ routing_strategy: custom
 `,
 		},
 		{
-			name: "custom config with slm strategy",
+			name: "custom config with dari strategy",
 			manifest: `name: Wrong Custom Strategy
 enabled_models:
   - openai/gpt-5.5
 provider_key_sources:
   openai: managed
-routing_strategy: slm
+routing_strategy: dari
 custom_config:
   rules:
     - when: planning
@@ -696,7 +696,7 @@ enabled_models:
   - openai/gpt-5.5
 provider_key_sources:
   OpenAI: Managed
-routing_strategy: SLM
+routing_strategy: DARI
 `), 0o644); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
@@ -727,8 +727,8 @@ routing_strategy: SLM
 	if !reflect.DeepEqual(body["provider_key_sources"], want) {
 		t.Fatalf("provider_key_sources = %#v, want %#v", body["provider_key_sources"], want)
 	}
-	if body["routing_strategy"] != "slm" {
-		t.Fatalf("routing_strategy = %#v, want %q", body["routing_strategy"], "slm")
+	if body["routing_strategy"] != "dari" {
+		t.Fatalf("routing_strategy = %#v, want %q", body["routing_strategy"], "dari")
 	}
 }
 

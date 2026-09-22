@@ -72,7 +72,7 @@ dari router create "Production Router" \
   --model anthropic/claude-sonnet-5 \
   --managed-key openai \
   --managed-key anthropic \
-  --strategy slm
+  --strategy dari
 ```
 
 Or create one from `router.yml`:
@@ -85,7 +85,7 @@ enabled_models:
 provider_key_sources:
   openai: managed
   anthropic: managed
-routing_strategy: slm
+routing_strategy: dari
 ```
 
 ```bash
@@ -105,7 +105,7 @@ enabled_models:
   - openrouter/openai/gpt-5.6-sol
 provider_credential_ids:
   openrouter: cred_...
-routing_strategy: slm
+routing_strategy: dari
 ```
 
 Use `dari credentials provider update` to change a saved credential without changing its ID. For AWS IAM credentials, pass only `--aws-region` to keep the stored keys, or include `--aws-access-key-id-env`, `--aws-secret-access-key-env`, and optional `--aws-session-token-env` to replace them. Run `dari router models` first to see the current catalog.

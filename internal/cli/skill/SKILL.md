@@ -27,7 +27,7 @@ enabled_models:
 provider_key_sources:
   openai: managed
   anthropic: managed
-routing_strategy: slm
+routing_strategy: dari
 ```
 
 Create it:

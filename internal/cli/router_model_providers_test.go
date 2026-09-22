@@ -111,7 +111,7 @@ provider_key_sources:
   fireworks: user
 provider_keys:
   fireworks: fw-key
-routing_strategy: slm
+routing_strategy: dari
 `
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)

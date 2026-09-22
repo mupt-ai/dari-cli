@@ -184,7 +184,7 @@ func (rf *routerConfigFlags) register(cmd *cobra.Command) {
 	cmd.Flags().StringArrayVar(&rf.providerCredentials, name("provider-credential"), nil, "Use a saved provider credential as provider=CREDENTIAL_ID (repeatable)")
 	cmd.Flags().StringSliceVar(&rf.managedKeyProvider, name("managed-key"), nil, "Use the Dari-managed key for this provider (repeatable or comma-separated)")
 	cmd.Flags().StringSliceVar(&rf.evalIDs, name("eval"), nil, "Eval scorecard ID to import (repeatable or comma-separated); run 'dari eval list' for IDs")
-	cmd.Flags().StringVar(&rf.strategy, name("strategy"), "", "Routing strategy: slm; use a manifest for custom rules")
+	cmd.Flags().StringVar(&rf.strategy, name("strategy"), "", "Routing strategy: dari; use a manifest for custom rules")
 	cmd.Flags().BoolVar(&rf.allowLongContext, name("allow-long-context"), false, "Allow provider long-context surcharges (off by default)")
 	cmd.Flags().StringArrayVar(&rf.subscriptionFallbackModels, name("subscription-fallback-model"), nil, "Replacement served while a model's personal subscription is exhausted, as SOURCE_MODEL=FALLBACK_MODEL[,via=PROVIDER][,thinking=LEVEL][,fast] (repeatable); SOURCE_MODEL= clears it")
 }
@@ -519,12 +519,12 @@ func newRouterDeleteCmd(gf *globalFlags) *cobra.Command {
 
 func routerStrategyForCreate(strategy string) (string, error) {
 	switch strategy {
-	case "", "slm":
+	case "", "dari":
 		return strategy, nil
 	case "custom":
 		return "", fmt.Errorf("custom routing requires a manifest with custom_config; use dari router create --from-file")
 	default:
-		return "", fmt.Errorf("--strategy must be slm")
+		return "", fmt.Errorf("--strategy must be dari")
 	}
 }
 
@@ -535,8 +535,8 @@ func routerStrategyForUpdate(strategy, currentStrategy string) (string, error) {
 	if strategy == "custom" && currentStrategy != "custom" {
 		return "", fmt.Errorf("custom routing rules cannot be set with flags; create the router from a manifest with custom_config (--from-file)")
 	}
-	if strategy != "slm" && strategy != "custom" {
-		return "", fmt.Errorf("--strategy must be slm")
+	if strategy != "dari" && strategy != "custom" {
+		return "", fmt.Errorf("--strategy must be dari")
 	}
 	return strategy, nil
 }
@@ -1183,12 +1183,12 @@ func routerStrategyForManifest(path, strategy string, hasCustomConfig bool) (str
 	switch {
 	case strategy == "custom" && !hasCustomConfig:
 		return "", fmt.Errorf("%s: routing_strategy custom requires custom_config", path)
-	case strategy == "slm" && hasCustomConfig:
+	case strategy == "dari" && hasCustomConfig:
 		return "", fmt.Errorf("%s: custom_config is only supported when routing_strategy is custom", path)
-	case strategy == "custom" || strategy == "slm":
+	case strategy == "custom" || strategy == "dari":
 		return strategy, nil
 	case strategy != "":
-		return "", fmt.Errorf("%s: routing_strategy must be slm or custom", path)
+		return "", fmt.Errorf("%s: routing_strategy must be dari or custom", path)
 	case hasCustomConfig:
 		return "custom", nil
 	default:

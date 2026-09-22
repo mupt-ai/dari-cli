@@ -1357,7 +1357,7 @@ func agentRouterCreateBody(
 		ProviderKeySources:                providerSources,
 		EvalIDs:                           append([]string(nil), evalIDs...),
 		ModelThinkingLevels:               choiceLevels(choices),
-		RoutingStrategy:                   "slm",
+		RoutingStrategy:                   "dari",
 		SpeculativeRouting:                true,
 		PrimaryRetries:                    3,
 		ModelFallbackEnabled:              true,
