@@ -1250,6 +1250,49 @@ func writeClaudeSubscriptionCredential(w http.ResponseWriter) {
 	}}})
 }
 
+func TestListAgentModelsIncludesGPT6ReasoningLevels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/organizations/current/routers/model-catalog" {
+			t.Fatalf("unexpected request path %q", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"groups": []map[string]any{{
+			"supports_managed_key": true,
+			"models": []map[string]any{
+				{
+					"id": "openai/gpt-6-sol", "display_name": "GPT-6 Sol", "provider": "openai",
+					"default_provider": "openai", "default_thinking_level": "medium", "supports_managed_key": true,
+					"supported_thinking_levels": []string{"off", "low", "medium", "high", "xhigh", "max"},
+				},
+				{
+					"id": "openai/gpt-6-luna", "display_name": "GPT-6 Luna", "provider": "openai",
+					"default_provider": "openai", "default_thinking_level": "medium", "supports_managed_key": true,
+					"supported_thinking_levels": []string{"off", "low", "medium", "high", "xhigh", "max"},
+				},
+			},
+		}}})
+	}))
+	defer server.Close()
+
+	models, err := listAgentModels(context.Background(), api.New(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("models = %#v", models)
+	}
+	// The CLI sorts the dynamic API catalog for display and preserves every
+	// supported level so the nested picker can change reasoning independently.
+	if models[0].ID != "openai/gpt-6-luna" || models[1].ID != "openai/gpt-6-sol" {
+		t.Fatalf("model order = %q, %q", models[0].ID, models[1].ID)
+	}
+	wantLevels := []string{"off", "low", "medium", "high", "xhigh", "max"}
+	for _, model := range models {
+		if !slices.Equal(model.SupportedLevels, wantLevels) {
+			t.Fatalf("%s levels = %q, want %q", model.ID, model.SupportedLevels, wantLevels)
+		}
+	}
+}
+
 func writeAgentModelCatalog(t *testing.T, w http.ResponseWriter) {
 	t.Helper()
 	_ = json.NewEncoder(w).Encode(map[string]any{"groups": []map[string]any{{
