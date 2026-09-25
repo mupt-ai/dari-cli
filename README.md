@@ -41,9 +41,9 @@ Create Management and Routing keys with `dari api-keys create`. Management keys 
 Launch an installed coding agent through Dari:
 
 ```bash
-dari --claude
-dari --codex
-dari --pi
+dari claude
+dari codex
+dari pi
 ```
 
 On first launch, Dari signs you in if needed and creates and privately caches one Routing key. Subscription setup runs even if you already used `dari auth login` or have a cached router. Codex asks to connect your ChatGPT subscription, Claude asks to connect your Claude Code subscription, and Pi offers either provider or Dari managed billing. Explicit opt-outs are remembered per user and launcher. If it is not connected to Dari yet, the launcher opens the provider login and finishes the connection before continuing; later launches reuse it automatically. Personal subscriptions require the organization's Dari Pro plan, separate from the provider subscription. If Pro is inactive, onboarding lets you review plans in the browser, recheck activation, or explicitly choose Dari managed billing. It never purchases a plan for you.
@@ -52,15 +52,15 @@ The first Claude or Codex launch also opens an arrow-key model checklist: up/dow
 
 Dari then supplies the appropriate router endpoint and `dari/routing` model without overwriting the agent's own configuration. Later launches reuse setup while checking for a connected subscription. Set `DARI_ROUTING_API_KEY` to use an existing Routing key instead. Pi's footer and Claude Code's status line show the model serving each turn, its thinking level, and the turns left on the current routing lease.
 
-Every argument after the launcher flag is forwarded to the agent. This includes interactive and non-interactive modes, prompts, and agent-specific flags:
+Every argument after the launcher subcommand is forwarded to the agent. This includes interactive and non-interactive modes, prompts, and agent-specific flags:
 
 ```bash
-dari --claude --print "Review this diff"
-dari --codex exec --sandbox workspace-write "Fix the failing tests"
-dari --pi --tools read,grep,find,ls -p "Review this repository"
+dari claude --print "Review this diff"
+dari codex exec --sandbox workspace-write "Fix the failing tests"
+dari pi --tools read,grep,find,ls -p "Review this repository"
 ```
 
-The launcher selector must be the first argument. Dari-owned provider and model settings take precedence if conflicting agent flags are passed, so the process remains routed through Dari. The native agent executable must already be installed and available on `PATH`.
+The launcher subcommand must be the first argument. Dari-owned provider and model settings take precedence if conflicting agent flags are passed, so the process remains routed through Dari. The native agent executable must already be installed and available on `PATH`.
 
 ## Common Workflows
 

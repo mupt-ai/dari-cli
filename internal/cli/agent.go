@@ -12,6 +12,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/mupt-ai/dari-cli/internal/api"
 	"github.com/mupt-ai/dari-cli/internal/auth"
 	"github.com/mupt-ai/dari-cli/internal/state"
@@ -22,6 +24,31 @@ const (
 	routingBaseURL   = "https://routing.dari.dev"
 	routingModel     = "dari/routing"
 )
+
+// agentLaunchers maps each agent subcommand to its help text. Execute
+// dispatches them before Cobra parses anything, so every following argument
+// reaches the agent untouched. Cobra only sees them when a Dari flag comes
+// first, which would be dropped, so those commands refuse to run.
+var agentLaunchers = map[string]string{
+	"claude": "Launch Claude Code through Dari; forward all following arguments",
+	"codex":  "Launch Codex through Dari; forward all following arguments",
+	"pi":     "Launch Pi through Dari; forward all following arguments",
+}
+
+func init() {
+	commandRegistrars = append(commandRegistrars, func(root *cobra.Command, _ *globalFlags) {
+		for name, short := range agentLaunchers {
+			root.AddCommand(&cobra.Command{
+				Use:                name + " [args...]",
+				Short:              short,
+				DisableFlagParsing: true,
+				RunE: func(*cobra.Command, []string) error {
+					return fmt.Errorf("%q must be the first argument so Dari can forward all agent arguments", name)
+				},
+			})
+		}
+	})
+}
 
 type agentLaunch struct {
 	name string
@@ -40,18 +67,10 @@ func parseAgentLaunch(args []string) (agentLaunch, bool) {
 		return agentLaunch{}, false
 	}
 
-	var name string
-	switch args[0] {
-	case "--claude":
-		name = "claude"
-	case "--codex":
-		name = "codex"
-	case "--pi":
-		name = "pi"
-	default:
+	if _, ok := agentLaunchers[args[0]]; !ok {
 		return agentLaunch{}, false
 	}
-	return agentLaunch{name: name, args: append([]string(nil), args[1:]...)}, true
+	return agentLaunch{name: args[0], args: append([]string(nil), args[1:]...)}, true
 }
 
 func runAgentLaunch(ctx context.Context, launch agentLaunch, stdin io.Reader, stdout, stderr io.Writer) int {

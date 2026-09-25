@@ -22,21 +22,21 @@ func TestParseAgentLaunch(t *testing.T) {
 	}{
 		{
 			name:     "claude forwards every remaining token",
-			args:     []string{"--claude", "--print", "--", "-prompt"},
+			args:     []string{"claude", "--print", "--", "-prompt"},
 			wantName: "claude",
 			wantArgs: []string{"--print", "--", "-prompt"},
 			wantOK:   true,
 		},
 		{
 			name:     "codex",
-			args:     []string{"--codex", "exec", "fix tests"},
+			args:     []string{"codex", "exec", "fix tests"},
 			wantName: "codex",
 			wantArgs: []string{"exec", "fix tests"},
 			wantOK:   true,
 		},
 		{
 			name:     "pi",
-			args:     []string{"--pi", "-p", "review"},
+			args:     []string{"pi", "-p", "review"},
 			wantName: "pi",
 			wantArgs: []string{"-p", "review"},
 			wantOK:   true,
@@ -48,7 +48,12 @@ func TestParseAgentLaunch(t *testing.T) {
 		},
 		{
 			name:   "selector must be first",
-			args:   []string{"--api-url", "https://example.test", "--claude"},
+			args:   []string{"--api-url", "https://example.test", "claude"},
+			wantOK: false,
+		},
+		{
+			name:   "old flag spelling is not a launcher",
+			args:   []string{"--claude"},
 			wantOK: false,
 		},
 	}
@@ -255,9 +260,9 @@ func TestRootHelpListsAgentLaunchers(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	for _, flag := range []string{"--claude", "--codex", "--pi"} {
-		if !strings.Contains(output.String(), flag) {
-			t.Errorf("help does not contain %s", flag)
+	for _, name := range []string{"claude", "codex", "pi"} {
+		if !strings.Contains(output.String(), "  "+name+" ") {
+			t.Errorf("help does not list %s", name)
 		}
 	}
 }

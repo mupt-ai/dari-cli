@@ -53,11 +53,6 @@ func newRootCmd(version string) *cobra.Command {
 		version = "dev"
 	}
 	gf := &globalFlags{version: version}
-	var (
-		launchClaude bool
-		launchCodex  bool
-		launchPi     bool
-	)
 	cmd := &cobra.Command{
 		Use:           "dari",
 		Short:         "dari manages Dari routers, credentials, and organizations.",
@@ -65,15 +60,6 @@ func newRootCmd(version string) *cobra.Command {
 		SilenceErrors: false,
 		Version:       version,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			for name, selected := range map[string]bool{
-				"--claude": launchClaude,
-				"--codex":  launchCodex,
-				"--pi":     launchPi,
-			} {
-				if selected {
-					return fmt.Errorf("%s must be the first argument so Dari can forward all agent arguments", name)
-				}
-			}
 			if !gf.skill {
 				return cmd.Help()
 			}
@@ -90,10 +76,6 @@ func newRootCmd(version string) *cobra.Command {
 	cmd.PersistentFlags().StringVar(&gf.apiURL, "api-url", "", "Override the Dari API base URL (defaults to $DARI_API_URL or the cached value)")
 	_ = cmd.PersistentFlags().MarkHidden("api-url")
 	cmd.PersistentFlags().BoolVar(&gf.skill, "skill", false, "Print the Dari agent skill and exit")
-	cmd.Flags().BoolVar(&launchClaude, "claude", false, "Launch Claude Code through Dari; forward all following arguments")
-	cmd.Flags().BoolVar(&launchCodex, "codex", false, "Launch Codex through Dari; forward all following arguments")
-	cmd.Flags().BoolVar(&launchPi, "pi", false, "Launch Pi through Dari; forward all following arguments")
-	cmd.MarkFlagsMutuallyExclusive("claude", "codex", "pi")
 	cmd.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
 		if gf.skill {
 			return
