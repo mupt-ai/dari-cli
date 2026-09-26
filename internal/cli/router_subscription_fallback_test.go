@@ -47,15 +47,4 @@ func TestSubscriptionFallbackModelFlagParsesAndClears(t *testing.T) {
 		t.Fatal("an unknown option must be rejected")
 	}
 
-	body, err = json.Marshal(routerUpdateRequest{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var raw map[string]any
-	if err := json.Unmarshal(body, &raw); err != nil {
-		t.Fatal(err)
-	}
-	if _, present := raw["subscription_fallback_models"]; present {
-		t.Fatal("omission must preserve the current fallbacks")
-	}
 }

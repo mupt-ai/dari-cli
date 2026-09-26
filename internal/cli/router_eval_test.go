@@ -389,29 +389,6 @@ routing_strategy: dari
 	}
 }
 
-func TestRouterCreateFromManifestRejectsManagedProviderKey(t *testing.T) {
-	dir := t.TempDir()
-	manifestPath := filepath.Join(dir, "router.yml")
-	if err := os.WriteFile(manifestPath, []byte(`name: Bad Router
-enabled_models:
-  - openai/gpt-5.5
-provider_key_sources:
-  openai: managed
-provider_keys:
-  openai: sk-openai
-`), 0o644); err != nil {
-		t.Fatalf("write manifest: %v", err)
-	}
-	useTestAPIKey(t)
-
-	cmd := newRootCmd("dev")
-	cmd.SetArgs([]string{"router", "create", manifestPath})
-	cmd.SetErr(io.Discard)
-	if err := captureStdout(t, func() error { return cmd.Execute() }); err == nil {
-		t.Fatal("expected error for provider key on managed provider")
-	}
-}
-
 func TestRouterCreateFromManifestValidatesRequiredFieldsBeforeAPI(t *testing.T) {
 	t.Setenv("TEST_BASETEN_KEY", "sk-baseten")
 
@@ -458,6 +435,17 @@ enabled_models:
 provider_key_sources:
   openai: managed
   baseten: managed
+`,
+		},
+		{
+			name: "provider key for managed provider",
+			manifest: `name: Bad Router
+enabled_models:
+  - openai/gpt-5.5
+provider_key_sources:
+  openai: managed
+provider_keys:
+  openai: sk-openai
 `,
 		},
 		{
@@ -814,8 +802,9 @@ enabled_models:
 	cmd := newRootCmd("dev")
 	cmd.SetArgs([]string{"router", "create", "--from-file", manifestPath, "--model", "openai/gpt-5.5"})
 	cmd.SetErr(io.Discard)
-	if err := captureStdout(t, func() error { return cmd.Execute() }); err == nil {
-		t.Fatal("expected error combining --from-file with config flags")
+	err := captureStdout(t, func() error { return cmd.Execute() })
+	if err == nil || !strings.Contains(err.Error(), "cannot be combined with router config flags") {
+		t.Fatalf("error = %v, want --from-file conflict", err)
 	}
 }
 
@@ -824,8 +813,9 @@ func TestRouterCreateRequiresModels(t *testing.T) {
 	cmd := newRootCmd("dev")
 	cmd.SetArgs([]string{"router", "create", "NoModels"})
 	cmd.SetErr(io.Discard)
-	if err := captureStdout(t, func() error { return cmd.Execute() }); err == nil {
-		t.Fatal("expected error when --model is missing")
+	err := captureStdout(t, func() error { return cmd.Execute() })
+	if err == nil || !strings.Contains(err.Error(), "at least one --model is required") {
+		t.Fatalf("error = %v, want missing --model", err)
 	}
 }
 
@@ -862,6 +852,7 @@ func TestRouterUpdateOverlaysCurrentConfig(t *testing.T) {
 		"--name", "Staging",
 		"--managed-key", "fireworks",
 		"--clear-evals",
+		"--allow-long-context=false",
 	})
 	if err := captureStdout(t, func() error { return cmd.Execute() }); err != nil {
 		t.Fatalf("dari router update: %v", err)
@@ -872,6 +863,7 @@ func TestRouterUpdateOverlaysCurrentConfig(t *testing.T) {
 		"enabled_models":       []any{"fireworks/deepseek-ai/DeepSeek-V4-Pro"},
 		"provider_key_sources": map[string]any{"fireworks": "managed"},
 		"eval_ids":             []any{},
+		"allow_long_context":   false,
 	}
 	if !reflect.DeepEqual(body, want) {
 		t.Fatalf("update body = %#v, want %#v", body, want)

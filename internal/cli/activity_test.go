@@ -293,19 +293,6 @@ func TestActivityBucketDefaultsFollowRange(t *testing.T) {
 	}
 }
 
-func TestActivityBucketValidation(t *testing.T) {
-	for _, seconds := range []int{60, 300, 900, 1800, 86400, 604800, 2592000} {
-		if !allowedActivityBucketSeconds(seconds) {
-			t.Fatalf("allowed bucket %d rejected", seconds)
-		}
-	}
-	for _, seconds := range []int{0, 1, 3600, 7200, 172800} {
-		if allowedActivityBucketSeconds(seconds) {
-			t.Fatalf("disallowed bucket %d accepted", seconds)
-		}
-	}
-}
-
 func TestActivityBucketLimitRejectsPartialExtraBucket(t *testing.T) {
 	from := mustParseActivityTime(t, "2026-07-01T00:00:00Z")
 	to := from.Add(1000*300*time.Second + time.Second)

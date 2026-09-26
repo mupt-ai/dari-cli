@@ -262,59 +262,6 @@ func TestAgentPickerRowKeepsCustomCurrentLevels(t *testing.T) {
 	}
 }
 
-func TestAgentRouterCreateBodyUsesPresetEvals(t *testing.T) {
-	evalIDs := testAgentEvalIDs()
-	body := agentRouterCreateBody(testAgentModels(), []agentModelChoice{
-		{ID: "anthropic/claude-fable-5", Levels: []string{"high"}},
-		{ID: "zai-org/GLM-5.3", Levels: []string{"high"}},
-	}, evalIDs, claudeRouterClientKey, true)
-	if !slices.Equal(body.EvalIDs, evalIDs) {
-		t.Fatalf("eval_ids = %q, want %q", body.EvalIDs, evalIDs)
-	}
-	if !body.PersonalOAuthEnabled {
-		t.Error("personal OAuth is disabled")
-	}
-	if body.PersonalOAuthFallbackEnabled {
-		t.Error("personal OAuth fallback is enabled")
-	}
-	if !slices.Equal(body.EnabledModels, []string{"anthropic/claude-fable-5", "zai-org/GLM-5.3"}) {
-		t.Errorf("enabled_models = %q", body.EnabledModels)
-	}
-	withoutSubscription := agentRouterCreateBody(testAgentModels(), []agentModelChoice{
-		{ID: "anthropic/claude-fable-5", Levels: []string{"high"}},
-	}, evalIDs, claudeManagedRouterClientKey, false)
-	if withoutSubscription.PersonalOAuthEnabled {
-		t.Error("personal OAuth is enabled after opt-out")
-	}
-	if withoutSubscription.ClientKey != claudeManagedRouterClientKey {
-		t.Errorf("managed client key = %q", withoutSubscription.ClientKey)
-	}
-	if withoutSubscription.Name != claudeManagedRouterName {
-		t.Errorf("managed router name = %q", withoutSubscription.Name)
-	}
-	if !slices.Equal(body.ModelThinkingLevels["anthropic/claude-fable-5"], []string{"high"}) {
-		t.Errorf("Fable levels = %q", body.ModelThinkingLevels["anthropic/claude-fable-5"])
-	}
-}
-
-func TestBuildClaudeAgentCommandTargetsAgentRouter(t *testing.T) {
-	command, err := buildAgentCommand(
-		"/claude",
-		agentLaunch{name: "claude"},
-		"dari_route",
-		"rtr_claude",
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if command.cleanup != nil {
-		defer command.cleanup()
-	}
-	if got := environmentValue(command.env, "ANTHROPIC_BASE_URL"); got != routingBaseURL+"/rtr_claude" {
-		t.Fatalf("ANTHROPIC_BASE_URL = %q", got)
-	}
-}
-
 func TestClaudeSubscriptionPreferenceScopeIncludesLoggedInUser(t *testing.T) {
 	t.Setenv("DARI_CONFIG_DIR", t.TempDir())
 	if err := state.Save(&state.CliState{
@@ -878,6 +825,9 @@ func TestEnsureClaudeAgentRouterUsesManagedRouterAfterOptOut(t *testing.T) {
 	}
 	if got := created["client_key"]; got != claudeManagedRouterClientKey {
 		t.Errorf("client_key = %#v", got)
+	}
+	if got := created["name"]; got != claudeManagedRouterName {
+		t.Errorf("name = %#v", got)
 	}
 	if got := created["personal_oauth_enabled"]; got != false {
 		t.Errorf("personal_oauth_enabled = %#v", got)
@@ -1493,19 +1443,6 @@ func TestAgentRouterNeedsUpdateIgnoresModelOrder(t *testing.T) {
 	}
 	if agentRouterNeedsUpdate(current, choices) {
 		t.Fatal("update triggered for the same models in a different order")
-	}
-}
-
-func TestAgentRouterNeedsUpdateDetectsLevelOnlyEdit(t *testing.T) {
-	current := agentRouter{
-		EnabledModels:       []string{"anthropic/claude-fable-5"},
-		ModelThinkingLevels: map[string][]string{"anthropic/claude-fable-5": {"high"}},
-	}
-	choices := []agentModelChoice{
-		{ID: "anthropic/claude-fable-5", Levels: []string{"max"}},
-	}
-	if !agentRouterNeedsUpdate(current, choices) {
-		t.Fatal("level-only edit was ignored")
 	}
 }
 

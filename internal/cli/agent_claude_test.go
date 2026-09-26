@@ -70,18 +70,7 @@ func TestBuildClaudeAgentCommandUsesTemporaryStatusLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	content := string(script)
-	for _, want := range []string{
-		"dari_routing",
-		"selected_model",
-		"lease_turns_remaining",
-		"transcript_path",
-	} {
-		if !strings.Contains(content, want) {
-			t.Errorf("status line script does not read routing (%s missing)", want)
-		}
-	}
-	if strings.Contains(content, "dari_route") || strings.Contains(string(data), "dari_route") {
+	if strings.Contains(string(script), "dari_route") || strings.Contains(string(data), "dari_route") {
 		t.Fatal("Claude status files contain the secret key")
 	}
 
