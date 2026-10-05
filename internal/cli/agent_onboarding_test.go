@@ -402,7 +402,7 @@ func TestResolveClaudePersonalSubscriptionDefaultsToConnect(t *testing.T) {
 		context.Background(),
 		claudeSubscription,
 		api.New(server.URL),
-		strings.NewReader("\nhttp://localhost:53692/callback?code=test&state=test\n"),
+		strings.NewReader("\ntest-code#test-state\n"),
 		&stderr,
 		false,
 	)
@@ -415,12 +415,13 @@ func TestResolveClaudePersonalSubscriptionDefaultsToConnect(t *testing.T) {
 	if got := completed["session_token"]; got != "oauth_session" {
 		t.Errorf("session_token = %#v", got)
 	}
-	if got := completed["authorization_response"]; got != "http://localhost:53692/callback?code=test&state=test" {
+	if got := completed["authorization_response"]; got != "test-code#test-state" {
 		t.Errorf("authorization_response = %#v", got)
 	}
 	for _, text := range []string{
 		"Use your Claude Code personal subscription? [Y/n]",
 		"Open this URL to connect your Claude Code subscription",
+		"paste the authorization code Anthropic shows",
 		"Connected your Claude Code personal subscription.",
 	} {
 		if !strings.Contains(stderr.String(), text) {
@@ -429,126 +430,15 @@ func TestResolveClaudePersonalSubscriptionDefaultsToConnect(t *testing.T) {
 	}
 }
 
-func TestResolveClaudePersonalSubscriptionCompletesBrowserCallback(t *testing.T) {
-	var completed map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/organizations/current/credentials":
-			_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}})
-		case "/v1/organizations/current/credentials/oauth/sessions":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"session_token":     "oauth_session",
-				"authorization_url": "https://claude.example.test/authorize",
-			})
-		case "/v1/organizations/current/credentials/oauth/sessions/complete":
-			if err := json.NewDecoder(r.Body).Decode(&completed); err != nil {
-				t.Error(err)
-			}
-		default:
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer server.Close()
-
-	originalOpenBrowser := openAgentBrowser
-	openAgentBrowser = func(string) bool {
-		response, err := http.Get("http://" + claudeOAuthCallbackAddress + "/callback?code=test&state=test")
-		if err != nil {
-			t.Error(err)
-			return false
-		}
-		response.Body.Close()
-		return true
-	}
-	t.Cleanup(func() { openAgentBrowser = originalOpenBrowser })
-
-	resolution, err := resolveAgentPersonalSubscription(
-		context.Background(),
-		claudeSubscription,
-		api.New(server.URL),
-		strings.NewReader("\n"),
-		io.Discard,
-		false,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !resolution.enabled {
-		t.Fatal("browser callback did not enable personal subscriptions")
-	}
-	if got := completed["authorization_response"]; got != "http://localhost:53692/callback?code=test&state=test" {
-		t.Errorf("authorization_response = %#v", got)
-	}
-}
-
-func TestResolveClaudePersonalSubscriptionAllowsImmediatePastedCallback(t *testing.T) {
-	var completed map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/organizations/current/credentials":
-			_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}})
-		case "/v1/organizations/current/credentials/oauth/sessions":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"session_token":     "oauth_session",
-				"authorization_url": "https://claude.example.test/authorize",
-			})
-		case "/v1/organizations/current/credentials/oauth/sessions/complete":
-			if err := json.NewDecoder(r.Body).Decode(&completed); err != nil {
-				t.Error(err)
-			}
-		default:
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer server.Close()
-
-	originalOpenBrowser := openAgentBrowser
-	openAgentBrowser = func(string) bool { return true }
-	t.Cleanup(func() { openAgentBrowser = originalOpenBrowser })
-
-	var stderr strings.Builder
-	resolution, err := resolveAgentPersonalSubscription(
-		context.Background(),
-		claudeSubscription,
-		api.New(server.URL),
-		strings.NewReader("\nhttp://localhost:53692/callback?code=pasted&state=test\n"),
-		&stderr,
-		false,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !resolution.enabled {
-		t.Fatal("pasted callback did not enable personal subscriptions")
-	}
-	if got := completed["authorization_response"]; got != "http://localhost:53692/callback?code=pasted&state=test" {
-		t.Errorf("authorization_response = %#v", got)
-	}
-	if !strings.Contains(stderr.String(), "Paste localhost callback URL") {
-		t.Fatalf("stderr does not offer immediate paste input:\n%s", stderr.String())
-	}
-}
-
 func TestClaudeOAuthTUIUsesAgentPickerStyles(t *testing.T) {
 	output := strings.Join(agentOAuthLines(claudeSubscription, "https://claude.example.test/authorize", true, 80), "\n")
-	output += strings.Join(agentChoiceLines(
-		agentBannerLines("Connect Claude Code"),
-		"Complete Authorization",
-		[]agentChoiceOption{
-			{label: "Wait for automatic callback", note: "same-machine browser"},
-			{label: "Paste localhost callback URL", note: "remote browser"},
-		},
-		1,
-	), "\n")
 
 	for _, text := range []string{
 		dariBanner,
 		"Connect Claude Code",
-		ansiCoral,
 		ansiCyan,
 		ansiGreen,
 		"Claude Code login opened in your browser",
-		"Paste localhost callback URL",
 	} {
 		if !strings.Contains(output, text) {
 			t.Errorf("styled OAuth output missing %q:\n%s", text, output)
@@ -556,12 +446,12 @@ func TestClaudeOAuthTUIUsesAgentPickerStyles(t *testing.T) {
 	}
 }
 
-func TestClaudeCallbackInputIgnoresSplitTerminalEscapes(t *testing.T) {
-	input := agentCallbackInputState{}
+func TestClaudeCodeInputIgnoresSplitTerminalEscapes(t *testing.T) {
+	input := agentCodeInputState{}
 	chunks := [][]byte{
 		[]byte("\x1b["),
 		[]byte("A\x1b[20"),
-		[]byte("0~http://localhost:53692/callback?code=test&state=test\x1b[2"),
+		[]byte("0~test-code#test-state\x1b[2"),
 		[]byte("01~\r"),
 	}
 	var submitted, canceled bool
@@ -571,13 +461,13 @@ func TestClaudeCallbackInputIgnoresSplitTerminalEscapes(t *testing.T) {
 	if !submitted || canceled {
 		t.Fatalf("submitted = %t, canceled = %t", submitted, canceled)
 	}
-	if want := "http://localhost:53692/callback?code=test&state=test"; input.value != want {
+	if want := "test-code#test-state"; input.value != want {
 		t.Fatalf("input = %q, want %q", input.value, want)
 	}
 }
 
-func TestClaudeCallbackInputCtrlCCancels(t *testing.T) {
-	input := agentCallbackInputState{value: "partial"}
+func TestClaudeCodeInputCtrlCCancels(t *testing.T) {
+	input := agentCodeInputState{value: "partial"}
 	submitted, canceled := input.update([]byte{0x03})
 	if input.value != "partial" || submitted || !canceled {
 		t.Fatalf("input = %q, submitted = %t, canceled = %t", input.value, submitted, canceled)

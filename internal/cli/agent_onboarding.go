@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -13,7 +12,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"golang.org/x/term"
 
@@ -23,20 +21,13 @@ import (
 )
 
 const (
-	claudeRouterName                = "Dari Claude Code"
-	claudeManagedRouterName         = "Dari Claude Code (Managed)"
-	claudeRouterClientKey           = "dari-cli:claude-code"
-	claudeManagedRouterClientKey    = "dari-cli:claude-code-managed"
-	claudeOAuthCallbackAddress      = "127.0.0.1:53692"
-	agentOAuthAutomaticWaitDuration = 30 * time.Second
+	claudeRouterName             = "Dari Claude Code"
+	claudeManagedRouterName      = "Dari Claude Code (Managed)"
+	claudeRouterClientKey        = "dari-cli:claude-code"
+	claudeManagedRouterClientKey = "dari-cli:claude-code-managed"
 )
 
-var (
-	openAgentBrowser            = auth.OpenBrowser
-	agentOAuthAutomaticWaitTime = agentOAuthAutomaticWaitDuration
-)
-
-var errAgentOAuthCallbackTimedOut = errors.New("timed out waiting for subscription authorization")
+var openAgentBrowser = auth.OpenBrowser
 
 type agentRoutingAccess struct {
 	apiURL string
@@ -128,12 +119,6 @@ type agentSubscriptionResolution struct {
 	decided           bool
 	preferenceChanged bool
 	connectedNow      bool
-}
-
-type agentOAuthCallbackServer struct {
-	baseURL  string
-	server   *http.Server
-	response chan string
 }
 
 func resolveAgentRoutingAccess(
@@ -443,21 +428,9 @@ func connectAgentPersonalSubscription(
 		return connectAgentDeviceCodeSubscription(ctx, provider, client, stdin, stderr, started)
 	}
 
-	callback, callbackErr := startAgentOAuthCallbackServer(provider)
-	if callback != nil {
-		defer callback.Close()
-	}
-	styled := agentInputIsTerminal(stdin)
 	opened := openAgentBrowser(started.AuthorizationURL)
-	if styled {
-		authorizationResponse, err := runAgentOAuthTUI(
-			provider,
-			stdin,
-			stderr,
-			started.AuthorizationURL,
-			opened,
-			callback,
-		)
+	if agentInputIsTerminal(stdin) {
+		authorizationResponse, err := runAgentCodeInputTUI(provider, stdin, stderr, started.AuthorizationURL, opened)
 		if err != nil {
 			return err
 		}
@@ -465,40 +438,10 @@ func connectAgentPersonalSubscription(
 	}
 
 	writeAgentOAuthInstructions(provider, stderr, started.AuthorizationURL, opened)
-	var (
-		authorizationResponse string
-		err                   error
-	)
-	if opened && callbackErr == nil {
-		if response, received := callback.Try(); received {
-			authorizationResponse = response
-		} else {
-			fmt.Fprint(stderr, "Paste localhost callback URL, or press Enter to wait automatically: ")
-			manualResponse, readErr := readAgentLine(stdin)
-			if readErr != nil && !errors.Is(readErr, io.EOF) {
-				return fmt.Errorf("read %s callback URL: %w", provider.name, readErr)
-			}
-			if strings.TrimSpace(manualResponse) != "" {
-				callback.Close()
-				authorizationResponse = manualResponse
-			} else {
-				fmt.Fprintf(stderr, "Waiting for %s authorization…\n", provider.name)
-				authorizationResponse, err = callback.Wait(ctx, agentOAuthAutomaticWaitTime)
-				if errors.Is(err, errAgentOAuthCallbackTimedOut) {
-					callback.Close()
-					fmt.Fprintln(stderr, "Automatic callback was not received. Copy the full localhost URL from your browser; the error page is expected.")
-					fmt.Fprint(stderr, "Paste localhost URL: ")
-					authorizationResponse, err = readAgentLine(stdin)
-				}
-			}
-		}
-	} else {
-		fmt.Fprintln(stderr, "After approving, copy the full localhost URL from your browser. The error page is expected.")
-		fmt.Fprint(stderr, "Paste localhost URL: ")
-		authorizationResponse, err = readAgentLine(stdin)
-	}
+	fmt.Fprint(stderr, "After approving, paste the authorization code Anthropic shows: ")
+	authorizationResponse, err := readAgentLine(stdin)
 	if err != nil {
-		return fmt.Errorf("complete %s authorization: %w", provider.name, err)
+		return fmt.Errorf("read %s authorization code: %w", provider.name, err)
 	}
 	return completeAgentPersonalSubscription(ctx, provider, client, stderr, started.SessionToken, authorizationResponse, false)
 }
@@ -566,57 +509,6 @@ func writeAgentOAuthInstructions(provider agentSubscriptionProvider, stderr io.W
 	} else {
 		fmt.Fprintf(stderr, "Open this URL to connect your %s subscription:\n  %s\n", provider.name, authorizationURL)
 	}
-}
-
-func startAgentOAuthCallbackServer(provider agentSubscriptionProvider) (*agentOAuthCallbackServer, error) {
-	listener, err := net.Listen("tcp", provider.callbackAddress)
-	if err != nil {
-		return nil, err
-	}
-	callback := &agentOAuthCallbackServer{
-		baseURL:  provider.callbackBaseURL,
-		response: make(chan string, 1),
-	}
-	mux := http.NewServeMux()
-	mux.HandleFunc(provider.callbackPath, func(w http.ResponseWriter, request *http.Request) {
-		select {
-		case callback.response <- request.URL.String():
-		default:
-		}
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = io.WriteString(w, "Authorization received. Return to Dari to finish connecting your subscription.\n")
-	})
-	callback.server = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	go func() { _ = callback.server.Serve(listener) }()
-	return callback, nil
-}
-
-func (callback *agentOAuthCallbackServer) Try() (string, bool) {
-	select {
-	case response := <-callback.response:
-		return callback.baseURL + response, true
-	default:
-		return "", false
-	}
-}
-
-func (callback *agentOAuthCallbackServer) Wait(ctx context.Context, timeout time.Duration) (string, error) {
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	select {
-	case response := <-callback.response:
-		return callback.baseURL + response, nil
-	case <-timer.C:
-		return "", errAgentOAuthCallbackTimedOut
-	case <-ctx.Done():
-		return "", ctx.Err()
-	}
-}
-
-func (callback *agentOAuthCallbackServer) Close() {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	_ = callback.server.Shutdown(ctx)
 }
 
 func confirmDefaultYes(stdin io.Reader, stderr io.Writer, prompt string) (bool, bool, error) {

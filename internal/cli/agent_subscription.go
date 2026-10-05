@@ -13,12 +13,12 @@ import (
 )
 
 type agentSubscriptionProvider struct {
-	id, name, callbackAddress, callbackBaseURL, callbackPath string
+	id, name string
 }
 
 var (
-	claudeSubscription = agentSubscriptionProvider{"anthropic_claude_code", "Claude Code", claudeOAuthCallbackAddress, "http://localhost:53692", "/callback"}
-	codexSubscription  = agentSubscriptionProvider{"openai_codex", "ChatGPT", "", "", ""}
+	claudeSubscription = agentSubscriptionProvider{"anthropic_claude_code", "Claude Code"}
+	codexSubscription  = agentSubscriptionProvider{"openai_codex", "ChatGPT"}
 )
 
 // Codex and Pi use the organization's default router, but their subscription

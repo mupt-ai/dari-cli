@@ -111,54 +111,6 @@ func agentChoiceLines(lines []string, prompt string, options []agentChoiceOption
 	return append(lines, "", ansiGray+"↑/↓ move   enter confirm   q cancel"+ansiReset)
 }
 
-func runAgentOAuthTUI(
-	provider agentSubscriptionProvider,
-	stdin io.Reader,
-	stderr io.Writer,
-	authorizationURL string,
-	opened bool,
-	callback *agentOAuthCallbackServer,
-) (string, error) {
-	if callback == nil {
-		return runAgentCallbackInputTUI(provider, stdin, stderr, authorizationURL, opened, "")
-	}
-
-	status := ""
-	for {
-		if response, received := callback.Try(); received {
-			return response, nil
-		}
-		choice, err := runAgentChoiceTUI(
-			stdin,
-			stderr,
-			"Connect "+provider.name,
-			"Complete Authorization",
-			[]agentChoiceOption{
-				{label: "Use automatic callback", note: "same-machine browser"},
-				{label: "Paste localhost callback URL", note: "remote browser"},
-			},
-			func(width int) []string {
-				lines := agentOAuthDetails(provider, authorizationURL, opened, width)
-				if status != "" {
-					lines = append(lines, ansiCoral+status+ansiReset, "")
-				}
-				return lines
-			},
-		)
-		if err != nil {
-			return "", err
-		}
-		if response, received := callback.Try(); received {
-			return response, nil
-		}
-		if choice == 1 {
-			callback.Close()
-			return runAgentCallbackInputTUI(provider, stdin, stderr, authorizationURL, opened, "")
-		}
-		status = "Callback not received yet. Finish authorization in the browser, then press Enter again."
-	}
-}
-
 func agentOAuthLines(provider agentSubscriptionProvider, authorizationURL string, opened bool, width int) []string {
 	return append(agentBannerLines("Connect "+provider.name), agentOAuthDetails(provider, authorizationURL, opened, width)...)
 }
@@ -181,13 +133,12 @@ func agentOAuthDetails(provider agentSubscriptionProvider, authorizationURL stri
 	return append(lines, ansiCyan+authorizationURL+ansiReset, "")
 }
 
-func runAgentCallbackInputTUI(
+func runAgentCodeInputTUI(
 	provider agentSubscriptionProvider,
 	stdin io.Reader,
 	stderr io.Writer,
 	authorizationURL string,
 	opened bool,
-	message string,
 ) (string, error) {
 	session, err := startAgentTUISession(stdin, stderr)
 	if err != nil {
@@ -195,18 +146,14 @@ func runAgentCallbackInputTUI(
 	}
 	defer session.Close()
 
-	input := agentCallbackInputState{}
+	input := agentCodeInputState{}
 	buf := make([]byte, 256)
 	for {
-		lines := agentOAuthLines(provider, authorizationURL, opened, session.width)
-		if message != "" {
-			lines = append(lines, ansiCoral+message+ansiReset, "")
-		}
-		lines = append(lines,
-			ansiBold+"Paste Localhost Callback URL"+ansiReset,
-			ansiGray+"The browser error page is expected; copy its full address."+ansiReset,
+		lines := append(agentOAuthLines(provider, authorizationURL, opened, session.width),
+			ansiBold+"Paste Authorization Code"+ansiReset,
+			ansiGray+"Approve access, then copy the code Anthropic shows."+ansiReset,
 			"",
-			ansiCoral+"> "+ansiReset+callbackInputDisplay(input.value, session.width),
+			ansiCoral+"> "+ansiReset+codeInputDisplay(input.value, session.width),
 			"",
 			ansiGray+"enter submit   backspace edit   ctrl+c cancel"+ansiReset,
 		)
@@ -221,18 +168,18 @@ func runAgentCallbackInputTUI(
 			return input.value, nil
 		}
 		if readErr != nil {
-			return "", fmt.Errorf("read %s callback URL: %w", provider.name, readErr)
+			return "", fmt.Errorf("read %s authorization code: %w", provider.name, readErr)
 		}
 	}
 }
 
-type agentCallbackInputState struct {
+type agentCodeInputState struct {
 	value  string
 	escape bool
 	csi    bool
 }
 
-func (input *agentCallbackInputState) update(raw []byte) (bool, bool) {
+func (input *agentCodeInputState) update(raw []byte) (bool, bool) {
 	for _, value := range raw {
 		if input.escape {
 			if input.csi {
@@ -275,9 +222,9 @@ func isTerminalEscapeFinal(value byte) bool {
 	return (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z') || value == '~'
 }
 
-func callbackInputDisplay(input string, width int) string {
+func codeInputDisplay(input string, width int) string {
 	if input == "" {
-		return ansiDim + "http://localhost:53692/callback?…" + ansiReset
+		return ansiDim + "code#state" + ansiReset
 	}
 	available := width - 4
 	if available <= 0 || len(input) <= available {

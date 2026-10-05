@@ -16,9 +16,9 @@ import (
 func TestLoggedInAgentConnectsMissingSubscription(t *testing.T) {
 	for _, tc := range []struct{ agent, provider, input string }{
 		{"codex", "openai_codex", "y\n\n"},
-		{"claude", "anthropic_claude_code", "y\nhttp://localhost:53692/callback?code=test&state=test\n"},
+		{"claude", "anthropic_claude_code", "y\ntest-code#test-state\n"},
 		{"pi", "openai_codex", "1\n\n"},
-		{"pi", "anthropic_claude_code", "2\nhttp://localhost:53692/callback?code=test&state=test\n"},
+		{"pi", "anthropic_claude_code", "2\ntest-code#test-state\n"},
 	} {
 		t.Run(tc.agent+"/"+tc.provider, func(t *testing.T) {
 			t.Setenv("DARI_CONFIG_DIR", t.TempDir())
@@ -55,7 +55,7 @@ func TestLoggedInAgentConnectsMissingSubscription(t *testing.T) {
 				case "POST /v1/organizations/current/credentials/oauth/sessions/complete":
 					var body map[string]string
 					_ = json.NewDecoder(r.Body).Decode(&body)
-					validResponse := strings.Contains(body["authorization_response"], "code=test")
+					validResponse := body["authorization_response"] == "test-code#test-state"
 					if tc.provider == "openai_codex" {
 						validResponse = body["authorization_response"] == ""
 					}
