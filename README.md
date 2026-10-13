@@ -108,7 +108,7 @@ provider_credential_ids:
 routing_strategy: dari
 ```
 
-Use `dari credentials provider update` to change a saved credential without changing its ID. For AWS IAM credentials, pass only `--aws-region` to keep the stored keys, or include `--aws-access-key-id-env`, `--aws-secret-access-key-env`, and optional `--aws-session-token-env` to replace them. Run `dari router models` first to see the current catalog.
+Use `dari credentials provider update` to change a saved credential without changing its ID. For AWS IAM credentials, pass only `--aws-region` to keep the stored keys, or include `--aws-access-key-id-env`, `--aws-secret-access-key-env`, and optional `--aws-session-token-env` to replace them. Run `dari router models` first to see the current catalog. `dari router request-costs <request_uuid>...` looks up content-free model reference costs for requests made by the `DARI_ROUTING_API_KEY`; set that environment variable to the key used for inference. Results are scoped to the key, may be delayed while telemetry lands, and are not a subscription cash charge.
 
 Inspect and manage routers:
 

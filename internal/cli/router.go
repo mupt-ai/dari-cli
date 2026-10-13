@@ -27,6 +27,7 @@ func init() {
 			newRouterListCmd(gf),
 			newRouterGetCmd(gf),
 			newRouterModelsCmd(gf),
+			newRouterRequestCostsCmd(),
 			newRouterCreateCmd(gf),
 			newRouterUpdateCmd(gf),
 			newRouterDeleteCmd(gf),
