@@ -18,10 +18,11 @@ func TestCurrentOrgCommandsUseAPIKeyRoutes(t *testing.T) {
 		switch r.Method + " " + r.URL.Path {
 		case "GET /v1/organizations/current/credentials":
 			_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}})
-		case "PUT /v1/organizations/current/credentials/OPENAI_API_KEY":
-			_ = json.NewEncoder(w).Encode(map[string]any{"name": "OPENAI_API_KEY"})
-		case "DELETE /v1/organizations/current/credentials/OPENAI_API_KEY":
-			_ = json.NewEncoder(w).Encode(map[string]any{"name": "OPENAI_API_KEY", "deleted_at": "2026-06-13T00:00:00Z"})
+		case "DELETE /v1/organizations/current/credentials/OPENAI_CODEX_OAUTH_TOKEN":
+			if r.URL.RawQuery != "scope=user" {
+				t.Fatalf("subscription disconnect query = %q", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": "OPENAI_CODEX_OAUTH_TOKEN"})
 		case "GET /v1/organizations/current/members":
 			_ = json.NewEncoder(w).Encode(map[string]any{"members": []any{}})
 		case "POST /v1/organizations/current/invitations":
@@ -35,8 +36,7 @@ func TestCurrentOrgCommandsUseAPIKeyRoutes(t *testing.T) {
 
 	commands := [][]string{
 		{"--api-url", srv.URL, "credentials", "list"},
-		{"--api-url", srv.URL, "credentials", "add", "OPENAI_API_KEY", "sk-test"},
-		{"--api-url", srv.URL, "credentials", "remove", "OPENAI_API_KEY"},
+		{"--api-url", srv.URL, "credentials", "subscription", "disconnect", "codex"},
 		{"--api-url", srv.URL, "org", "members"},
 		{"--api-url", srv.URL, "org", "invite", "new@example.test", "--role", "member"},
 	}
@@ -50,8 +50,7 @@ func TestCurrentOrgCommandsUseAPIKeyRoutes(t *testing.T) {
 
 	for _, want := range []string{
 		"GET /v1/organizations/current/credentials",
-		"PUT /v1/organizations/current/credentials/OPENAI_API_KEY",
-		"DELETE /v1/organizations/current/credentials/OPENAI_API_KEY",
+		"DELETE /v1/organizations/current/credentials/OPENAI_CODEX_OAUTH_TOKEN",
 		"GET /v1/organizations/current/members",
 		"POST /v1/organizations/current/invitations",
 	} {
