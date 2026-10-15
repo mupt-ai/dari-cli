@@ -87,17 +87,19 @@ func TestManifestOwnerNamespaceUsesExplicitProviderBinding(t *testing.T) {
 	}
 }
 
-func TestManifestOpenRouterBindingUsesOpenRouterCredential(t *testing.T) {
-	err := validateManifestProviderKeys(
-		"router.yml",
-		map[string]string{"openrouter": "user"},
-		map[string]string{"openrouter": "or-key"},
-		[]string{"openai/gpt-5.6-sol"},
-		map[string]string{"openai/gpt-5.6-sol": "openrouter"},
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("validateManifestProviderKeys error = %v", err)
+func TestManifestGatewayBindingUsesGatewayCredential(t *testing.T) {
+	for _, gateway := range []string{"openrouter", "vercel-ai-gateway"} {
+		err := validateManifestProviderKeys(
+			"router.yml",
+			map[string]string{gateway: "user"},
+			map[string]string{gateway: "gateway-key"},
+			[]string{"openai/gpt-5.6-sol"},
+			map[string]string{"openai/gpt-5.6-sol": gateway},
+			nil,
+		)
+		if err != nil {
+			t.Fatalf("%s validateManifestProviderKeys error = %v", gateway, err)
+		}
 	}
 }
 

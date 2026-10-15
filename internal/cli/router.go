@@ -947,7 +947,7 @@ func validateManifestProviderKeysWith(path string, sources, keys map[string]stri
 // credentials from the model catalog and may omit manifest provider key fields.
 func manifestProviderUsesManifestCredentials(provider string) bool {
 	switch provider {
-	case "amazon-bedrock", "anthropic", "azure", "baseten", "fireworks", "openai", "openrouter", "xai":
+	case "amazon-bedrock", "anthropic", "azure", "baseten", "fireworks", "openai", "openrouter", "vercel-ai-gateway", "xai":
 		return true
 	default:
 		return false
