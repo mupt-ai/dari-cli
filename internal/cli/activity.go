@@ -309,7 +309,7 @@ func newActivityConversationsCmd(gf *globalFlags) *cobra.Command {
 }
 
 func newActivityConversationGetCmd(gf *globalFlags) *cobra.Command {
-	var organizationID string
+	var organizationID, requestClass, agentID string
 	var limit, offset int
 	cmd := &cobra.Command{
 		Use:   "get <conversation_ref>",
@@ -320,12 +320,19 @@ func newActivityConversationGetCmd(gf *globalFlags) *cobra.Command {
 				return fmt.Errorf("--limit must be positive and --offset cannot be negative")
 			}
 			query := url.Values{"limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
+			if requestClass != "" && !containsString([]string{"main", "subagent", "workflow", "auxiliary", "compaction", "side_reply", "unknown"}, requestClass) {
+				return fmt.Errorf("invalid --request-class %q", requestClass)
+			}
+			setOptionalQuery(query, "request_class", requestClass)
+			setOptionalQuery(query, "agent_id", agentID)
 			endpoint := "conversations/" + url.PathEscape(args[0])
 			return requestActivity(cmd, gf, organizationID, endpoint, query)
 		},
 	}
 	f := cmd.Flags()
 	f.StringVar(&organizationID, "organization-id", "", "Read an explicit organization using browser login")
+	f.StringVar(&requestClass, "request-class", "", "Select main, subagent, workflow, auxiliary, compaction, side_reply, or unknown")
+	f.StringVar(&agentID, "agent-id", "", "Select one agent's loop")
 	f.IntVar(&limit, "limit", 100, "Maximum steps to return")
 	f.IntVar(&offset, "offset", 0, "Number of steps to skip")
 	return cmd

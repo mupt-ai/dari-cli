@@ -127,6 +127,8 @@ dari activity overview --from 2026-07-01T00:00:00Z --to 2026-07-08T00:00:00Z
 dari activity models --from 2026-07-01T00:00:00Z --to 2026-07-08T00:00:00Z
 dari activity people --from 2026-07-01T00:00:00Z --to 2026-07-08T00:00:00Z
 dari activity conversations --from 2026-07-01T00:00:00Z --to 2026-07-08T00:00:00Z
+dari activity conversations get rreq_... --request-class main
+dari activity conversations get rreq_... --request-class subagent --agent-id agent_...
 dari activity tools list --from 2026-07-01T00:00:00Z --to 2026-07-08T00:00:00Z
 dari activity skills list --from 2026-07-01T00:00:00Z --to 2026-07-08T00:00:00Z
 dari eval list

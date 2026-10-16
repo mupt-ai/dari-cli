@@ -14,6 +14,23 @@ import (
 	"github.com/mupt-ai/dari-cli/internal/state"
 )
 
+func TestConversationGetFiltersAgentLoop(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("request_class") != "workflow" || r.URL.Query().Get("agent_id") != "agent-a" {
+			t.Errorf("unexpected filters: %v", r.URL.Query())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"steps":[]}`))
+	}))
+	defer srv.Close()
+	useTestAPIKey(t)
+	cmd := newRootCmd("dev")
+	cmd.SetArgs([]string{"--api-url", srv.URL, "activity", "conversations", "get", "rreq_example", "--request-class", "workflow", "--agent-id", "agent-a"})
+	if _, err := captureStdoutBytes(t, cmd.Execute); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestActivityModelsUsesAuthenticatedCurrentOrgRouteAndPreservesFilters(t *testing.T) {
 	var gotQuery map[string][]string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
