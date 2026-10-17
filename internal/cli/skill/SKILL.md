@@ -165,6 +165,8 @@ dari codex exec "Fix the failing tests"
 dari pi -p "Review this repository"
 ```
 
+All three launchers show the serving model, thinking level, and routing lease turns using shared formatting. Codex 0.162.1+ uses a session-local loopback bridge for interactive sessions: status changes only UI display state, never saved session names. Resume with `dari codex resume`, not the temporary remote URL Codex prints on exit. Set `DARI_CODEX_STATUS=0` to disable the bridge; explicit `--remote` or `--profile`/`-p` and non-interactive commands bypass it.
+
 ## Inspect, Update, Delete
 
 ```bash

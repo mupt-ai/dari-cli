@@ -3,6 +3,7 @@ module github.com/mupt-ai/dari-cli
 go 1.25.0
 
 require (
+	github.com/gorilla/websocket v1.5.3
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/sys v0.43.0
 	golang.org/x/term v0.42.0

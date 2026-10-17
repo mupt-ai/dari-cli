@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 )
 
 func configurePiCommand(command *agentCommand) error {
@@ -40,26 +42,34 @@ const piProviderExtension = `export default function (pi: any) {
     }]
   });
 
-  pi.on("after_provider_response", (event: any, ctx: any) => {
-    if (!ctx.hasUI) return;
-    const model = event.headers?.["x-dari-selected-model"];
-    if (!model) return;
-    const theme = ctx.ui.theme;
-    const parts = [theme.fg("accent", model)];
-    const thinking = event.headers["x-dari-thinking-level"];
-    if (thinking && thinking !== "off") parts.push(theme.fg("dim", thinking));
-    const remaining = event.headers["x-dari-lease-turns-remaining"];
-    if (remaining !== undefined) {
-      // The header counts turns after this one; show the count including it.
-      const turns = Number(remaining) + 1;
-      parts.push(theme.fg("dim", "lease " + turns + (turns === 1 ? " turn" : " turns") + " left"));
+  pi.on("after_provider_response", async (event: any, ctx: any) => {
+    if (!ctx.hasUI || !event.headers?.["x-dari-selected-model"]) return;
+    const headers = Object.fromEntries([
+      "x-dari-selected-model", "x-dari-thinking-level", "x-dari-lease-turns-remaining"
+    ].filter(name => event.headers[name] !== undefined).map(name => [name, event.headers[name]]));
+    const result = await pi.exec(DARI_STATUS_EXECUTABLE, [
+      "agent-status", "--headers", JSON.stringify(headers)
+    ], { timeout: 2000 });
+    if (result.code === 0) {
+      const parts = result.stdout.trim().split(" · ");
+      ctx.ui.setStatus("dari", parts.map((part: string, index: number) =>
+        ctx.ui.theme.fg(index === 0 ? "accent" : "dim", part)
+      ).join(" · "));
     }
-    ctx.ui.setStatus("dari", parts.join(" · "));
   });
 }
 `
 
 func writePiProviderExtension() (string, error) {
+	executable, err := agentStatusExecutable()
+	if err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(executable)
+	if err != nil {
+		return "", err
+	}
+	content := strings.ReplaceAll(piProviderExtension, "DARI_STATUS_EXECUTABLE", string(encoded))
 	file, err := os.CreateTemp("", "dari-pi-provider-*.ts")
 	if err != nil {
 		return "", fmt.Errorf("create temporary Pi provider: %w", err)
@@ -74,7 +84,7 @@ func writePiProviderExtension() (string, error) {
 		_ = file.Close()
 		return "", fmt.Errorf("set Pi provider permissions: %w", err)
 	}
-	if _, err = file.WriteString(piProviderExtension); err != nil {
+	if _, err = file.WriteString(content); err != nil {
 		_ = file.Close()
 		return "", fmt.Errorf("write Pi provider: %w", err)
 	}

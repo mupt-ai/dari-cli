@@ -3,7 +3,6 @@ package cli
 import (
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -66,20 +65,16 @@ func TestBuildClaudeAgentCommandUsesTemporaryStatusLine(t *testing.T) {
 	if settings.StatusLine.Type != "command" {
 		t.Fatalf("statusLine.type = %q", settings.StatusLine.Type)
 	}
-	script, err := os.ReadFile(settings.StatusLine.Command)
-	if err != nil {
-		t.Fatal(err)
+	if !strings.Contains(settings.StatusLine.Command, " agent-status --claude") {
+		t.Fatalf("status command = %q", settings.StatusLine.Command)
 	}
-	if strings.Contains(string(script), "dari_route") || strings.Contains(string(data), "dari_route") {
-		t.Fatal("Claude status files contain the secret key")
+	if strings.Contains(string(data), "dari_route") {
+		t.Fatal("Claude status settings contain the secret key")
 	}
 
 	command.cleanup()
 	if _, err := os.Stat(settingsPath); !os.IsNotExist(err) {
 		t.Fatalf("temporary settings still exist: %v", err)
-	}
-	if _, err := os.Stat(settings.StatusLine.Command); !os.IsNotExist(err) {
-		t.Fatalf("temporary status script still exists: %v", err)
 	}
 }
 
@@ -101,30 +96,7 @@ func TestBuildClaudeAgentCommandSkipsStatusLineWhenSettingsFlagPresent(t *testin
 	}
 }
 
-func TestClaudeStatusLineScriptReadsDariRouting(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 is not installed")
-	}
-	command, err := buildAgentCommand("/claude", agentLaunch{name: "claude"}, "dari_route", "default")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer command.cleanup()
-
-	settingsIndex := slices.Index(command.args, "--settings")
-	data, err := os.ReadFile(command.args[settingsIndex+1])
-	if err != nil {
-		t.Fatal(err)
-	}
-	var settings struct {
-		StatusLine struct {
-			Command string `json:"command"`
-		} `json:"statusLine"`
-	}
-	if err := json.Unmarshal(data, &settings); err != nil {
-		t.Fatal(err)
-	}
-
+func TestClaudeStatusLineReadsDariRouting(t *testing.T) {
 	transcript := filepath.Join(t.TempDir(), "transcript.jsonl")
 	lines := []map[string]any{
 		{"type": "user", "message": map[string]any{"role": "user"}},
@@ -157,13 +129,15 @@ func TestClaudeStatusLineScriptReadsDariRouting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("python3", settings.StatusLine.Command)
-	cmd.Stdin = strings.NewReader(string(stdin))
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("status line script: %v", err)
+	root := newRootCmd("test")
+	var out strings.Builder
+	root.SetIn(strings.NewReader(string(stdin)))
+	root.SetOut(&out)
+	root.SetArgs([]string{"agent-status", "--claude"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
 	}
-	got := strings.TrimSpace(string(out))
+	got := strings.TrimSpace(out.String())
 	want := "xai/grok-4.6 · high · lease 2 turns left"
 	if got != want {
 		t.Fatalf("status = %q, want %q", got, want)

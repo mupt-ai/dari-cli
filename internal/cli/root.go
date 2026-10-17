@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -20,8 +21,19 @@ import (
 // -ldflags -X main.version=...; an empty string is displayed as "dev".
 func Execute(version string) int {
 	if launch, ok := parseAgentLaunch(os.Args[1:]); ok {
+		ctx := context.Background()
+		if launch.name == "codex" {
+			// Ctrl-C belongs to Codex (interrupt turn / double-Ctrl-C exit),
+			// not the wrapper. Keep cleanup alive until its TUI exits.
+			interrupts := make(chan os.Signal, 1)
+			signal.Notify(interrupts, os.Interrupt)
+			defer signal.Stop(interrupts)
+			var cancel context.CancelFunc
+			ctx, cancel = signal.NotifyContext(ctx, codexShutdownSignals()...)
+			defer cancel()
+		}
 		return runAgentLaunch(
-			context.Background(),
+			ctx,
 			launch,
 			os.Stdin,
 			os.Stdout,

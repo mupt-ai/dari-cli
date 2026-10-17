@@ -37,7 +37,7 @@ func TestBuildPiAgentCommandUsesTemporaryProviderExtension(t *testing.T) {
 	for _, want := range []string{
 		`pi.on("after_provider_response"`,
 		`x-dari-selected-model`,
-		`x-dari-lease-turns-remaining`,
+		`"agent-status", "--headers"`,
 		`ctx.ui.setStatus("dari"`,
 	} {
 		if !strings.Contains(content, want) {

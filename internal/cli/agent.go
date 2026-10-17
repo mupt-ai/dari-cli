@@ -100,14 +100,21 @@ func runAgentLaunch(ctx context.Context, launch agentLaunch, stdin io.Reader, st
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	// Read cleanup at return time: catalog and display setup compose resources.
+	defer func() {
+		if command.cleanup != nil {
+			command.cleanup()
+		}
+	}()
 	if launch.name == "codex" && !onlyRequestsAgentInfo(launch.args) {
 		if err := prepareCodexCatalog(ctx, &command, key, agentRoutingBaseURL(routerID)); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-	}
-	if command.cleanup != nil {
-		defer command.cleanup()
+		if err := prepareCodexStatus(ctx, &command, launch.args, key, agentRoutingBaseURL(routerID)); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 	}
 	cmd := exec.CommandContext(ctx, command.path, command.args...)
 	cmd.Env = command.env
