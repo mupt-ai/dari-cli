@@ -17,7 +17,9 @@ func TestCurrentOrgCommandsUseAPIKeyRoutes(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method + " " + r.URL.Path {
 		case "GET /v1/organizations/current/credentials":
-			_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{map[string]any{
+				"name": "OPENAI_CODEX_OAUTH_TOKEN", "credential_scope": "user", "oauth_provider": "openai_codex",
+			}}})
 		case "DELETE /v1/organizations/current/credentials/OPENAI_CODEX_OAUTH_TOKEN":
 			if r.URL.RawQuery != "scope=user" {
 				t.Fatalf("subscription disconnect query = %q", r.URL.RawQuery)

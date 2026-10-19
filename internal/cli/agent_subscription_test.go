@@ -227,7 +227,7 @@ func TestCodexDeviceCodeSubscriptionUsesCodeAndEmptyCompletion(t *testing.T) {
 	original := openAgentBrowser
 	openAgentBrowser = func(string) bool { return false }
 	t.Cleanup(func() { openAgentBrowser = original })
-	err := connectAgentPersonalSubscription(context.Background(), codexSubscription, api.New(server.URL), strings.NewReader("\n"), &output)
+	err := connectAgentPersonalSubscription(context.Background(), codexSubscription, api.New(server.URL), strings.NewReader("\n"), &output, "")
 	if err != nil {
 		t.Fatal(err)
 	}

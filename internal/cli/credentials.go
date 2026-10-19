@@ -8,8 +8,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
+	"time"
 
+	"github.com/mupt-ai/dari-cli/internal/auth"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -253,36 +256,110 @@ func newCredentialsListCmd(gf *globalFlags) *cobra.Command {
 	}
 }
 
-// Personal subscription credentials are stored under one fixed name per
-// provider; the CLI accepts the short provider aliases the agent flow uses.
-var subscriptionCredentialNames = map[string]string{
-	"claude-code": "ANTHROPIC_CLAUDE_CODE_OAUTH_TOKEN",
-	"codex":       "OPENAI_CODEX_OAUTH_TOKEN",
+// The CLI names personal subscriptions by the short provider aliases the agent
+// flow uses, or by a subscription's credential name when several are connected.
+var subscriptionProviders = map[string]agentSubscriptionProvider{
+	"claude-code": claudeSubscription,
+	"codex":       codexSubscription,
+}
+
+type subscriptionCredential struct {
+	Name               string  `json:"name"`
+	Label              *string `json:"label"`
+	CredentialScope    string  `json:"credential_scope"`
+	OAuthProvider      string  `json:"oauth_provider"`
+	CreatedAt          string  `json:"created_at"`
+	LastUsedAt         *string `json:"last_used_at"`
+	UnavailableUntil   *string `json:"unavailable_until"`
+	UnavailableReason  *string `json:"unavailable_reason"`
+	SubscriptionActive bool    `json:"subscription_active"`
+	AutoRedeemResets   bool    `json:"auto_redeem_resets"`
 }
 
 func newSubscriptionCredentialsCmd(gf *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "subscription",
 		Short: "Manage your personal Claude Code and ChatGPT subscriptions",
+		Long: "Connect one or more personal subscriptions per provider. Routing uses the active one " +
+			"until it reaches its usage limit, then holds it until its reset and switches to the next " +
+			"one in connection order.",
 	}
 	cmd.AddCommand(
-		newSubscriptionCredentialCmd(gf, "mark-available", "Clear a usage-limit hold so routers use the subscription again",
+		newSubscriptionListCmd(gf),
+		newSubscriptionConnectCmd(gf),
+		newSubscriptionCredentialCmd(gf, "mark-available", "Clear a usage-limit hold so routers can use the subscription again",
 			http.MethodPost, func(name string) string { return url.PathEscape(name) + "/mark-available" }),
-		newSubscriptionCredentialCmd(gf, "disconnect", "Disconnect your subscription from Dari",
+		newSubscriptionCredentialCmd(gf, "disconnect", "Disconnect a subscription from Dari",
 			http.MethodDelete, func(name string) string { return url.PathEscape(name) + "?scope=user" }),
+		newSubscriptionAutoResetCmd(gf),
 	)
+	return cmd
+}
+
+func newSubscriptionListCmd(gf *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List your subscriptions in connection order, with which is active and which are held",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			subscriptions, err := listSubscriptionCredentials(cmd, gf)
+			if err != nil {
+				return err
+			}
+			rows := make([]map[string]any, 0, len(subscriptions))
+			for _, subscription := range subscriptions {
+				rows = append(rows, map[string]any{
+					"name":               subscription.Name,
+					"provider":           subscriptionAlias(subscription.OAuthProvider),
+					"label":              subscription.Label,
+					"status":             subscriptionStatus(subscription),
+					"unavailable_until":  subscription.UnavailableUntil,
+					"unavailable_reason": subscription.UnavailableReason,
+					"last_used_at":       subscription.LastUsedAt,
+					"auto_redeem_resets": subscription.AutoRedeemResets,
+				})
+			}
+			return printJSON(map[string]any{"subscriptions": rows})
+		},
+	}
+}
+
+func newSubscriptionConnectCmd(gf *globalFlags) *cobra.Command {
+	var reconnect string
+	cmd := &cobra.Command{
+		Use:   "connect <claude-code|codex>",
+		Short: "Connect another subscription, or reconnect one with --reconnect",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			provider, ok := subscriptionProviders[strings.ToLower(strings.TrimSpace(args[0]))]
+			if !ok {
+				return fmt.Errorf("unknown subscription %q: expected claude-code or codex", args[0])
+			}
+			apiURL, err := gf.resolveAPIURL()
+			if err != nil {
+				return err
+			}
+			client, err := auth.OrgKeyClient(apiURL)
+			if err != nil {
+				return err
+			}
+			return connectAgentPersonalSubscription(cmd.Context(), provider, client,
+				cmd.InOrStdin(), cmd.ErrOrStderr(), strings.ToUpper(strings.TrimSpace(reconnect)))
+		},
+	}
+	cmd.Flags().StringVar(&reconnect, "reconnect", "", "credential name of the subscription to reconnect (see `subscription list`)")
 	return cmd
 }
 
 func newSubscriptionCredentialCmd(gf *globalFlags, use, short, method string, path func(name string) string) *cobra.Command {
 	return &cobra.Command{
-		Use:   use + " <claude-code|codex>",
+		Use:   use + " <claude-code|codex|NAME>",
 		Short: short,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name, ok := subscriptionCredentialNames[strings.ToLower(strings.TrimSpace(args[0]))]
-			if !ok {
-				return fmt.Errorf("unknown subscription %q: expected claude-code or codex", args[0])
+			name, err := resolveSubscriptionName(cmd, gf, args[0])
+			if err != nil {
+				return err
 			}
 			var resp map[string]any
 			if err := orgKeyRequest(cmd, gf, method,
@@ -292,6 +369,104 @@ func newSubscriptionCredentialCmd(gf *globalFlags, use, short, method string, pa
 			return printJSON(resp)
 		},
 	}
+}
+
+func newSubscriptionAutoResetCmd(gf *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "auto-reset <codex|NAME> <on|off>",
+		Short: "Let Dari spend a ChatGPT subscription's banked Codex resets when every ChatGPT subscription is exhausted",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var enabled bool
+			switch strings.ToLower(strings.TrimSpace(args[1])) {
+			case "on":
+				enabled = true
+			case "off":
+			default:
+				return fmt.Errorf("expected on or off, got %q", args[1])
+			}
+			name, err := resolveSubscriptionName(cmd, gf, args[0])
+			if err != nil {
+				return err
+			}
+			var resp map[string]any
+			if err := orgKeyRequest(cmd, gf, http.MethodPut,
+				"/v1/organizations/current/credentials/"+url.PathEscape(name)+"/auto-reset",
+				map[string]bool{"enabled": enabled}, &resp); err != nil {
+				return err
+			}
+			return printJSON(resp)
+		},
+	}
+}
+
+// resolveSubscriptionName maps a provider alias to its only connected
+// subscription; with several connected, the caller must name one.
+func resolveSubscriptionName(cmd *cobra.Command, gf *globalFlags, arg string) (string, error) {
+	provider, ok := subscriptionProviders[strings.ToLower(strings.TrimSpace(arg))]
+	if !ok {
+		return strings.ToUpper(strings.TrimSpace(arg)), nil
+	}
+	subscriptions, err := listSubscriptionCredentials(cmd, gf)
+	if err != nil {
+		return "", err
+	}
+	var names []string
+	for _, subscription := range subscriptions {
+		if subscription.OAuthProvider == provider.id {
+			names = append(names, subscription.Name)
+		}
+	}
+	switch len(names) {
+	case 0:
+		return "", fmt.Errorf("no %s subscription is connected", provider.name)
+	case 1:
+		return names[0], nil
+	}
+	return "", fmt.Errorf("%d %s subscriptions are connected; pass one of: %s",
+		len(names), provider.name, strings.Join(names, ", "))
+}
+
+func listSubscriptionCredentials(cmd *cobra.Command, gf *globalFlags) ([]subscriptionCredential, error) {
+	var resp struct {
+		Credentials []subscriptionCredential `json:"credentials"`
+	}
+	if err := orgKeyRequest(cmd, gf, http.MethodGet, "/v1/organizations/current/credentials", nil, &resp); err != nil {
+		return nil, err
+	}
+	subscriptions := slices.DeleteFunc(resp.Credentials, func(c subscriptionCredential) bool {
+		return c.CredentialScope != "user" || c.OAuthProvider == ""
+	})
+	// Connection order is the order routing switches through.
+	slices.SortStableFunc(subscriptions, func(a, b subscriptionCredential) int {
+		if c := strings.Compare(a.OAuthProvider, b.OAuthProvider); c != 0 {
+			return c
+		}
+		return strings.Compare(a.CreatedAt, b.CreatedAt)
+	})
+	return subscriptions, nil
+}
+
+func subscriptionAlias(oauthProvider string) string {
+	for alias, provider := range subscriptionProviders {
+		if provider.id == oauthProvider {
+			return alias
+		}
+	}
+	return oauthProvider
+}
+
+func subscriptionStatus(subscription subscriptionCredential) string {
+	if subscription.UnavailableUntil != nil {
+		until, err := time.Parse(time.RFC3339Nano, *subscription.UnavailableUntil)
+		if err == nil && until.After(time.Now()) {
+			return "held"
+		}
+	}
+	if subscription.SubscriptionActive {
+		return "active"
+	}
+	return "standby"
 }
 
 // resolveCredentialValue mirrors the Python CLI's logic: positional value,

@@ -392,25 +392,32 @@ func resolveAgentPersonalSubscription(
 	if !useSubscription {
 		return agentSubscriptionResolution{decided: true, preferenceChanged: true}, nil
 	}
-	if err := connectAgentPersonalSubscription(ctx, provider, client, stdin, stderr); err != nil {
+	if err := connectAgentPersonalSubscription(ctx, provider, client, stdin, stderr, ""); err != nil {
 		return agentSubscriptionResolution{}, err
 	}
 	return agentSubscriptionResolution{enabled: true, decided: true, preferenceChanged: true, connectedNow: true}, nil
 }
 
+// connectAgentPersonalSubscription connects another subscription, or
+// reconnects the one named by credentialName when it is non-empty.
 func connectAgentPersonalSubscription(
 	ctx context.Context,
 	provider agentSubscriptionProvider,
 	client *api.Client,
 	stdin io.Reader,
 	stderr io.Writer,
+	credentialName string,
 ) error {
+	body := map[string]string{"provider": provider.id}
+	if credentialName != "" {
+		body["credential_name"] = credentialName
+	}
 	var started agentSubscriptionOAuthStart
 	if err := client.Do(
 		ctx,
 		http.MethodPost,
 		"/v1/organizations/current/credentials/oauth/sessions",
-		map[string]string{"provider": provider.id},
+		body,
 		&started,
 	); err != nil {
 		return api.HumanError(err)

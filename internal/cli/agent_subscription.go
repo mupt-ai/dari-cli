@@ -93,7 +93,7 @@ func ensureDefaultAgentSubscription(ctx context.Context, agent string, access ag
 		if choice == 1 {
 			provider = claudeSubscription
 		}
-		if err := connectAgentPersonalSubscription(ctx, provider, client, stdin, stderr); err != nil {
+		if err := connectAgentPersonalSubscription(ctx, provider, client, stdin, stderr, ""); err != nil {
 			return err
 		}
 		if err := state.SaveAgentSubscriptionOptOut(scope, false); err != nil {
