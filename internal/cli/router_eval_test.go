@@ -101,7 +101,6 @@ func TestRouterCreateSendsPayload(t *testing.T) {
 		"--api-url", srv.URL, "router", "create", "Production Router",
 		"--model", "fireworks/deepseek-ai/DeepSeek-V4-Pro,fireworks/deepseek-ai/DeepSeek-V4-Flash",
 		"--provider-key-env", "fireworks=TEST_FIREWORKS_KEY",
-		"--eval", "eval_123",
 		"--strategy", "dari",
 	})
 	if err := captureStdout(t, func() error { return cmd.Execute() }); err != nil {
@@ -112,7 +111,6 @@ func TestRouterCreateSendsPayload(t *testing.T) {
 		"name":             "Production Router",
 		"enabled_models":   []any{"fireworks/deepseek-ai/DeepSeek-V4-Pro", "fireworks/deepseek-ai/DeepSeek-V4-Flash"},
 		"provider_keys":    map[string]any{"fireworks": "sk-fireworks-env"},
-		"eval_ids":         []any{"eval_123"},
 		"routing_strategy": "dari",
 	}
 	if !reflect.DeepEqual(body, want) {
@@ -173,8 +171,6 @@ provider_key_sources:
 provider_key_envs:
   baseten: TEST_BASETEN_KEY
 routing_strategy: dari
-eval_ids:
-  - eval_123
 `), 0o644); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
@@ -208,11 +204,32 @@ eval_ids:
 		"enabled_models":       []any{"openai/gpt-5.5", "baseten/moonshotai/Kimi-K2.7-Code"},
 		"provider_keys":        map[string]any{"baseten": "sk-baseten-env"},
 		"provider_key_sources": map[string]any{"openai": "managed", "baseten": "user"},
-		"eval_ids":             []any{"eval_123"},
 		"routing_strategy":     "dari",
 	}
 	if !reflect.DeepEqual(body, want) {
 		t.Fatalf("create body = %#v, want %#v", body, want)
+	}
+}
+
+func TestRouterCreateFromManifestRejectsLegacyEvalIDs(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "router.yml")
+	if err := os.WriteFile(manifestPath, []byte(`name: Legacy Router
+enabled_models:
+  - openai/gpt-5.5
+eval_ids:
+  - evl_123
+`), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	useTestAPIKey(t)
+
+	cmd := newRootCmd("dev")
+	cmd.SetArgs([]string{"router", "create", manifestPath})
+	cmd.SetErr(io.Discard)
+	err := captureStdout(t, func() error { return cmd.Execute() })
+	if err == nil || !strings.Contains(err.Error(), "field eval_ids not found") {
+		t.Fatalf("error = %v, want clear unknown eval_ids field error", err)
 	}
 }
 
@@ -851,7 +868,6 @@ func TestRouterUpdateOverlaysCurrentConfig(t *testing.T) {
 		"--api-url", srv.URL, "router", "update", "rtr_123",
 		"--name", "Staging",
 		"--managed-key", "fireworks",
-		"--clear-evals",
 		"--allow-long-context=false",
 	})
 	if err := captureStdout(t, func() error { return cmd.Execute() }); err != nil {
@@ -862,7 +878,6 @@ func TestRouterUpdateOverlaysCurrentConfig(t *testing.T) {
 		"name":                 "Staging",
 		"enabled_models":       []any{"fireworks/deepseek-ai/DeepSeek-V4-Pro"},
 		"provider_key_sources": map[string]any{"fireworks": "managed"},
-		"eval_ids":             []any{},
 		"allow_long_context":   false,
 	}
 	if !reflect.DeepEqual(body, want) {

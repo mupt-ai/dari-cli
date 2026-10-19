@@ -75,7 +75,6 @@ type agentRouterCreateRequest struct {
 	EnabledModels                     []string            `json:"enabled_models"`
 	ModelProviders                    map[string]string   `json:"model_providers"`
 	ProviderKeySources                map[string]string   `json:"provider_key_sources"`
-	EvalIDs                           []string            `json:"eval_ids"`
 	ModelThinkingLevels               map[string][]string `json:"model_thinking_levels"`
 	RoutingStrategy                   string              `json:"routing_strategy"`
 	SpeculativeRouting                bool                `json:"speculative_routing"`
@@ -279,7 +278,6 @@ func ensureAgentRouter(
 		body := agentRouterCreateBody(
 			models,
 			choices,
-			suggestion.evalIDs,
 			claudeClientKey,
 			usePersonalSubscription,
 		)
@@ -1227,7 +1225,6 @@ func sameStringSet(a, b []string) bool {
 func agentRouterCreateBody(
 	models []agentModel,
 	choices []agentModelChoice,
-	evalIDs []string,
 	clientKey string,
 	usePersonalSubscription bool,
 ) agentRouterCreateRequest {
@@ -1247,7 +1244,6 @@ func agentRouterCreateBody(
 		EnabledModels:                     ids,
 		ModelProviders:                    providers,
 		ProviderKeySources:                providerSources,
-		EvalIDs:                           append([]string(nil), evalIDs...),
 		ModelThinkingLevels:               choiceLevels(choices),
 		RoutingStrategy:                   "dari",
 		SpeculativeRouting:                true,
@@ -1294,7 +1290,6 @@ func agentRouterUpdateBody(
 type agentModelSuggestion struct {
 	modelIDs []string
 	levels   map[string][]string
-	evalIDs  []string
 }
 
 // fetchAgentModelSuggestion returns the named suggestion from the shared
@@ -1309,7 +1304,6 @@ func fetchAgentModelSuggestion(
 			ID       string              `json:"id"`
 			ModelIDs []string            `json:"model_ids"`
 			Models   map[string][]string `json:"models"`
-			EvalIDs  []string            `json:"eval_ids"`
 		} `json:"suggestions"`
 	}
 	if err := client.Do(
@@ -1336,7 +1330,6 @@ func fetchAgentModelSuggestion(
 		return agentModelSuggestion{
 			modelIDs: modelIDs,
 			levels:   suggestion.Models,
-			evalIDs:  append([]string(nil), suggestion.EvalIDs...),
 		}, nil
 	}
 	return agentModelSuggestion{}, fmt.Errorf(

@@ -629,6 +629,9 @@ func TestEnsureClaudeAgentRouterCreatesSeparateRouter(t *testing.T) {
 	if got := created["personal_oauth_fallback_enabled"]; got != false {
 		t.Errorf("personal_oauth_fallback_enabled = %#v", got)
 	}
+	if _, ok := created["eval_ids"]; ok {
+		t.Errorf("create payload unexpectedly includes eval_ids: %#v", created["eval_ids"])
+	}
 	if got := stringSlice(created["enabled_models"]); !slices.Equal(got, []string{
 		"anthropic/claude-fable-5-1",
 		"zai-org/GLM-5.3-Flash",
@@ -636,9 +639,6 @@ func TestEnsureClaudeAgentRouterCreatesSeparateRouter(t *testing.T) {
 		"openai/gpt-5.6-sol",
 	}) {
 		t.Errorf("enabled_models = %q", got)
-	}
-	if got := stringSlice(created["eval_ids"]); !slices.Equal(got, testAgentEvalIDs()) {
-		t.Errorf("eval_ids = %q", got)
 	}
 	levels, _ := created["model_thinking_levels"].(map[string]any)
 	for modelID, want := range map[string][]string{
@@ -1152,8 +1152,7 @@ func writeAgentModelSuggestions(t *testing.T, w http.ResponseWriter) {
 	t.Helper()
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"suggestions": []map[string]any{{
-			"id":       "claude",
-			"eval_ids": testAgentEvalIDs(),
+			"id": "claude",
 			"model_ids": []string{
 				"anthropic/claude-fable-5-1",
 				"zai-org/GLM-5.3-Flash",
@@ -1168,21 +1167,6 @@ func writeAgentModelSuggestions(t *testing.T, w http.ResponseWriter) {
 			},
 		}},
 	})
-}
-
-func testAgentEvalIDs() []string {
-	return []string{
-		"evl_public_aa_intelligence_index",
-		"evl_public_aa_hle",
-		"evl_public_vals_terminal_bench_2_1",
-		"evl_public_vals_vibe_code_bench",
-		"evl_public_aa_gdpval",
-		"evl_public_aa_scicode",
-		"evl_public_vals_skillsbench",
-		"evl_public_vals_code_migration",
-		"evl_public_aa_automationbench",
-		"evl_public_vals_live_code_bench",
-	}
 }
 
 func stringSlice(value any) []string {

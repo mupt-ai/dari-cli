@@ -114,7 +114,6 @@ type routerCreateRequest struct {
 	ProviderKeys          map[string]string   `json:"provider_keys,omitempty"`
 	ProviderCredentialIDs map[string]string   `json:"provider_credential_ids,omitempty"`
 	ProviderKeySources    map[string]string   `json:"provider_key_sources,omitempty"`
-	EvalIDs               []string            `json:"eval_ids,omitempty"`
 	RoutingStrategy       string              `json:"routing_strategy,omitempty"`
 	CustomConfig          *routerCustomConfig `json:"custom_config,omitempty"`
 	ModelThinkingLevels   map[string][]string `json:"model_thinking_levels,omitempty"`
@@ -130,7 +129,6 @@ type routerUpdateRequest struct {
 	ProviderKeys               map[string]string                      `json:"provider_keys,omitempty"`
 	ProviderCredentialIDs      map[string]string                      `json:"provider_credential_ids,omitempty"`
 	ProviderKeySources         map[string]string                      `json:"provider_key_sources,omitempty"`
-	EvalIDs                    *[]string                              `json:"eval_ids,omitempty"`
 	RoutingStrategy            string                                 `json:"routing_strategy,omitempty"`
 	SubscriptionFallbackModels map[string]*routerSubscriptionFallback `json:"subscription_fallback_models,omitempty"`
 }
@@ -150,7 +148,6 @@ type routerCreateManifest struct {
 	ProviderKeyEnvs            map[string]string                     `yaml:"provider_key_envs"`
 	ProviderCredentialIDs      map[string]string                     `yaml:"provider_credential_ids"`
 	ProviderKeySources         map[string]string                     `yaml:"provider_key_sources"`
-	EvalIDs                    []string                              `yaml:"eval_ids"`
 	RoutingStrategy            string                                `yaml:"routing_strategy"`
 	CustomConfig               *routerCustomConfig                   `yaml:"custom_config"`
 	ModelThinkingLevels        map[string][]string                   `yaml:"model_thinking_levels"`
@@ -166,8 +163,6 @@ type routerConfigFlags struct {
 	providerKeyEnvs            []string
 	providerCredentials        []string
 	managedKeyProvider         []string
-	evalIDs                    []string
-	clearEvals                 bool
 	strategy                   string
 	flagNames                  []string
 }
@@ -184,7 +179,6 @@ func (rf *routerConfigFlags) register(cmd *cobra.Command) {
 	cmd.Flags().StringArrayVar(&rf.providerKeyEnvs, name("provider-key-env"), nil, "Read a provider API key from the local environment as provider=ENV_VAR (repeatable)")
 	cmd.Flags().StringArrayVar(&rf.providerCredentials, name("provider-credential"), nil, "Use a saved provider credential as provider=CREDENTIAL_ID (repeatable)")
 	cmd.Flags().StringSliceVar(&rf.managedKeyProvider, name("managed-key"), nil, "Use the Dari-managed key for this provider (repeatable or comma-separated)")
-	cmd.Flags().StringSliceVar(&rf.evalIDs, name("eval"), nil, "Eval scorecard ID to import (repeatable or comma-separated); run 'dari eval list' for IDs")
 	cmd.Flags().StringVar(&rf.strategy, name("strategy"), "", "Routing strategy: dari; use a manifest for custom rules")
 	cmd.Flags().BoolVar(&rf.allowLongContext, name("allow-long-context"), false, "Allow provider long-context surcharges (off by default)")
 	cmd.Flags().StringArrayVar(&rf.subscriptionFallbackModels, name("subscription-fallback-model"), nil, "Replacement served while a model's personal subscription is exhausted, as SOURCE_MODEL=FALLBACK_MODEL[,via=PROVIDER][,thinking=LEVEL][,fast] (repeatable); SOURCE_MODEL= clears it")
@@ -361,9 +355,6 @@ func newRouterCreateCmd(gf *globalFlags) *cobra.Command {
 			if sources != nil {
 				body.ProviderKeySources = sources
 			}
-			if len(rf.evalIDs) > 0 {
-				body.EvalIDs = rf.evalIDs
-			}
 			strategy, err := routerStrategyForCreate(rf.strategy)
 			if err != nil {
 				return err
@@ -454,13 +445,6 @@ func newRouterUpdateCmd(gf *globalFlags) *cobra.Command {
 			if sources != nil {
 				body.ProviderKeySources = sources
 			}
-			switch {
-			case rf.clearEvals:
-				targetEvalIDs := []string{}
-				body.EvalIDs = &targetEvalIDs
-			case cmd.Flags().Changed("eval"):
-				body.EvalIDs = &rf.evalIDs
-			}
 			strategy, err := routerStrategyForUpdate(rf.strategy, current.RoutingStrategy)
 			if err != nil {
 				return err
@@ -477,7 +461,6 @@ func newRouterUpdateCmd(gf *globalFlags) *cobra.Command {
 	}
 	rf.register(cmd)
 	cmd.Flags().StringVar(&name, "name", "", "Rename the router")
-	cmd.Flags().BoolVar(&rf.clearEvals, "clear-evals", false, "Remove all imported eval scorecards")
 	return cmd
 }
 
@@ -694,10 +677,6 @@ func (manifest routerCreateManifest) createRequest(path string, resolveCatalogDe
 	if err != nil {
 		return routerCreateRequest{}, err
 	}
-	evalIDs, err := cleanRequiredStrings(manifest.EvalIDs, path, "eval_ids")
-	if err != nil {
-		return routerCreateRequest{}, err
-	}
 	strategy, err := routerStrategyForManifest(
 		path,
 		strings.ToLower(strings.TrimSpace(manifest.RoutingStrategy)),
@@ -729,9 +708,6 @@ func (manifest routerCreateManifest) createRequest(path string, resolveCatalogDe
 	}
 	if len(providerKeySources) > 0 {
 		body.ProviderKeySources = providerKeySources
-	}
-	if len(evalIDs) > 0 {
-		body.EvalIDs = evalIDs
 	}
 	if strategy != "" {
 		body.RoutingStrategy = strategy

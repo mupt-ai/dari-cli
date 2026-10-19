@@ -99,6 +99,8 @@ model_thinking_levels:
 
 ## Evals
 
+Dari automatically picks the relevant evals for each request from your organization's evals and Public Evals. Evals are not selected on a router.
+
 Create an organization scorecard from a CSV whose first two columns are `model_id,score`. Optional columns are `thinking_level`, `notes`, and `metadata_json`:
 
 ```bash
@@ -115,18 +117,11 @@ openai/gpt-5.6-sol,87,high,Strong public run
 anthropic/claude-fable-5,81,,Generic score
 ```
 
-Then list scorecards and use their exact IDs:
+List scorecards with:
 
 ```bash
 dari eval list
 ```
-
-```yaml
-eval_ids:
-  - evl_...
-```
-
-Do not commit organization-specific eval IDs to public examples.
 
 ## Call A Router
 

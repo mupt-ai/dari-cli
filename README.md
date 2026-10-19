@@ -48,7 +48,7 @@ dari pi
 
 On first launch, Dari signs you in if needed and creates and privately caches one Routing key. Subscription setup runs even if you already used `dari auth login` or have a cached router. Codex asks to connect your ChatGPT subscription, Claude asks to connect your Claude Code subscription, and Pi offers either provider or Dari managed billing. Explicit opt-outs are remembered per user and launcher. If it is not connected to Dari yet, the launcher opens the provider login and finishes the connection before continuing; later launches reuse it automatically. Personal subscriptions require the organization's Dari Pro plan, separate from the provider subscription. If Pro is inactive, onboarding lets you review plans in the browser, recheck activation, or explicitly choose Dari managed billing. It never purchases a plan for you.
 
-The first Claude or Codex launch also opens an arrow-key model checklist: up/down moves, space toggles a model, and the right arrow opens its thinking levels, where any combination can be checked. Recommended defaults are preselected and clearly marked. Codex and Claude preselect their named model presets from the same backend configuration used by the web app, including reasoning levels. Codex applies confirmed selections to your organization's default router; Claude Code gets a separate router using the Claude preset's models and evals. The web app's Default preset also supplies new organizations' initial router models. Saved launcher selections are reused on later launches. Dari applies recommended reasoning levels and managed providers to selected models.
+The first Claude or Codex launch also opens an arrow-key model checklist: up/down moves, space toggles a model, and the right arrow opens its thinking levels, where any combination can be checked. Recommended defaults are preselected and clearly marked. Codex and Claude preselect their named model presets from the same backend configuration used by the web app, including reasoning levels. Codex applies confirmed selections to your organization's default router; Claude Code gets a separate router using the Claude preset's models. Dari automatically picks relevant evals for each request from your organization's evals and Public Evals. The web app's Default preset also supplies new organizations' initial router models. Saved launcher selections are reused on later launches. Dari applies recommended reasoning levels and managed providers to selected models.
 
 Dari then supplies the appropriate router endpoint and `dari/routing` model without overwriting the agent's own configuration. Later launches reuse setup while checking for a connected subscription. Set `DARI_ROUTING_API_KEY` to use an existing Routing key instead. Pi's footer, Claude Code's status line, and Codex's footer show the model serving each turn, its thinking level, and the turns left on the current routing lease. All three use the same status formatter.
 
@@ -122,6 +122,8 @@ dari router get <router_id_or_endpoint>
 dari router update <router_id_or_endpoint> --model openai/gpt-5.6-sol
 dari router delete <router_id_or_endpoint> --yes
 ```
+
+Dari automatically picks the relevant evals for each request from your organization's evals and Public Evals. Use `dari eval` to manage your organization's eval scorecards; router configuration no longer selects them.
 
 Inspect activity and evals:
 
