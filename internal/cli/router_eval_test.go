@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -208,6 +209,65 @@ routing_strategy: dari
 	}
 	if !reflect.DeepEqual(body, want) {
 		t.Fatalf("create body = %#v, want %#v", body, want)
+	}
+}
+
+func TestRouterCreateSendsEvalScoreImputationOnlyWhenSet(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest := func(name, extra string) string {
+		path := filepath.Join(dir, name)
+		content := "name: Manifest Router\nenabled_models:\n  - openai/gpt-5.5\nprovider_key_sources:\n  openai: managed\n" + extra
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write manifest: %v", err)
+		}
+		return path
+	}
+	flagArgs := []string{"router", "create", "Flag Router", "--model", "openai/gpt-5.5", "--managed-key", "openai"}
+	tests := []struct {
+		name string
+		args []string
+		want any // nil means the field is omitted so the API default (on) applies
+	}{
+		{name: "flag omitted", args: flagArgs},
+		{name: "flag false", args: append(slices.Clone(flagArgs), "--eval-score-imputation=false"), want: false},
+		{name: "flag true", args: append(slices.Clone(flagArgs), "--eval-score-imputation"), want: true},
+		{name: "manifest omitted", args: []string{"router", "create", "--from-file", writeManifest("omitted.yml", "")}},
+		{name: "manifest false", args: []string{"router", "create", "--from-file", writeManifest("off.yml", "eval_score_imputation: false\n")}, want: false},
+		{name: "manifest true", args: []string{"router", "create", "--from-file", writeManifest("on.yml", "eval_score_imputation: true\n")}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var body map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/v1/organizations/current/routers" {
+					t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+				}
+				raw, _ := io.ReadAll(r.Body)
+				if err := json.Unmarshal(raw, &body); err != nil {
+					t.Fatalf("decode body: %v", err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "rtr_new"})
+			}))
+			defer srv.Close()
+			useTestAPIKey(t)
+
+			cmd := newRootCmd("dev")
+			cmd.SetArgs(append([]string{"--api-url", srv.URL}, tt.args...))
+			if err := captureStdout(t, func() error { return cmd.Execute() }); err != nil {
+				t.Fatalf("dari router create: %v", err)
+			}
+			got, present := body["eval_score_imputation"]
+			if tt.want == nil {
+				if present {
+					t.Fatalf("eval_score_imputation = %#v, want omitted", got)
+				}
+				return
+			}
+			if got != tt.want {
+				t.Fatalf("eval_score_imputation = %#v (present %v), want %#v", got, present, tt.want)
+			}
+		})
 	}
 }
 
@@ -869,16 +929,18 @@ func TestRouterUpdateOverlaysCurrentConfig(t *testing.T) {
 		"--name", "Staging",
 		"--managed-key", "fireworks",
 		"--allow-long-context=false",
+		"--eval-score-imputation=false",
 	})
 	if err := captureStdout(t, func() error { return cmd.Execute() }); err != nil {
 		t.Fatalf("dari router update: %v", err)
 	}
 
 	want := map[string]any{
-		"name":                 "Staging",
-		"enabled_models":       []any{"fireworks/deepseek-ai/DeepSeek-V4-Pro"},
-		"provider_key_sources": map[string]any{"fireworks": "managed"},
-		"allow_long_context":   false,
+		"name":                  "Staging",
+		"enabled_models":        []any{"fireworks/deepseek-ai/DeepSeek-V4-Pro"},
+		"provider_key_sources":  map[string]any{"fireworks": "managed"},
+		"allow_long_context":    false,
+		"eval_score_imputation": false,
 	}
 	if !reflect.DeepEqual(body, want) {
 		t.Fatalf("update body = %#v, want %#v", body, want)

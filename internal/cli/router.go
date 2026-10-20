@@ -108,6 +108,7 @@ type routerCustomConfig struct {
 
 type routerCreateRequest struct {
 	AllowLongContext      bool                `json:"allow_long_context,omitempty"`
+	EvalScoreImputation   *bool               `json:"eval_score_imputation,omitempty"`
 	Name                  string              `json:"name"`
 	EnabledModels         []string            `json:"enabled_models"`
 	ModelProviders        map[string]string   `json:"model_providers,omitempty"`
@@ -124,6 +125,7 @@ type routerCreateRequest struct {
 
 type routerUpdateRequest struct {
 	AllowLongContext           *bool                                  `json:"allow_long_context,omitempty"`
+	EvalScoreImputation        *bool                                  `json:"eval_score_imputation,omitempty"`
 	Name                       string                                 `json:"name"`
 	EnabledModels              []string                               `json:"enabled_models"`
 	ProviderKeys               map[string]string                      `json:"provider_keys,omitempty"`
@@ -141,6 +143,7 @@ type routerCurrent struct {
 
 type routerCreateManifest struct {
 	AllowLongContext           bool                                  `yaml:"allow_long_context"`
+	EvalScoreImputation        *bool                                 `yaml:"eval_score_imputation"`
 	Name                       string                                `yaml:"name"`
 	EnabledModels              []string                              `yaml:"enabled_models"`
 	ModelProviders             map[string]string                     `yaml:"model_providers"`
@@ -157,6 +160,7 @@ type routerCreateManifest struct {
 
 type routerConfigFlags struct {
 	allowLongContext           bool
+	evalScoreImputation        bool
 	models                     []string
 	subscriptionFallbackModels []string
 	providerKeyPairs           []string
@@ -181,6 +185,7 @@ func (rf *routerConfigFlags) register(cmd *cobra.Command) {
 	cmd.Flags().StringSliceVar(&rf.managedKeyProvider, name("managed-key"), nil, "Use the Dari-managed key for this provider (repeatable or comma-separated)")
 	cmd.Flags().StringVar(&rf.strategy, name("strategy"), "", "Routing strategy: dari; use a manifest for custom rules")
 	cmd.Flags().BoolVar(&rf.allowLongContext, name("allow-long-context"), false, "Allow provider long-context surcharges (off by default)")
+	cmd.Flags().BoolVar(&rf.evalScoreImputation, name("eval-score-imputation"), true, "Estimate missing eval scores for a model and thinking level from related measured scores (on by default)")
 	cmd.Flags().StringArrayVar(&rf.subscriptionFallbackModels, name("subscription-fallback-model"), nil, "Replacement served while a model's personal subscription is exhausted, as SOURCE_MODEL=FALLBACK_MODEL[,via=PROVIDER][,thinking=LEVEL][,fast] (repeatable); SOURCE_MODEL= clears it")
 }
 
@@ -329,6 +334,10 @@ func newRouterCreateCmd(gf *globalFlags) *cobra.Command {
 				Name:             strings.TrimSpace(args[0]),
 				EnabledModels:    rf.models,
 			}
+			// Omitted unless passed so the API default (on) applies.
+			if cmd.Flags().Changed("eval-score-imputation") {
+				body.EvalScoreImputation = &rf.evalScoreImputation
+			}
 			fallbacks, err := rf.subscriptionFallbacks()
 			if err != nil {
 				return err
@@ -414,6 +423,9 @@ func newRouterUpdateCmd(gf *globalFlags) *cobra.Command {
 			}
 			if cmd.Flags().Changed("allow-long-context") {
 				body.AllowLongContext = &rf.allowLongContext
+			}
+			if cmd.Flags().Changed("eval-score-imputation") {
+				body.EvalScoreImputation = &rf.evalScoreImputation
 			}
 			if body.SubscriptionFallbackModels, err = rf.subscriptionFallbacks(); err != nil {
 				return err
@@ -695,10 +707,11 @@ func (manifest routerCreateManifest) createRequest(path string, resolveCatalogDe
 		return routerCreateRequest{}, err
 	}
 	body := routerCreateRequest{
-		Name:             name,
-		AllowLongContext: manifest.AllowLongContext,
-		EnabledModels:    models,
-		ModelProviders:   modelProviders,
+		Name:                name,
+		AllowLongContext:    manifest.AllowLongContext,
+		EvalScoreImputation: manifest.EvalScoreImputation,
+		EnabledModels:       models,
+		ModelProviders:      modelProviders,
 	}
 	if len(providerKeys) > 0 {
 		body.ProviderKeys = providerKeys

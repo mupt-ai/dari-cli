@@ -129,7 +129,7 @@ dari router update <router_id_or_endpoint> --model openai/gpt-5.6-sol
 dari router delete <router_id_or_endpoint> --yes
 ```
 
-Dari automatically picks the relevant evals for each request from your organization's evals and Public Evals. Use `dari eval` to manage your organization's eval scorecards; router configuration no longer selects them.
+Dari automatically picks the relevant evals for each request from your organization's evals and Public Evals. Use `dari eval` to manage your organization's eval scorecards; router configuration no longer selects them. Eval score imputation estimates a missing eval score for a model and thinking level from related measured scores; measured scores are never changed. It is on by default for new routers. Pass `--eval-score-imputation=false` to `dari router create` or `dari router update`, or set `eval_score_imputation: false` in `router.yml`, to turn it off; omitting the flag on update keeps the router's current setting.
 
 Inspect activity and evals:
 
