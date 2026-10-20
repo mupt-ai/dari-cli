@@ -1,9 +1,12 @@
-package cli
+// Package codex launches Codex through Dari. Interactive launches get a
+// session-local bridge that shows routing status in Codex's footer.
+package codex
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/mupt-ai/dari-cli/internal/cli/agents"
 	"io"
 	"net/http"
 	"os"
@@ -11,13 +14,15 @@ import (
 	"time"
 )
 
-func configureCodexCommand(command *agentCommand, routerID string) {
-	command.args = insertBeforeDoubleDash(command.args, []string{
+// Configure selects Dari's routing model through Codex config overrides that
+// point at the router at baseURL, leaving the user's Codex config untouched.
+func Configure(command *agents.Command, baseURL string) {
+	command.Args = agents.InsertBeforeDoubleDash(command.Args, []string{
 		"--config", `model="dari/routing"`,
 		"--config", `model_provider="dari"`,
 		"--config", `model_reasoning_summary="none"`,
 		"--config", `model_providers.dari.name="Dari"`,
-		"--config", `model_providers.dari.base_url="` + agentRoutingBaseURL(routerID) + `/v1"`,
+		"--config", `model_providers.dari.base_url="` + baseURL + `/v1"`,
 		"--config", `model_providers.dari.env_key="DARI_ROUTING_API_KEY"`,
 		"--config", `model_providers.dari.wire_api="responses"`,
 	})
@@ -26,7 +31,7 @@ func configureCodexCommand(command *agentCommand, routerID string) {
 // Codex does not discover remote catalogs for env-key custom providers. Supply
 // the authenticated router catalog explicitly so auxiliary agents do not pick
 // bundled OpenAI models that the routing endpoint cannot serve.
-func prepareCodexCatalog(ctx context.Context, command *agentCommand, key, baseURL string) error {
+func PrepareCatalog(ctx context.Context, command *agents.Command, key, baseURL string) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/models", nil)
@@ -61,7 +66,7 @@ func prepareCodexCatalog(ctx context.Context, command *agentCommand, key, baseUR
 	disableWebSearch := false
 	for _, model := range catalog.Models {
 		var slug string
-		if json.Unmarshal(model["slug"], &slug) == nil && slug == routingModel {
+		if json.Unmarshal(model["slug"], &slug) == nil && slug == agents.RoutingModel {
 			// Older servers use null to indicate unavailable web search. Codex
 			// requires a concrete web-search enum, so disable the tool separately.
 			if string(model["web_search_tool_type"]) == "null" {
@@ -74,12 +79,12 @@ func prepareCodexCatalog(ctx context.Context, command *agentCommand, key, baseUR
 				}
 			}
 			// Also works against servers deployed before the reviewer override.
-			model["auto_review_model_override"] = json.RawMessage(strconv.Quote(routingModel))
+			model["auto_review_model_override"] = json.RawMessage(strconv.Quote(agents.RoutingModel))
 			found = true
 		}
 	}
 	if !found {
-		return fmt.Errorf("Codex model catalog is missing %s", routingModel)
+		return fmt.Errorf("Codex model catalog is missing %s", agents.RoutingModel)
 	}
 	body, err = json.Marshal(catalog)
 	if err != nil {
@@ -99,10 +104,10 @@ func prepareCodexCatalog(ctx context.Context, command *agentCommand, key, baseUR
 		_ = os.Remove(path)
 		return fmt.Errorf("close Codex model catalog: %w", err)
 	}
-	command.args = insertBeforeDoubleDash(command.args, []string{"--config", "model_catalog_json=" + strconv.Quote(path)})
+	command.Args = agents.InsertBeforeDoubleDash(command.Args, []string{"--config", "model_catalog_json=" + strconv.Quote(path)})
 	if disableWebSearch {
-		command.args = insertBeforeDoubleDash(command.args, []string{"--config", `web_search="disabled"`})
+		command.Args = agents.InsertBeforeDoubleDash(command.Args, []string{"--config", `web_search="disabled"`})
 	}
-	command.cleanup = func() { _ = os.Remove(path) }
+	command.Cleanup = func() { _ = os.Remove(path) }
 	return nil
 }

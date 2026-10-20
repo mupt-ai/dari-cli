@@ -1,13 +1,25 @@
-package cli
+// Package opencode launches OpenCode with session-local Dari configuration
+// and a status plugin. The plugin's server and TUI halves are server.ts and
+// tui.tsx, embedded as written.
+package opencode
 
 import (
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/mupt-ai/dari-cli/internal/cli/agents"
 )
+
+//go:embed server.ts
+var serverPlugin string
+
+//go:embed tui.tsx
+var tuiPlugin string
 
 // OpenCode subcommands that manage local state or the shared background
 // service. That service can outlive this launch, so they get none of Dari's
@@ -31,10 +43,12 @@ var openCodeModelCommands = map[string]bool{"mini": true, "run": true}
 // configuration from bypassing the router.
 var openCodeAgents = []string{"build", "plan", "general", "explore", "scout", "title", "summary", "compaction"}
 
-func configureOpenCodeCommand(command *agentCommand, routerID string) error {
-	info := onlyRequestsAgentInfo(command.args)
-	subcommand := openCodeSubcommand(command.args)
-	if !info && argsContainFlag(command.args, "--server") {
+// Configure points OpenCode at the router at baseURL through session-local
+// configuration and adds the status plugin.
+func Configure(command *agents.Command, baseURL string) error {
+	info := agents.OnlyRequestsInfo(command.Args)
+	subcommand := openCodeSubcommand(command.Args)
+	if !info && agents.ArgsContainFlag(command.Args, "--server") {
 		return errors.New("dari opencode starts a private OpenCode server; remove --server")
 	}
 	// Pairing always targets the shared background service, which Dari cannot route.
@@ -42,40 +56,35 @@ func configureOpenCodeCommand(command *agentCommand, routerID string) error {
 		return errors.New("dari opencode cannot route paired clients; run `dari opencode serve` and connect to it instead")
 	}
 	if openCodeManagementCommands[subcommand] {
-		command.env = withoutEnvironment(command.env, routingAPIKeyEnv)
+		command.Env = agents.WithoutEnvironment(command.Env, agents.RoutingAPIKeyEnv)
 		return nil
+	}
+	status, err := agents.StatusEnvironment()
+	if err != nil {
+		return err
 	}
 	directory, err := writeOpenCodeStatusPlugin()
 	if err != nil {
 		return err
 	}
-	command.cleanup = func() { _ = os.RemoveAll(directory) }
-	config, err := openCodeConfig(agentRoutingBaseURL(routerID), filepath.Join(directory, "plugin"))
+	command.Cleanup = func() { _ = os.RemoveAll(directory) }
+	config, err := openCodeConfig(baseURL, filepath.Join(directory, "plugin"))
 	if err != nil {
-		command.cleanup()
+		command.Cleanup()
 		return err
 	}
-	command.env = withEnvironment(command.env, map[string]string{"OPENCODE_CONFIG_CONTENT": config})
+	status["OPENCODE_CONFIG_CONTENT"] = config
+	command.Env = agents.WithEnvironment(command.Env, status)
 	if info {
 		return nil
 	}
-	if !openCodeInProcessServers[subcommand] && !argsContainFlag(command.args, "--standalone") {
-		command.args = insertBeforeDoubleDash(command.args, []string{"--standalone"})
+	if !openCodeInProcessServers[subcommand] && !agents.ArgsContainFlag(command.Args, "--standalone") {
+		command.Args = agents.InsertBeforeDoubleDash(command.Args, []string{"--standalone"})
 	}
 	if openCodeModelCommands[subcommand] {
-		command.args = replaceFlag(command.args, "--model", []string{"--model", routingModel})
+		command.Args = replaceFlag(command.Args, "--model", []string{"--model", agents.RoutingModel})
 	}
 	return nil
-}
-
-func withoutEnvironment(env []string, name string) []string {
-	result := make([]string, 0, len(env))
-	for _, entry := range env {
-		if !strings.HasPrefix(entry, name+"=") {
-			result = append(result, entry)
-		}
-	}
-	return result
 }
 
 // openCodeValueFlags are OpenCode flags whose value is a separate argument, so
@@ -120,31 +129,31 @@ func replaceFlag(args []string, flag string, value []string) []string {
 		}
 		result = append(result, arg)
 	}
-	return insertBeforeDoubleDash(result, value)
+	return agents.InsertBeforeDoubleDash(result, value)
 }
 
 func openCodeConfig(baseURL, pluginDirectory string) (string, error) {
-	agents := make(map[string]any, len(openCodeAgents))
+	pinned := make(map[string]any, len(openCodeAgents))
 	for _, name := range openCodeAgents {
-		agents[name] = map[string]string{"model": routingModel}
+		pinned[name] = map[string]string{"model": agents.RoutingModel}
 	}
 	body, err := json.Marshal(map[string]any{
-		"model":       routingModel,
-		"small_model": routingModel,
-		"agent":       agents,
+		"model":       agents.RoutingModel,
+		"small_model": agents.RoutingModel,
+		"agent":       pinned,
 		"plugins":     []string{pluginDirectory},
 		"provider": map[string]any{
 			"dari": map[string]any{
 				"npm":  "@ai-sdk/openai-compatible",
 				"name": "Dari",
-				"env":  []string{routingAPIKeyEnv},
+				"env":  []string{agents.RoutingAPIKeyEnv},
 				"options": map[string]string{
 					"baseURL": baseURL + "/v1",
-					"apiKey":  "{env:" + routingAPIKeyEnv + "}",
+					"apiKey":  "{env:" + agents.RoutingAPIKeyEnv + "}",
 				},
 				"models": map[string]any{
 					"routing": map[string]any{
-						"id":         routingModel,
+						"id":         agents.RoutingModel,
 						"name":       "Dari Router",
 						"attachment": true,
 						"reasoning":  false,
@@ -162,79 +171,7 @@ func openCodeConfig(baseURL, pluginDirectory string) (string, error) {
 	return string(body), nil
 }
 
-// The server half tags each request with its kind and agent, reads each Dari
-// response's routing headers, and writes the rendered status per session next
-// to the plugin; the TUI half shows the prompt's session status in its footer. The file lives outside the plugin
-// directory so status writes do not trigger OpenCode's plugin reloads.
-const openCodeStatusServerPlugin = `import { renameSync, writeFileSync } from "node:fs"
-
-const statusFile = new URL("../status.json", import.meta.url)
-const headerNames = ["x-dari-selected-model", "x-dari-thinking-level", "x-dari-lease-turns-remaining"]
-
-export default {
-  id: "dari.status",
-  setup: async (ctx: any) => {
-    // OpenCode names the session but not the kind of request or the agent;
-    // Dari uses both to split Activity into main, subagent, and background work.
-    await ctx.session.hook("model.request", (event: any) => {
-      event.headers["x-opencode-request-kind"] = event.kind
-      event.headers["x-opencode-agent"] = event.agent
-    }, { providerID: "dari" })
-    const statuses: Record<string, string> = {}
-    await ctx.session.hook("http.response", async (event: any) => {
-      const response = event.response.headers
-      if (event.kind !== "primary" || !response.get(headerNames[0])) return
-      const headers = Object.fromEntries(headerNames.filter(name => response.has(name)).map(name => [name, response.get(name)]))
-      const child = Bun.spawn([DARI_STATUS_EXECUTABLE, "agent-status", "--headers", JSON.stringify(headers)], { stdout: "pipe", stderr: "ignore" })
-      const status = (await new Response(child.stdout).text()).trim()
-      if ((await child.exited) !== 0 || !status) return
-      statuses[event.sessionID] = status
-      const temporary = new URL("../status.json.tmp", import.meta.url)
-      writeFileSync(temporary, JSON.stringify(statuses))
-      renameSync(temporary, statusFile)
-    }, { providerID: "dari" })
-  },
-}
-`
-
-const openCodeStatusTUIPlugin = `import { readFileSync } from "node:fs"
-import { createSignal, Show } from "solid-js"
-
-const statusFile = new URL("../status.json", import.meta.url)
-
-export default {
-  id: "dari.status",
-  setup(context: any) {
-    const [statuses, setStatuses] = createSignal<Record<string, string>>({})
-    let last = ""
-    const timer = setInterval(() => {
-      try {
-        const content = readFileSync(statusFile, "utf8")
-        if (content !== last) setStatuses(JSON.parse((last = content)))
-      } catch {}
-    }, 500)
-    context.ui.slot({
-      append: "prompt.footer.status",
-      render: (input: { sessionID?: string }) => (
-        <Show when={input.sessionID && statuses()[input.sessionID]}>
-          <text fg={context.theme.text.muted}>{statuses()[input.sessionID!]}</text>
-        </Show>
-      ),
-    })
-    return () => clearInterval(timer)
-  },
-}
-`
-
 func writeOpenCodeStatusPlugin() (directory string, err error) {
-	executable, err := agentStatusExecutable()
-	if err != nil {
-		return "", err
-	}
-	encoded, err := json.Marshal(executable)
-	if err != nil {
-		return "", err
-	}
 	directory, err = os.MkdirTemp("", "dari-opencode-*")
 	if err != nil {
 		return "", fmt.Errorf("create temporary OpenCode plugin: %w", err)
@@ -249,8 +186,8 @@ func writeOpenCodeStatusPlugin() (directory string, err error) {
 		return "", fmt.Errorf("create temporary OpenCode plugin: %w", err)
 	}
 	files := map[string]string{
-		"server.ts": strings.ReplaceAll(openCodeStatusServerPlugin, "DARI_STATUS_EXECUTABLE", string(encoded)),
-		"tui.tsx":   openCodeStatusTUIPlugin,
+		"server.ts": serverPlugin,
+		"tui.tsx":   tuiPlugin,
 	}
 	for name, content := range files {
 		if err = os.WriteFile(filepath.Join(plugin, name), []byte(content), 0o600); err != nil {

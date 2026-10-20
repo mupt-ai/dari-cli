@@ -1,4 +1,4 @@
-package cli
+package codex
 
 import (
 	"fmt"
@@ -12,7 +12,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func codexShutdownSignals() []os.Signal {
+func ShutdownSignals() []os.Signal {
 	return []os.Signal{syscall.SIGTERM}
 }
 

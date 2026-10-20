@@ -16,13 +16,16 @@ import (
 
 	"github.com/mupt-ai/dari-cli/internal/api"
 	"github.com/mupt-ai/dari-cli/internal/auth"
+	"github.com/mupt-ai/dari-cli/internal/cli/agents"
+	"github.com/mupt-ai/dari-cli/internal/cli/agents/claude"
+	"github.com/mupt-ai/dari-cli/internal/cli/agents/codex"
+	"github.com/mupt-ai/dari-cli/internal/cli/agents/opencode"
+	"github.com/mupt-ai/dari-cli/internal/cli/agents/pi"
 	"github.com/mupt-ai/dari-cli/internal/state"
 )
 
 const (
-	routingAPIKeyEnv = "DARI_ROUTING_API_KEY"
-	routingBaseURL   = "https://routing.dari.dev"
-	routingModel     = "dari/routing"
+	routingBaseURL = "https://routing.dari.dev"
 )
 
 // agentLaunchers maps each agent subcommand to its help text. Execute
@@ -56,13 +59,6 @@ type agentLaunch struct {
 	args []string
 }
 
-type agentCommand struct {
-	path    string
-	args    []string
-	env     []string
-	cleanup func()
-}
-
 func parseAgentLaunch(args []string) (agentLaunch, bool) {
 	if len(args) == 0 {
 		return agentLaunch{}, false
@@ -83,7 +79,7 @@ func runAgentLaunch(ctx context.Context, launch agentLaunch, stdin io.Reader, st
 
 	key := "unused"
 	routerID := "default"
-	if !onlyRequestsAgentInfo(launch.args) {
+	if !agents.OnlyRequestsInfo(launch.args) {
 		var access agentRoutingAccess
 		access, err = resolveAgentRoutingAccess(ctx, stdin, stderr)
 		if err == nil {
@@ -103,22 +99,22 @@ func runAgentLaunch(ctx context.Context, launch agentLaunch, stdin io.Reader, st
 	}
 	// Read cleanup at return time: catalog and display setup compose resources.
 	defer func() {
-		if command.cleanup != nil {
-			command.cleanup()
+		if command.Cleanup != nil {
+			command.Cleanup()
 		}
 	}()
-	if launch.name == "codex" && !onlyRequestsAgentInfo(launch.args) {
-		if err := prepareCodexCatalog(ctx, &command, key, agentRoutingBaseURL(routerID)); err != nil {
+	if launch.name == "codex" && !agents.OnlyRequestsInfo(launch.args) {
+		if err := codex.PrepareCatalog(ctx, &command, key, agentRoutingBaseURL(routerID)); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		if err := prepareCodexStatus(ctx, &command, launch.args, key, agentRoutingBaseURL(routerID)); err != nil {
+		if err := codex.PrepareStatus(ctx, &command, launch.args, key, agentRoutingBaseURL(routerID)); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
 	}
-	cmd := exec.CommandContext(ctx, command.path, command.args...)
-	cmd.Env = command.env
+	cmd := exec.CommandContext(ctx, command.Path, command.Args...)
+	cmd.Env = command.Env
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -149,21 +145,8 @@ func agentExecutable(name string) (string, error) {
 	return path, nil
 }
 
-func onlyRequestsAgentInfo(args []string) bool {
-	for _, arg := range args {
-		if arg == "--" {
-			break
-		}
-		switch arg {
-		case "--help", "-h", "--version", "-V", "-v":
-			return true
-		}
-	}
-	return len(args) > 0 && args[0] == "help"
-}
-
 func resolveAgentRoutingKey(ctx context.Context, stdin io.Reader, stderr io.Writer) (string, error) {
-	if key := strings.TrimSpace(os.Getenv(routingAPIKeyEnv)); key != "" {
+	if key := strings.TrimSpace(os.Getenv(agents.RoutingAPIKeyEnv)); key != "" {
 		return key, nil
 	}
 
@@ -184,7 +167,7 @@ func resolveAgentRoutingKeyForScope(
 	scope string,
 	stderr io.Writer,
 ) (string, error) {
-	if key := strings.TrimSpace(os.Getenv(routingAPIKeyEnv)); key != "" {
+	if key := strings.TrimSpace(os.Getenv(agents.RoutingAPIKeyEnv)); key != "" {
 		return key, nil
 	}
 	key, created, err := state.EnsureRoutingKey(scope, func() (string, error) {
@@ -276,42 +259,28 @@ func issueAgentRoutingKey(ctx context.Context, apiURL string) (string, error) {
 	return issued.APIKey, err
 }
 
-func buildAgentCommand(path string, launch agentLaunch, key, routerID string) (agentCommand, error) {
-	command := agentCommand{path: path, args: launch.args, env: withEnvironment(os.Environ(), map[string]string{routingAPIKeyEnv: key})}
+func buildAgentCommand(path string, launch agentLaunch, key, routerID string) (agents.Command, error) {
+	command := agents.Command{Path: path, Args: launch.args, Env: agents.WithEnvironment(os.Environ(), map[string]string{agents.RoutingAPIKeyEnv: key})}
+	baseURL := agentRoutingBaseURL(routerID)
 	switch launch.name {
 	case "claude":
-		if err := configureClaudeCommand(&command, key, routerID); err != nil {
-			return agentCommand{}, err
+		if err := claude.Configure(&command, key, baseURL); err != nil {
+			return agents.Command{}, err
 		}
 	case "codex":
-		configureCodexCommand(&command, routerID)
+		codex.Configure(&command, baseURL)
 	case "opencode":
-		if err := configureOpenCodeCommand(&command, routerID); err != nil {
-			return agentCommand{}, err
+		if err := opencode.Configure(&command, baseURL); err != nil {
+			return agents.Command{}, err
 		}
 	case "pi":
-		if err := configurePiCommand(&command); err != nil {
-			return agentCommand{}, err
+		if err := pi.Configure(&command); err != nil {
+			return agents.Command{}, err
 		}
 	default:
-		return agentCommand{}, fmt.Errorf("unsupported coding agent %q", launch.name)
+		return agents.Command{}, fmt.Errorf("unsupported coding agent %q", launch.name)
 	}
 	return command, nil
-}
-
-func insertBeforeDoubleDash(args, inserted []string) []string {
-	at := len(args)
-	for i, arg := range args {
-		if arg == "--" {
-			at = i
-			break
-		}
-	}
-	result := make([]string, 0, len(args)+len(inserted))
-	result = append(result, args[:at]...)
-	result = append(result, inserted...)
-	result = append(result, args[at:]...)
-	return result
 }
 
 func agentRoutingBaseURL(routerID string) string {
@@ -320,18 +289,4 @@ func agentRoutingBaseURL(routerID string) string {
 		baseURL += "/" + routerID
 	}
 	return baseURL
-}
-
-func withEnvironment(base []string, values map[string]string) []string {
-	result := make([]string, 0, len(base)+len(values))
-	for _, entry := range base {
-		name, _, _ := strings.Cut(entry, "=")
-		if _, replaced := values[name]; !replaced {
-			result = append(result, entry)
-		}
-	}
-	for name, value := range values {
-		result = append(result, name+"="+value)
-	}
-	return result
 }

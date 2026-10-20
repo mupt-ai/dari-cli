@@ -1,7 +1,8 @@
-package cli
+package codex
 
 import (
 	"context"
+	"github.com/mupt-ai/dari-cli/internal/cli/agents"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -35,17 +36,17 @@ func TestCodexServerOptions(t *testing.T) {
 
 func TestCodexStatusBypassAndCleanup(t *testing.T) {
 	for _, args := range [][]string{{"exec", "hello"}, {"review"}, {"--remote=ws://example"}, {"-pwork"}} {
-		command := agentCommand{path: "/does-not-exist", args: args}
-		if err := prepareCodexStatus(context.Background(), &command, args, "key", "https://example.test"); err != nil {
+		command := agents.Command{Path: "/does-not-exist", Args: args}
+		if err := PrepareStatus(context.Background(), &command, args, "key", "https://example.test"); err != nil {
 			t.Fatal(err)
 		}
-		if command.cleanup != nil || !slices.Equal(command.args, args) {
+		if command.Cleanup != nil || !slices.Equal(command.Args, args) {
 			t.Fatal("bypass changed command")
 		}
 	}
 	t.Setenv("DARI_CODEX_STATUS", "0")
-	command := agentCommand{path: "/does-not-exist"}
-	if err := prepareCodexStatus(context.Background(), &command, nil, "key", "https://example.test"); err != nil {
+	command := agents.Command{Path: "/does-not-exist"}
+	if err := PrepareStatus(context.Background(), &command, nil, "key", "https://example.test"); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("DARI_CODEX_STATUS", "")
@@ -77,7 +78,7 @@ func TestCodexProxyCancellationAndErrors(t *testing.T) {
 		close(canceled)
 	}))
 	defer upstream.Close()
-	bridge, err := newCodexStatusBridge(context.Background(), agentCommand{}, nil, "key", upstream.URL)
+	bridge, err := newCodexStatusBridge(context.Background(), agents.Command{}, nil, "key", upstream.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,16 +119,16 @@ func TestCodexPrepareComposesCatalogCleanup(t *testing.T) {
 	if err := os.WriteFile(executable, []byte("#!/bin/sh\nprintf 'codex-cli 0.162.1\\n'\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	command := agentCommand{path: executable, env: os.Environ()}
+	command := agents.Command{Path: executable, Env: os.Environ()}
 	previousCleaned := false
-	command.cleanup = func() { previousCleaned = true }
-	if err := prepareCodexStatus(context.Background(), &command, nil, "key", "https://example.test"); err != nil {
+	command.Cleanup = func() { previousCleaned = true }
+	if err := PrepareStatus(context.Background(), &command, nil, "key", "https://example.test"); err != nil {
 		t.Fatal(err)
 	}
-	if !argsContainFlag(command.args, "--remote") {
-		t.Fatal(command.args)
+	if !agents.ArgsContainFlag(command.Args, "--remote") {
+		t.Fatal(command.Args)
 	}
-	command.cleanup()
+	command.Cleanup()
 	if !previousCleaned {
 		t.Fatal("catalog cleanup was lost")
 	}

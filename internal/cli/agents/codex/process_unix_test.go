@@ -1,6 +1,6 @@
 //go:build !windows
 
-package cli
+package codex
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 
 func TestCodexShutdownIncludesHangup(t *testing.T) {
 	found := false
-	for _, sig := range codexShutdownSignals() {
+	for _, sig := range ShutdownSignals() {
 		if sig == syscall.SIGHUP {
 			found = true
 		}

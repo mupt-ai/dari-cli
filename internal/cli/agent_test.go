@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"github.com/mupt-ai/dari-cli/internal/cli/agents"
+
 	"context"
 	"encoding/json"
 	"io"
@@ -119,7 +121,7 @@ func TestBuildAgentCommandKeepsDariSettingsLast(t *testing.T) {
 				name: "claude",
 				args: []string{"--model", "opus", "--print", "hello"},
 			},
-			wantSuffix: []string{"--model", routingModel},
+			wantSuffix: []string{"--model", agents.RoutingModel},
 			wantEnv: map[string]string{
 				"ANTHROPIC_BASE_URL":               routingBaseURL,
 				"ANTHROPIC_AUTH_TOKEN":             "dari_route",
@@ -127,7 +129,7 @@ func TestBuildAgentCommandKeepsDariSettingsLast(t *testing.T) {
 				"CLAUDE_CODE_EFFORT_LEVEL":         "auto",
 				"CLAUDE_CODE_GATEWAY_HINT_HEADERS": "1",
 				"CLAUDE_CODE_MAX_CONTEXT_TOKENS":   "1000000",
-				"CLAUDE_CODE_SUBAGENT_MODEL":       routingModel,
+				"CLAUDE_CODE_SUBAGENT_MODEL":       agents.RoutingModel,
 			},
 		},
 		{
@@ -155,17 +157,17 @@ func TestBuildAgentCommandKeepsDariSettingsLast(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if command.cleanup != nil {
-				defer command.cleanup()
+			if command.Cleanup != nil {
+				defer command.Cleanup()
 			}
-			if !slices.Equal(command.args[len(command.args)-len(tt.wantSuffix):], tt.wantSuffix) {
-				t.Errorf("args = %q, want suffix %q", command.args, tt.wantSuffix)
+			if !slices.Equal(command.Args[len(command.Args)-len(tt.wantSuffix):], tt.wantSuffix) {
+				t.Errorf("args = %q, want suffix %q", command.Args, tt.wantSuffix)
 			}
-			if got := environmentValue(command.env, routingAPIKeyEnv); got != "dari_route" {
-				t.Errorf("%s = %q", routingAPIKeyEnv, got)
+			if got := agents.EnvironmentValue(command.Env, agents.RoutingAPIKeyEnv); got != "dari_route" {
+				t.Errorf("%s = %q", agents.RoutingAPIKeyEnv, got)
 			}
 			for name, want := range tt.wantEnv {
-				if got := environmentValue(command.env, name); got != want {
+				if got := agents.EnvironmentValue(command.Env, name); got != want {
 					t.Errorf("%s = %q, want %q", name, got, want)
 				}
 			}
@@ -183,25 +185,25 @@ func TestBuildAgentCommandInsertsSettingsBeforeDoubleDash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if command.cleanup != nil {
-		defer command.cleanup()
+	if command.Cleanup != nil {
+		defer command.Cleanup()
 	}
-	settingsIndex := slices.Index(command.args, "--settings")
-	modelIndex := slices.Index(command.args, "--model")
-	dashIndex := slices.Index(command.args, "--")
+	settingsIndex := slices.Index(command.Args, "--settings")
+	modelIndex := slices.Index(command.Args, "--model")
+	dashIndex := slices.Index(command.Args, "--")
 	if settingsIndex < 0 || settingsIndex > dashIndex {
-		t.Fatalf("args do not insert --settings before --: %q", command.args)
+		t.Fatalf("args do not insert --settings before --: %q", command.Args)
 	}
 	if modelIndex < 0 || modelIndex+1 >= dashIndex {
-		t.Fatalf("args do not insert --model before --: %q", command.args)
+		t.Fatalf("args do not insert --model before --: %q", command.Args)
 	}
-	if command.args[modelIndex+1] != routingModel {
-		t.Fatalf("model = %q", command.args[modelIndex+1])
+	if command.Args[modelIndex+1] != agents.RoutingModel {
+		t.Fatalf("model = %q", command.Args[modelIndex+1])
 	}
-	if command.args[0] != "--print" || command.args[len(command.args)-1] != "--help" {
-		t.Fatalf("args = %q", command.args)
+	if command.Args[0] != "--print" || command.Args[len(command.Args)-1] != "--help" {
+		t.Fatalf("args = %q", command.Args)
 	}
-	if onlyRequestsAgentInfo([]string{"--", "--help"}) {
+	if agents.OnlyRequestsInfo([]string{"--", "--help"}) {
 		t.Fatal("prompt after -- was mistaken for the agent help flag")
 	}
 }
@@ -233,7 +235,7 @@ func TestResolveAgentRoutingKeyCreatesAndReusesKey(t *testing.T) {
 	t.Setenv("DARI_CONFIG_DIR", t.TempDir())
 	t.Setenv("DARI_API_URL", server.URL)
 	t.Setenv("DARI_API_KEY", "dari_management")
-	t.Setenv(routingAPIKeyEnv, "")
+	t.Setenv(agents.RoutingAPIKeyEnv, "")
 
 	for range 2 {
 		key, err := resolveAgentRoutingKey(context.Background(), strings.NewReader(""), io.Discard)
@@ -250,7 +252,7 @@ func TestResolveAgentRoutingKeyCreatesAndReusesKey(t *testing.T) {
 }
 
 func TestResolveAgentRoutingKeyPrefersEnvironment(t *testing.T) {
-	t.Setenv(routingAPIKeyEnv, " dari_explicit ")
+	t.Setenv(agents.RoutingAPIKeyEnv, " dari_explicit ")
 	key, err := resolveAgentRoutingKey(context.Background(), strings.NewReader(""), io.Discard)
 	if err != nil {
 		t.Fatal(err)
@@ -275,12 +277,48 @@ func TestRootHelpListsAgentLaunchers(t *testing.T) {
 	}
 }
 
-func environmentValue(env []string, name string) string {
-	prefix := name + "="
-	for _, entry := range env {
-		if strings.HasPrefix(entry, prefix) {
-			return strings.TrimPrefix(entry, prefix)
-		}
+func TestClaudeCommandUsesSelectedRouter(t *testing.T) {
+	for _, routerID := range []string{"", "default", "rtr_custom"} {
+		t.Run(routerID, func(t *testing.T) {
+			command, err := buildAgentCommand("/claude", agentLaunch{name: "claude"}, "test-key", routerID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if command.Cleanup != nil {
+				defer command.Cleanup()
+			}
+			want := routingBaseURL
+			if routerID == "rtr_custom" {
+				want += "/rtr_custom"
+			}
+			if got := agents.EnvironmentValue(command.Env, "ANTHROPIC_BASE_URL"); got != want {
+				t.Fatalf("base URL = %q, want %q", got, want)
+			}
+		})
 	}
-	return ""
+}
+
+func TestCodexCommandUsesSelectedRouter(t *testing.T) {
+	for _, routerID := range []string{"", "default", "rtr_custom"} {
+		t.Run(routerID, func(t *testing.T) {
+			command, err := buildAgentCommand("/codex", agentLaunch{name: "codex"}, "test-key", routerID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := routingBaseURL
+			if routerID == "rtr_custom" {
+				want += "/rtr_custom"
+			}
+			want = `model_providers.dari.base_url="` + want + `/v1"`
+			found := false
+			for _, arg := range command.Args {
+				if arg == want {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("missing %q in %v", want, command.Args)
+			}
+		})
+	}
 }

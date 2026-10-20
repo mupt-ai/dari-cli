@@ -1,6 +1,6 @@
 //go:build !windows
 
-package cli
+package codex
 
 import (
 	"errors"
@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func codexShutdownSignals() []os.Signal {
+func ShutdownSignals() []os.Signal {
 	return []os.Signal{syscall.SIGTERM, syscall.SIGHUP}
 }
 

@@ -1,8 +1,9 @@
-package cli
+package codex
 
 import (
 	"bufio"
 	"context"
+	"github.com/mupt-ai/dari-cli/internal/cli/agents"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -45,6 +46,8 @@ func mockCodexBackend(t *testing.T) *httptest.Server {
 				result = map[string]any{"thread": map[string]string{"id": "thread-main", "name": name}}
 			case "thread/name/set":
 				_ = socket.WriteJSON(map[string]any{"method": "thread/name/updated", "params": map[string]string{"threadId": "thread-main", "threadName": name}})
+			case "test/usage":
+				_ = socket.WriteJSON(map[string]any{"method": "thread/tokenUsage/updated", "params": map[string]any{"threadId": "thread-main", "turnId": "turn-1", "tokenUsage": map[string]any{"last": request.Params, "total": request.Params}}})
 			}
 			mu.Unlock()
 			_ = socket.WriteJSON(map[string]any{"id": request.ID, "result": result})
@@ -80,7 +83,7 @@ func TestCodexBridgeStreamsAndPreservesNames(t *testing.T) {
 	defer upstream.Close()
 	backend := mockCodexBackend(t)
 	defer backend.Close()
-	command := agentCommand{}
+	command := agents.Command{}
 	bridge, err := newCodexStatusBridge(context.Background(), command, nil, "test-key", upstream.URL+"/router")
 	if err != nil {
 		t.Fatal(err)
@@ -157,7 +160,7 @@ func TestCodexBridgeStreamsAndPreservesNames(t *testing.T) {
 		t.Fatalf("stream: %q %v", line, err)
 	}
 	notice := read()
-	if notice["method"] != "thread/name/updated" || notice["params"].(map[string]any)["threadName"] != "test/served-model · high · lease 2 turns left" {
+	if notice["method"] != "thread/name/updated" || notice["params"].(map[string]any)["threadName"] != "test/served-model · high · lease 2 turns left · cache cold" {
 		t.Fatal(notice)
 	}
 	close(release)
@@ -179,14 +182,38 @@ func TestCodexBridgeStreamsAndPreservesNames(t *testing.T) {
 	if name := read()["result"].(map[string]any)["thread"].(map[string]any)["name"]; name != "My New Title" {
 		t.Fatal(name)
 	}
-	if read()["params"].(map[string]any)["threadName"] != "test/served-model · high · lease 2 turns left" {
+	if read()["params"].(map[string]any)["threadName"] != "test/served-model · high · lease 2 turns left · cache cold" {
 		t.Fatal("resume lost status")
+	}
+	for i, tc := range []struct {
+		cached int
+		want   string
+	}{
+		{4096, "test/served-model · high · lease 2 turns left · cache warm"},
+		{0, "test/served-model · high · lease 2 turns left · cache cold"},
+	} {
+		send(10+i, "test/usage", map[string]any{"cachedInputTokens": tc.cached, "inputTokens": 5000})
+		var name any
+		for forwarded, acknowledged := false, false; name == nil || !forwarded || !acknowledged; {
+			message := read()
+			switch {
+			case message["method"] == "thread/name/updated":
+				name = message["params"].(map[string]any)["threadName"]
+			case message["method"] == "thread/tokenUsage/updated":
+				forwarded = true
+			case message["id"] != nil:
+				acknowledged = true
+			}
+		}
+		if name != tc.want {
+			t.Fatalf("cache status=%q, want %q", name, tc.want)
+		}
 	}
 	bridge.mu.Lock()
 	session := bridge.session
 	bridge.mu.Unlock()
 	session.mu.Lock()
-	if session.statuses["thread-main"] == "" || session.statuses["other"] != "" {
+	if session.statuses["thread-main"].Model == "" || session.statuses["other"].Model != "" {
 		t.Fatal("thread status crossed sessions")
 	}
 	session.mu.Unlock()
@@ -213,7 +240,7 @@ func TestCodexBridgeStreamsAndPreservesNames(t *testing.T) {
 	if name := read()["result"].(map[string]any)["thread"].(map[string]any)["name"]; name != "My New Title" {
 		t.Fatal("backend state lost on reconnect", name)
 	}
-	if read()["params"].(map[string]any)["threadName"] != "test/served-model · high · lease 2 turns left" {
+	if read()["params"].(map[string]any)["threadName"] != "test/served-model · high · lease 2 turns left · cache cold" {
 		t.Fatal("reconnect lost status")
 	}
 }
@@ -221,7 +248,7 @@ func TestCodexBridgeStreamsAndPreservesNames(t *testing.T) {
 func TestCodexBridgeIdentityAndIsolation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	session := &codexDisplaySession{ctx: ctx, statuses: map[string]string{}, dirty: map[string]bool{}, wake: make(chan struct{}, 1)}
+	session := &codexDisplaySession{ctx: ctx, statuses: map[string]agents.Status{}, dirty: map[string]bool{}, wake: make(chan struct{}, 1)}
 	bridge := &codexStatusBridge{session: session}
 	for _, tc := range []struct {
 		threadID, metadata string
@@ -240,8 +267,43 @@ func TestCodexBridgeIdentityAndIsolation(t *testing.T) {
 		response := &http.Response{StatusCode: tc.status, Request: request, Header: http.Header{}}
 		response.Header.Set("x-dari-selected-model", "test/model")
 		_ = bridge.observeRoutingResponse(response)
-		if got := session.statuses[tc.threadID] != ""; got != tc.want {
+		if got := session.statuses[tc.threadID].Model != ""; got != tc.want {
 			t.Errorf("%+v status=%v", tc, got)
 		}
+	}
+}
+
+func TestCodexDisplayCacheState(t *testing.T) {
+	session := &codexDisplaySession{statuses: map[string]agents.Status{}, dirty: map[string]bool{}, wake: make(chan struct{}, 1)}
+	session.updateCache("main", 10)
+	if _, ok := session.statuses["main"]; ok {
+		t.Fatal("usage created status")
+	}
+	session.update("main", agents.Status{Model: "test/model"})
+	session.updateCache("main", 10)
+	if got := session.statuses["main"].String(); got != "test/model · cache warm" {
+		t.Fatal(got)
+	}
+	session.update("main", agents.Status{Model: "test/other"})
+	if got := session.statuses["main"].String(); got != "test/other · cache cold" {
+		t.Fatal(got)
+	}
+	for _, message := range []string{`{"method":"thread/tokenUsage/updated","params":{"threadId":"main","tokenUsage":{"last":{}}}}`, `{"method":"thread/tokenUsage/updated","params":{"tokenUsage":{"last":{"cachedInputTokens":1}}}}`} {
+		if _, _, ok := codexTokenUsage([]byte(message)); ok {
+			t.Errorf("parsed malformed usage %s", message)
+		}
+	}
+
+	// Reconnected sessions re-arm expiries from the copied response timestamp.
+	old := time.Now().Add(-agents.CacheTTL - time.Second)
+	session.statuses["reconnected"] = agents.Status{Model: "test/model", CachedTokens: func() *int64 { n := int64(1); return &n }(), RespondedAt: old}
+	session.scheduleCacheExpiries()
+	select {
+	case <-session.wake:
+	case <-time.After(time.Second):
+		t.Fatal("expired cache status was not re-armed on reconnect")
+	}
+	if got := session.statuses["reconnected"].String(); got != "test/model · cache cold" {
+		t.Fatal(got)
 	}
 }

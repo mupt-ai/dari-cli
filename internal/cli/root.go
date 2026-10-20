@@ -14,6 +14,7 @@ import (
 
 	"github.com/mupt-ai/dari-cli/internal/api"
 	"github.com/mupt-ai/dari-cli/internal/auth"
+	"github.com/mupt-ai/dari-cli/internal/cli/agents/codex"
 	"github.com/mupt-ai/dari-cli/internal/state"
 )
 
@@ -29,7 +30,7 @@ func Execute(version string) int {
 			signal.Notify(interrupts, os.Interrupt)
 			defer signal.Stop(interrupts)
 			var cancel context.CancelFunc
-			ctx, cancel = signal.NotifyContext(ctx, codexShutdownSignals()...)
+			ctx, cancel = signal.NotifyContext(ctx, codex.ShutdownSignals()...)
 			defer cancel()
 		}
 		return runAgentLaunch(

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/mupt-ai/dari-cli/internal/api"
+	"github.com/mupt-ai/dari-cli/internal/cli/agents"
 	"github.com/mupt-ai/dari-cli/internal/state"
 )
 
@@ -25,7 +26,7 @@ func TestLoggedInAgentConnectsMissingSubscription(t *testing.T) {
 		t.Run(tc.agent+"/"+tc.provider, func(t *testing.T) {
 			t.Setenv("DARI_CONFIG_DIR", t.TempDir())
 			t.Setenv("DARI_API_KEY", "")
-			t.Setenv(routingAPIKeyEnv, "")
+			t.Setenv(agents.RoutingAPIKeyEnv, "")
 			var connected, updated bool
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "Bearer dari_org" {

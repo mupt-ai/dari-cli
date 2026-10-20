@@ -1,7 +1,8 @@
-package cli
+package codex
 
 import (
 	"context"
+	"github.com/mupt-ai/dari-cli/internal/cli/agents"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,7 +25,7 @@ func TestCodexWindowsProcessHelper(t *testing.T) {
 			os.Exit(2)
 		}
 		child := exec.Command(executable, "-test.run=^TestCodexWindowsProcessHelper$")
-		child.Env = withEnvironment(os.Environ(), map[string]string{"DARI_TEST_WINDOWS_PROCESS": "tool"})
+		child.Env = agents.WithEnvironment(os.Environ(), map[string]string{"DARI_TEST_WINDOWS_PROCESS": "tool"})
 		if child.Start() != nil {
 			os.Exit(2)
 		}
@@ -45,7 +46,7 @@ func TestCodexWindowsCancellationKillsToolChildren(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	command := exec.CommandContext(ctx, executable, "-test.run=^TestCodexWindowsProcessHelper$")
-	command.Env = withEnvironment(os.Environ(), map[string]string{"DARI_TEST_WINDOWS_PROCESS": "server", "DARI_TEST_CHILD_READY": ready})
+	command.Env = agents.WithEnvironment(os.Environ(), map[string]string{"DARI_TEST_WINDOWS_PROCESS": "server", "DARI_TEST_CHILD_READY": ready})
 	cleanup, err := startCodexAppServerProcess(command)
 	if err != nil {
 		t.Fatal(err)

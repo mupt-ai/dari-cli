@@ -1,8 +1,9 @@
-package cli
+package codex
 
 import (
 	"context"
 	"encoding/json"
+	"github.com/mupt-ai/dari-cli/internal/cli/agents"
 	"os"
 	"os/exec"
 	"strings"
@@ -29,25 +30,22 @@ func TestCodexInstalledStatus(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	command, err := buildAgentCommand(path, agentLaunch{name: "codex", args: args}, "test-key", "default")
-	if err != nil {
-		t.Fatal(err)
-	}
 	// Point both the catalog and response paths at the explicit mock boundary.
-	command.args = insertBeforeDoubleDash(command.args, []string{"--config", `model_providers.dari.base_url="` + base + `/v1"`})
+	command := agents.Command{Path: path, Args: args, Env: agents.WithEnvironment(os.Environ(), map[string]string{agents.RoutingAPIKeyEnv: "test-key"})}
+	Configure(&command, base)
 	defer func() {
-		if command.cleanup != nil {
-			command.cleanup()
+		if command.Cleanup != nil {
+			command.Cleanup()
 		}
 	}()
-	if err := prepareCodexCatalog(context.Background(), &command, "test-key", base); err != nil {
+	if err := PrepareCatalog(context.Background(), &command, "test-key", base); err != nil {
 		t.Fatal(err)
 	}
-	if err := prepareCodexStatus(context.Background(), &command, args, "test-key", base); err != nil {
+	if err := PrepareStatus(context.Background(), &command, args, "test-key", base); err != nil {
 		t.Fatal(err)
 	}
-	process := exec.Command(command.path, command.args...)
-	process.Env = command.env
+	process := exec.Command(command.Path, command.Args...)
+	process.Env = command.Env
 	process.Stdin = os.Stdin
 	process.Stdout = os.Stdout
 	process.Stderr = os.Stderr

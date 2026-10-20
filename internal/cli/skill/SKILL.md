@@ -162,7 +162,7 @@ dari opencode run "Explain this repository"
 dari pi -p "Review this repository"
 ```
 
-All four launchers show the serving model, thinking level, and routing lease turns using shared formatting. OpenCode and Pi use the default router and can connect either a ChatGPT or Claude Code subscription. OpenCode gets session-local config through `OPENCODE_CONFIG_CONTENT` and a private `--standalone` server, so `--server` and `pair` are rejected; use `dari opencode serve` for other clients. Codex 0.162.1+ uses a session-local loopback bridge for interactive sessions: status changes only UI display state, never saved session names. Resume with `dari codex resume`, not the temporary remote URL Codex prints on exit. Set `DARI_CODEX_STATUS=0` to disable the bridge; explicit `--remote` or `--profile`/`-p` and non-interactive commands bypass it.
+All four launchers show the serving model, thinking level, routing lease turns, and prompt-cache warmth (warm when the last response read cache within five minutes) using shared formatting. OpenCode and Pi use the default router and can connect either a ChatGPT or Claude Code subscription. OpenCode gets session-local config through `OPENCODE_CONFIG_CONTENT` and a private `--standalone` server, so `--server` and `pair` are rejected; use `dari opencode serve` for other clients. Codex 0.162.1+ uses a session-local loopback bridge for interactive sessions: status changes only UI display state, never saved session names. Resume with `dari codex resume`, not the temporary remote URL Codex prints on exit. Set `DARI_CODEX_STATUS=0` to disable the bridge; explicit `--remote` or `--profile`/`-p` and non-interactive commands bypass it.
 
 ## Inspect, Update, Delete
 

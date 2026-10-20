@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"github.com/mupt-ai/dari-cli/internal/cli/agents"
+
 	"bytes"
 	"context"
 	"encoding/json"
@@ -34,7 +36,7 @@ func newRouterRequestCostsCmd() *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			key := strings.TrimSpace(os.Getenv(routingAPIKeyEnv))
+			key := strings.TrimSpace(os.Getenv(agents.RoutingAPIKeyEnv))
 			if key == "" {
 				return fmt.Errorf("DARI_ROUTING_API_KEY is required; use the key that made these requests")
 			}

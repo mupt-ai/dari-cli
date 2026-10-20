@@ -1,4 +1,4 @@
-package cli
+package codex
 
 import (
 	"fmt"
@@ -53,8 +53,8 @@ func (b *codexStatusBridge) connectBackend() (*websocket.Conn, error) {
 		}
 		args := append([]string{}, b.serverArgs...)
 		args = append(args, "--listen", address, "--ws-auth", "capability-token", "--ws-token-file", path)
-		command := exec.CommandContext(b.ctx, b.command.path, args...)
-		command.Env = b.command.env
+		command := exec.CommandContext(b.ctx, b.command.Path, args...)
+		command.Env = b.command.Env
 		command.Dir = b.directory
 		command.Stderr = io.Discard
 		cleanup, err := startCodexAppServerProcess(command)

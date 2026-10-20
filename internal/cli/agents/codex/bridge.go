@@ -1,4 +1,4 @@
-package cli
+package codex
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/mupt-ai/dari-cli/internal/cli/agents"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -29,7 +30,7 @@ type codexStatusBridge struct {
 	server           *http.Server
 	listener         net.Listener
 	transport        *http.Transport
-	command          agentCommand
+	command          agents.Command
 	serverArgs       []string
 	directory        string
 	backendMu        sync.Mutex
@@ -44,7 +45,7 @@ type codexStatusBridge struct {
 	serveDone        chan struct{}
 }
 
-func prepareCodexStatus(ctx context.Context, command *agentCommand, launchArgs []string, key string, baseURL string) error {
+func PrepareStatus(ctx context.Context, command *agents.Command, launchArgs []string, key string, baseURL string) error {
 	if !codexInteractiveArgs(launchArgs) || os.Getenv("DARI_CODEX_STATUS") == "0" {
 		return nil
 	}
@@ -55,8 +56,8 @@ func prepareCodexStatus(ctx context.Context, command *agentCommand, launchArgs [
 	}
 	versionCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	versionCommand := exec.CommandContext(versionCtx, command.path, "--version")
-	versionCommand.Env = command.env
+	versionCommand := exec.CommandContext(versionCtx, command.Path, "--version")
+	versionCommand.Env = command.Env
 	version, err := versionCommand.Output()
 	if err != nil {
 		return fmt.Errorf("check Codex status support: %w", err)
@@ -68,25 +69,25 @@ func prepareCodexStatus(ctx context.Context, command *agentCommand, launchArgs [
 	if err != nil {
 		return err
 	}
-	previousCleanup := command.cleanup
-	command.cleanup = func() {
+	previousCleanup := command.Cleanup
+	command.Cleanup = func() {
 		bridge.close()
 		if previousCleanup != nil {
 			previousCleanup()
 		}
 	}
 	address := "http://" + bridge.listener.Addr().String()
-	command.args = insertBeforeDoubleDash(command.args, []string{
+	command.Args = agents.InsertBeforeDoubleDash(command.Args, []string{
 		"--config", "model_providers.dari.base_url=" + strconv.Quote(address+"/v1"),
 		"--config", `tui.status_line=["thread-name","context-remaining"]`,
 		"--remote", "ws://" + bridge.listener.Addr().String(),
 		"--remote-auth-token-env", "DARI_CODEX_BRIDGE_TOKEN",
 	})
-	command.env = withEnvironment(command.env, map[string]string{"DARI_CODEX_BRIDGE_TOKEN": bridge.token})
+	command.Env = agents.WithEnvironment(command.Env, map[string]string{"DARI_CODEX_BRIDGE_TOKEN": bridge.token})
 	return nil
 }
 
-func newCodexStatusBridge(ctx context.Context, command agentCommand, args []string, key, baseURL string) (*codexStatusBridge, error) {
+func newCodexStatusBridge(ctx context.Context, command agents.Command, args []string, key, baseURL string) (*codexStatusBridge, error) {
 	target, err := url.Parse(baseURL)
 	if err != nil || target.Host == "" || (target.Scheme != "http" && target.Scheme != "https") {
 		return nil, fmt.Errorf("invalid Codex routing endpoint")
@@ -110,7 +111,7 @@ func newCodexStatusBridge(ctx context.Context, command agentCommand, args []stri
 	}
 	bridge.serverArgs, bridge.directory = codexServerOptions(args)
 	// Use all effective config overrides, including Dari's temporary catalog.
-	bridge.serverArgs, _ = codexServerOptions(command.args)
+	bridge.serverArgs, _ = codexServerOptions(command.Args)
 	localBase := "http://" + listener.Addr().String() + "/v1"
 	bridge.serverArgs = append(bridge.serverArgs,
 		"--config", "model_providers.dari.base_url="+strconv.Quote(localBase),
@@ -168,8 +169,8 @@ func (b *codexStatusBridge) observeRoutingResponse(response *http.Response) erro
 	if request.Method != http.MethodPost || !strings.HasSuffix(request.URL.Path, "/responses") {
 		return nil
 	}
-	text := routingStatusFromHeaders(response.Header).String()
-	if text == "" {
+	status := agents.StatusFromHeaders(response.Header)
+	if status.String() == "" {
 		return nil
 	}
 	var metadata struct {
@@ -196,7 +197,7 @@ func (b *codexStatusBridge) observeRoutingResponse(response *http.Response) erro
 	session := b.session
 	b.mu.Unlock()
 	if session != nil {
-		session.update(threadID, text)
+		session.update(threadID, status)
 	}
 	return nil
 }
