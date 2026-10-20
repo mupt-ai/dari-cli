@@ -264,16 +264,17 @@ var subscriptionProviders = map[string]agentSubscriptionProvider{
 }
 
 type subscriptionCredential struct {
-	Name               string  `json:"name"`
-	Label              *string `json:"label"`
-	CredentialScope    string  `json:"credential_scope"`
-	OAuthProvider      string  `json:"oauth_provider"`
-	CreatedAt          string  `json:"created_at"`
-	LastUsedAt         *string `json:"last_used_at"`
-	UnavailableUntil   *string `json:"unavailable_until"`
-	UnavailableReason  *string `json:"unavailable_reason"`
-	SubscriptionActive bool    `json:"subscription_active"`
-	AutoRedeemResets   bool    `json:"auto_redeem_resets"`
+	Name               string            `json:"name"`
+	Label              *string           `json:"label"`
+	SafeMetadata       map[string]string `json:"safe_metadata"`
+	CredentialScope    string            `json:"credential_scope"`
+	OAuthProvider      string            `json:"oauth_provider"`
+	CreatedAt          string            `json:"created_at"`
+	LastUsedAt         *string           `json:"last_used_at"`
+	UnavailableUntil   *string           `json:"unavailable_until"`
+	UnavailableReason  *string           `json:"unavailable_reason"`
+	SubscriptionActive bool              `json:"subscription_active"`
+	AutoRedeemResets   bool              `json:"auto_redeem_resets"`
 }
 
 func newSubscriptionCredentialsCmd(gf *globalFlags) *cobra.Command {
@@ -292,6 +293,7 @@ func newSubscriptionCredentialsCmd(gf *globalFlags) *cobra.Command {
 		newSubscriptionCredentialCmd(gf, "disconnect", "Disconnect a subscription from Dari",
 			http.MethodDelete, func(name string) string { return url.PathEscape(name) + "?scope=user" }),
 		newSubscriptionAutoResetCmd(gf),
+		newSubscriptionRenameCmd(gf),
 	)
 	return cmd
 }
@@ -312,6 +314,7 @@ func newSubscriptionListCmd(gf *globalFlags) *cobra.Command {
 					"name":               subscription.Name,
 					"provider":           subscriptionAlias(subscription.OAuthProvider),
 					"label":              subscription.Label,
+					"account_email":      subscription.SafeMetadata["account_email"],
 					"status":             subscriptionStatus(subscription),
 					"unavailable_until":  subscription.UnavailableUntil,
 					"unavailable_reason": subscription.UnavailableReason,
@@ -393,6 +396,27 @@ func newSubscriptionAutoResetCmd(gf *globalFlags) *cobra.Command {
 			if err := orgKeyRequest(cmd, gf, http.MethodPut,
 				"/v1/organizations/current/credentials/"+url.PathEscape(name)+"/auto-reset",
 				map[string]bool{"enabled": enabled}, &resp); err != nil {
+				return err
+			}
+			return printJSON(resp)
+		},
+	}
+}
+
+func newSubscriptionRenameCmd(gf *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "rename <claude-code|codex|NAME> <label>",
+		Short: "Give a subscription your own name; an empty label clears it",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name, err := resolveSubscriptionName(cmd, gf, args[0])
+			if err != nil {
+				return err
+			}
+			var resp map[string]any
+			if err := orgKeyRequest(cmd, gf, http.MethodPut,
+				"/v1/organizations/current/credentials/"+url.PathEscape(name)+"/label",
+				map[string]string{"label": strings.TrimSpace(args[1])}, &resp); err != nil {
 				return err
 			}
 			return printJSON(resp)
