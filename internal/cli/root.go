@@ -22,9 +22,9 @@ import (
 func Execute(version string) int {
 	if launch, ok := parseAgentLaunch(os.Args[1:]); ok {
 		ctx := context.Background()
-		if launch.name == "codex" {
-			// Ctrl-C belongs to Codex (interrupt turn / double-Ctrl-C exit),
-			// not the wrapper. Keep cleanup alive until its TUI exits.
+		if launch.name == "codex" || launch.name == "opencode" {
+			// Ctrl-C belongs to the agent (interrupt turn / exit), not the
+			// wrapper. Keep cleanup alive until its TUI exits.
 			interrupts := make(chan os.Signal, 1)
 			signal.Notify(interrupts, os.Interrupt)
 			defer signal.Stop(interrupts)

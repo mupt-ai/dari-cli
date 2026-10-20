@@ -42,6 +42,13 @@ func TestParseAgentLaunch(t *testing.T) {
 			wantOK:   true,
 		},
 		{
+			name:     "opencode",
+			args:     []string{"opencode", "run", "review"},
+			wantName: "opencode",
+			wantArgs: []string{"run", "review"},
+			wantOK:   true,
+		},
+		{
 			name:   "ordinary Dari command",
 			args:   []string{"router", "list"},
 			wantOK: false,
@@ -261,7 +268,7 @@ func TestRootHelpListsAgentLaunchers(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"claude", "codex", "pi"} {
+	for _, name := range []string{"claude", "codex", "opencode", "pi"} {
 		if !strings.Contains(output.String(), "  "+name+" ") {
 			t.Errorf("help does not list %s", name)
 		}

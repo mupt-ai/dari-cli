@@ -30,9 +30,10 @@ const (
 // reaches the agent untouched. Cobra only sees them when a Dari flag comes
 // first, which would be dropped, so those commands refuse to run.
 var agentLaunchers = map[string]string{
-	"claude": "Launch Claude Code through Dari; forward all following arguments",
-	"codex":  "Launch Codex through Dari; forward all following arguments",
-	"pi":     "Launch Pi through Dari; forward all following arguments",
+	"claude":   "Launch Claude Code through Dari; forward all following arguments",
+	"codex":    "Launch Codex through Dari; forward all following arguments",
+	"opencode": "Launch OpenCode through Dari; forward all following arguments",
+	"pi":       "Launch Pi through Dari; forward all following arguments",
 }
 
 func init() {
@@ -284,6 +285,10 @@ func buildAgentCommand(path string, launch agentLaunch, key, routerID string) (a
 		}
 	case "codex":
 		configureCodexCommand(&command, routerID)
+	case "opencode":
+		if err := configureOpenCodeCommand(&command, routerID); err != nil {
+			return agentCommand{}, err
+		}
 	case "pi":
 		if err := configurePiCommand(&command); err != nil {
 			return agentCommand{}, err

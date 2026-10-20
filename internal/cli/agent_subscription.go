@@ -21,8 +21,9 @@ var (
 	codexSubscription  = agentSubscriptionProvider{"openai_codex", "ChatGPT"}
 )
 
-// Codex and Pi use the organization's default router, but their subscription
-// decision is per user and launcher, not implied by a cached router or login.
+// Codex, OpenCode, and Pi use the organization's default router, but their
+// subscription decision is per user and launcher, not implied by a cached
+// router or login.
 func ensureDefaultAgentSubscription(ctx context.Context, agent string, access agentRoutingAccess, client *api.Client, router agentRouter, stdin io.Reader, stderr io.Writer) error {
 	scope, err := agentSubscriptionPreferenceScope(access.scope, agent)
 	if err != nil {
@@ -33,7 +34,7 @@ func ensureDefaultAgentSubscription(ctx context.Context, agent string, access ag
 		return err
 	}
 	provider := codexSubscription
-	if agent == "pi" {
+	if agent == "opencode" || agent == "pi" {
 		// Reuse either supported subscription before asking which one to connect.
 		var listed agentSubscriptionStatus
 		if err := client.Do(ctx, http.MethodGet, "/v1/organizations/current/credentials", nil, &listed); err != nil {

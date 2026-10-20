@@ -147,7 +147,7 @@ func ensureAgentRouter(
 	stdin io.Reader,
 	stderr io.Writer,
 ) (string, error) {
-	if agent != "claude" && agent != "codex" && agent != "pi" {
+	if agent != "claude" && agent != "codex" && agent != "opencode" && agent != "pi" {
 		return "default", nil
 	}
 
@@ -176,7 +176,7 @@ func ensureAgentRouter(
 		if err := ensureDefaultAgentSubscription(ctx, agent, access, client, defaultRouter, stdin, stderr); err != nil {
 			return "", err
 		}
-		if agent == "pi" || cachedRouterID != "" {
+		if agent == "opencode" || agent == "pi" || cachedRouterID != "" {
 			return defaultRouter.ID, nil
 		}
 	}

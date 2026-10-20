@@ -43,30 +43,34 @@ Launch an installed coding agent through Dari:
 ```bash
 dari claude
 dari codex
+dari opencode
 dari pi
 ```
 
-On first launch, Dari signs you in if needed and creates and privately caches one Routing key. Subscription setup runs even if you already used `dari auth login` or have a cached router. Codex asks to connect your ChatGPT subscription, Claude asks to connect your Claude Code subscription, and Pi offers either provider or Dari managed billing. Explicit opt-outs are remembered per user and launcher. If it is not connected to Dari yet, the launcher opens the provider login and finishes the connection before continuing; later launches reuse it automatically. Personal subscriptions require the organization's Dari Pro plan, separate from the provider subscription. If Pro is inactive, onboarding lets you review plans in the browser, recheck activation, or explicitly choose Dari managed billing. It never purchases a plan for you.
+On first launch, Dari signs you in if needed and creates and privately caches one Routing key. Subscription setup runs even if you already used `dari auth login` or have a cached router. Codex asks to connect your ChatGPT subscription, Claude asks to connect your Claude Code subscription, and OpenCode and Pi offer either provider or Dari managed billing. Explicit opt-outs are remembered per user and launcher. If it is not connected to Dari yet, the launcher opens the provider login and finishes the connection before continuing; later launches reuse it automatically. Personal subscriptions require the organization's Dari Pro plan, separate from the provider subscription. If Pro is inactive, onboarding lets you review plans in the browser, recheck activation, or explicitly choose Dari managed billing. It never purchases a plan for you.
 
 You can connect more than one subscription per provider, such as two Claude Max accounts. Routing uses one until it reaches its usage limit, holds it until its reset, and then stays on the next one in connection order. `dari credentials subscription list` shows which is active and which are held; `dari credentials subscription connect <claude-code|codex>` connects another (`--reconnect NAME` replaces one), and `mark-available` / `disconnect` take a provider alias or, when several are connected, the subscription's name. `dari credentials subscription auto-reset <codex|NAME> on` lets Dari spend that ChatGPT account's banked Codex resets once every ChatGPT subscription is exhausted (off by default).
 
 The first Claude or Codex launch also opens an arrow-key model checklist: up/down moves, space toggles a model, and the right arrow opens its thinking levels, where any combination can be checked. Recommended defaults are preselected and clearly marked. Codex and Claude preselect their named model presets from the same backend configuration used by the web app, including reasoning levels. Codex applies confirmed selections to your organization's default router; Claude Code gets a separate router using the Claude preset's models. Dari automatically picks relevant evals for each request from your organization's evals and Public Evals. The web app's Default preset also supplies new organizations' initial router models. Saved launcher selections are reused on later launches. Dari applies recommended reasoning levels and managed providers to selected models.
 
-Dari then supplies the appropriate router endpoint and `dari/routing` model without overwriting the agent's own configuration. Later launches reuse setup while checking for a connected subscription. Set `DARI_ROUTING_API_KEY` to use an existing Routing key instead. Pi's footer, Claude Code's status line, and Codex's footer show the model serving each turn, its thinking level, and the turns left on the current routing lease. All three use the same status formatter.
+Dari then supplies the appropriate router endpoint and `dari/routing` model without overwriting the agent's own configuration. Later launches reuse setup while checking for a connected subscription. Set `DARI_ROUTING_API_KEY` to use an existing Routing key instead. Pi's footer, Claude Code's status line, Codex's footer, and OpenCode's prompt footer show the model serving each turn, its thinking level, and the turns left on the current routing lease. All four use the same status formatter.
 
 Codex's footer requires Codex 0.162.1 or newer. Interactive launches use a session-local bridge that reads Dari response headers and updates only the UI's thread-name display; saved session names, resume lists, and routing requests are unchanged. This also affects other thread-name displays in the active UI, such as its terminal title. The bridge uses loopback-only listeners, requires the routing bearer key for HTTP and a separate capability for UI connections, streams responses without buffering, and stops with the launcher. UI reconnects preserve the local app server and active turns. Codex prints its standard remote-disconnect message on exit; its suggested direct reconnect URL expires when Dari exits, so resume with `dari codex resume` instead. Closing the launcher stops its local app server; it does not leave work running in a shared Codex daemon.
 
 Set `DARI_CODEX_STATUS=0` to use Codex without the bridge and keep your existing footer layout. Explicit `--remote` or `--profile`/`-p` launches and non-interactive commands such as `exec` and `review` also keep their original execution path. Dari's interactive footer layout is session-scoped and does not rewrite your Codex configuration.
+
+OpenCode receives its Dari provider, `dari/routing` model, and status plugin through `OPENCODE_CONFIG_CONTENT`, which replaces any value you set for that variable; files under `~/.config/opencode` and project config are unchanged. Interactive, `run`, `mini`, `api`, `models`, and `stats` launches add `--standalone` so a private server picks up that configuration instead of OpenCode's shared background service; `--server` and `pair` are rejected for the same reason (use `dari opencode serve` for other clients). Management commands such as `service`, `session`, and `auth` run without Dari's configuration so OpenCode's long-lived background service never picks it up. Built-in agents, subagents, and title, summary, and compaction tasks are pinned to `dari/routing`.
 
 Every argument after the launcher subcommand is forwarded to the agent. This includes interactive and non-interactive modes, prompts, and agent-specific flags:
 
 ```bash
 dari claude --print "Review this diff"
 dari codex exec --sandbox workspace-write "Fix the failing tests"
+dari opencode run "Explain this repository"
 dari pi --tools read,grep,find,ls -p "Review this repository"
 ```
 
-The launcher subcommand must be the first argument. Dari-owned provider and model settings take precedence if conflicting agent flags are passed, so the process remains routed through Dari. The native agent executable must already be installed and available on `PATH`.
+The launcher subcommand must be the first argument. Dari-owned provider and model settings take precedence if conflicting agent flags are passed, so the process remains routed through Dari. The native agent executable must already be installed and available on `PATH`, or set `DARI_<AGENT>_PATH` (for example `DARI_OPENCODE_PATH`) to its location.
 
 ## Common Workflows
 

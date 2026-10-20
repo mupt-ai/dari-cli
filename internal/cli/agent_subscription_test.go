@@ -19,6 +19,8 @@ func TestLoggedInAgentConnectsMissingSubscription(t *testing.T) {
 		{"claude", "anthropic_claude_code", "y\ntest-code#test-state\n"},
 		{"pi", "openai_codex", "1\n\n"},
 		{"pi", "anthropic_claude_code", "2\ntest-code#test-state\n"},
+		{"opencode", "openai_codex", "1\n\n"},
+		{"opencode", "anthropic_claude_code", "2\ntest-code#test-state\n"},
 	} {
 		t.Run(tc.agent+"/"+tc.provider, func(t *testing.T) {
 			t.Setenv("DARI_CONFIG_DIR", t.TempDir())
@@ -120,7 +122,7 @@ func TestLoggedInAgentConnectsMissingSubscription(t *testing.T) {
 }
 
 func TestDefaultAgentSubscriptionDeclineAndEOF(t *testing.T) {
-	for _, agent := range []string{"codex", "pi"} {
+	for _, agent := range []string{"codex", "opencode", "pi"} {
 		for _, answer := range []string{"", "decline"} {
 			t.Run(agent+"/"+answer, func(t *testing.T) {
 				useTestAPIKey(t)
@@ -136,7 +138,7 @@ func TestDefaultAgentSubscriptionDeclineAndEOF(t *testing.T) {
 				input := ""
 				if answer == "decline" {
 					input = "n\n"
-					if agent == "pi" {
+					if agent == "opencode" || agent == "pi" {
 						input = "3\n"
 					}
 				}
@@ -170,6 +172,8 @@ func TestDefaultAgentSubscriptionDoesNotEnableRouterWhenAlreadyConnected(t *test
 		{"codex", "openai_codex"},
 		{"pi", "openai_codex"},
 		{"pi", "anthropic_claude_code"},
+		{"opencode", "openai_codex"},
+		{"opencode", "anthropic_claude_code"},
 	} {
 		t.Run(tc.agent+"/"+tc.provider, func(t *testing.T) {
 			useTestAPIKey(t)
