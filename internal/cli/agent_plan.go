@@ -13,34 +13,58 @@ import (
 )
 
 type agentSubscriptionStatus struct {
-	Credentials []agentCredential `json:"credentials"`
-	Allowed     *bool             `json:"personal_subscriptions_allowed"`
+	Credentials        []agentCredential `json:"credentials"`
+	AutoroutingAllowed *bool             `json:"autorouting_allowed"`
 }
 
-// The browser handles pricing, organization selection and payment confirmation.
-// The CLI only opens billing after an explicit choice and verifies entitlement
-// before proceeding to provider authorization.
-func ensureAgentSubscriptionPlan(ctx context.Context, client *api.Client, stdin io.Reader, stderr io.Writer, status *agentSubscriptionStatus) (bool, error) {
-	if status.Allowed == nil || *status.Allowed {
-		return true, nil
+// routerSelectsModels reports whether requests on the router need model
+// selection: more than one model/thinking-level pair is Autorouting. A model
+// without listed levels resolves to every level it supports, so it counts as
+// selecting rather than as one pair.
+func routerSelectsModels(router agentRouter) bool {
+	pairs := 0
+	for _, model := range router.EnabledModels {
+		levels := len(router.ModelThinkingLevels[model])
+		if levels == 0 {
+			return true
+		}
+		pairs += levels
 	}
-	explanation := "Using your ChatGPT or Claude subscription through Dari requires a Dari Pro plan for this organization. Your provider subscription is separate."
+	return pairs > 1
+}
+
+// Gateway serves routers with one model and thinking level; anything that
+// selects needs the Autorouting plan. The browser handles pricing,
+// organization selection and payment; the CLI only opens billing after an
+// explicit choice and rechecks the plan before launching.
+func ensureAgentAutoroutingPlan(ctx context.Context, client *api.Client, router agentRouter, stdin io.Reader, stderr io.Writer) error {
+	if !routerSelectsModels(router) {
+		return nil
+	}
+	var status agentSubscriptionStatus
+	if err := client.Do(ctx, http.MethodGet, "/v1/organizations/current/credentials", nil, &status); err != nil {
+		return api.HumanError(err)
+	}
+	if status.AutoroutingAllowed == nil || *status.AutoroutingAllowed {
+		return nil
+	}
+	explanation := "This router chooses between models, which requires the Autorouting plan ($30/month for individuals)."
 	for {
 		var choice int
 		var err error
 		if agentInputIsTerminal(stdin) {
 			choice, err = runAgentChoiceTUI(
-				stdin, stderr, "Subscription Setup", "Enable Dari Pro",
+				stdin, stderr, "Autorouting", "Enable Autorouting",
 				[]agentChoiceOption{
-					{label: "Subscribe to Dari Pro"},
-					{label: "Check Subscription"},
-					{label: "Use Managed Billing"},
+					{label: "Subscribe to Autorouting"},
+					{label: "Check Plan"},
+					{label: "Cancel"},
 				},
 				agentPlanDetails,
 			)
 		} else {
 			fmt.Fprintln(stderr, explanation)
-			fmt.Fprint(stderr, "[1] Subscribe to Dari Pro [2] Check my subscription [3] Use Dari managed billing: ")
+			fmt.Fprint(stderr, "[1] Subscribe to Autorouting [2] Check my plan [3] Cancel: ")
 			var answer string
 			answer, err = readAgentLine(stdin)
 			if err == nil {
@@ -52,56 +76,56 @@ func ensureAgentSubscriptionPlan(ctx context.Context, client *api.Client, stdin 
 				case "3":
 					choice = 2
 				default:
-					return false, errors.New("expected 1, 2, or 3")
+					return errors.New("expected 1, 2, or 3")
 				}
 			}
 		}
 		if err != nil {
-			return false, fmt.Errorf("subscription onboarding was not completed: %w", err)
+			return fmt.Errorf("autorouting setup was not completed: %w", err)
 		}
 		if choice == 2 {
-			return false, nil
+			return errors.New("autorouting requires the Autorouting plan; subscribe on the Usage page, or keep one model and thinking level on this router")
 		}
 		if choice == 0 {
 			var config struct {
 				WebAppURL string `json:"web_app_url"`
 			}
 			if err := api.New(client.BaseURL).Do(ctx, http.MethodGet, "/v1/auth/config", nil, &config); err != nil {
-				return false, api.HumanError(err)
+				return api.HumanError(err)
 			}
 			webURL, err := url.Parse(config.WebAppURL)
 			if err != nil || webURL.Host == "" || (webURL.Scheme != "http" && webURL.Scheme != "https") {
-				return false, errors.New("API returned an invalid web app URL for billing")
+				return errors.New("API returned an invalid web app URL for billing")
 			}
 			billingURL := strings.TrimRight(config.WebAppURL, "/") + "/usage"
 			if openAgentBrowser(billingURL) {
-				fmt.Fprintln(stderr, "Opened Dari Pro subscription in your browser.")
+				fmt.Fprintln(stderr, "Opened Autorouting checkout in your browser.")
 			} else {
-				fmt.Fprintln(stderr, "Open this URL to subscribe to Dari Pro:")
+				fmt.Fprintln(stderr, "Open this URL to subscribe to Autorouting:")
 			}
 			fmt.Fprintf(stderr, "  %s\n", billingURL)
 			fmt.Fprintln(stderr, "Subscribe in the browser, then return here and press Enter to check again.")
 			if _, err := readAgentLine(stdin); err != nil {
-				return false, fmt.Errorf("wait for Dari Pro subscription: %w", err)
+				return fmt.Errorf("wait for Autorouting subscription: %w", err)
 			}
 		}
-		if err := client.Do(ctx, http.MethodGet, "/v1/organizations/current/credentials", nil, status); err != nil {
-			return false, api.HumanError(err)
+		if err := client.Do(ctx, http.MethodGet, "/v1/organizations/current/credentials", nil, &status); err != nil {
+			return api.HumanError(err)
 		}
-		if status.Allowed != nil && *status.Allowed {
-			fmt.Fprintln(stderr, "Dari Pro is active. Next: connect your provider subscription.")
-			return true, nil
+		if status.AutoroutingAllowed == nil || *status.AutoroutingAllowed {
+			fmt.Fprintln(stderr, "Autorouting is active.")
+			return nil
 		}
-		fmt.Fprintln(stderr, "Dari Pro is not active for this organization yet. Check the organization in the browser, then try again.")
+		fmt.Fprintln(stderr, "Autorouting is not active for this organization yet. Check the organization in the browser, then try again.")
 	}
 }
 
 // Keep plan copy narrow and neutral; green is reserved for successful steps.
 func agentPlanDetails(width int) []string {
 	paragraphs := []string{
-		"Dari Pro lets you use your ChatGPT or Claude subscription.",
-		"It is separate from your provider plan.",
-		"Alternatively, pay for usage with Dari managed billing.",
+		"Autorouting picks a model for every request: $30 per month for individuals.",
+		"Gateway is free: subscriptions, managed billing, and your own keys on a router with one model.",
+		"Your provider subscription is separate.",
 	}
 	if width <= 0 || width > 60 {
 		width = 60

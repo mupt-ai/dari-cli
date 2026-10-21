@@ -40,17 +40,6 @@ func ensureDefaultAgentSubscription(ctx context.Context, agent string, access ag
 		if err := client.Do(ctx, http.MethodGet, "/v1/organizations/current/credentials", nil, &listed); err != nil {
 			return api.HumanError(err)
 		}
-		if optedOut && listed.Allowed != nil && !*listed.Allowed {
-			return nil
-		}
-		allowed, err := ensureAgentSubscriptionPlan(ctx, client, stdin, stderr, &listed)
-		if err != nil {
-			return err
-		}
-		if !allowed {
-			return state.SaveAgentSubscriptionOptOut(scope, true)
-		}
-
 		connected := slices.ContainsFunc(listed.Credentials, func(c agentCredential) bool {
 			return c.OAuthProvider == codexSubscription.id || c.OAuthProvider == claudeSubscription.id
 		})

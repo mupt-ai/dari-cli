@@ -327,7 +327,7 @@ func TestResolveClaudePersonalSubscriptionUsesExistingConnection(t *testing.T) {
 	}
 }
 
-func TestResolveClaudePersonalSubscriptionUsesManagedBillingWithoutProPlan(t *testing.T) {
+func TestResolveClaudePersonalSubscriptionNeedsNoPlan(t *testing.T) {
 	var requests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -335,8 +335,8 @@ func TestResolveClaudePersonalSubscriptionUsesManagedBillingWithoutProPlan(t *te
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"credentials":                    []any{map[string]any{"oauth_provider": "anthropic_claude_code"}},
-			"personal_subscriptions_allowed": false,
+			"credentials":         []any{map[string]any{"oauth_provider": "anthropic_claude_code"}},
+			"autorouting_allowed": false,
 		})
 	}))
 	defer server.Close()
@@ -346,21 +346,21 @@ func TestResolveClaudePersonalSubscriptionUsesManagedBillingWithoutProPlan(t *te
 		context.Background(),
 		claudeSubscription,
 		api.New(server.URL),
-		strings.NewReader("3\n"),
+		strings.NewReader(""),
 		&stderr,
 		false,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolution.enabled || !resolution.decided || !resolution.preferenceChanged {
-		t.Fatalf("resolution = %#v, want managed billing with an explicit opt-out", resolution)
+	if !resolution.enabled || !resolution.decided {
+		t.Fatalf("resolution = %#v, want the connected subscription without a plan", resolution)
 	}
 	if requests != 1 {
 		t.Fatalf("requests = %d, want 1", requests)
 	}
-	if !strings.Contains(stderr.String(), "Pro plan") {
-		t.Fatalf("stderr does not explain the plan requirement:\n%s", stderr.String())
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected prompt:\n%s", stderr.String())
 	}
 }
 
@@ -1015,8 +1015,9 @@ func TestEnsureClaudeAgentRouterRecoversFromConcurrentCreate(t *testing.T) {
 	if routerID != "rtr_other_computer" {
 		t.Fatalf("router ID = %q", routerID)
 	}
-	if routerLists != 2 {
-		t.Fatalf("router list requests = %d, want 2", routerLists)
+	// The third listing finds the chosen router to check its Autorouting plan.
+	if routerLists != 3 {
+		t.Fatalf("router list requests = %d, want 3", routerLists)
 	}
 	if !subscriptionUpdated {
 		t.Fatal("recovered router was not updated to require a personal subscription")
@@ -1033,7 +1034,7 @@ func TestEnsureCodexAgentRouterUsesPresetInsteadOfSavedDefault(t *testing.T) {
 			}}})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
-			_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}, "personal_subscriptions_allowed": false})
+			_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers":
 			_ = json.NewEncoder(w).Encode(map[string]any{"routers": []map[string]any{{
@@ -1070,7 +1071,7 @@ func TestEnsureCodexAgentRouterUsesPresetInsteadOfSavedDefault(t *testing.T) {
 		context.Background(),
 		"codex",
 		agentRoutingAccess{apiURL: server.URL, scope: "test-org", key: "dari_route"},
-		strings.NewReader("3\n\n"),
+		strings.NewReader("n\n\n"),
 		io.Discard,
 	)
 	if err != nil {
@@ -1146,6 +1147,56 @@ func TestEnsurePiAgentRouterUsesDefaultPreset(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "Configure the default router for Pi") {
 		t.Fatalf("output does not identify Pi setup: %s", output.String())
+	}
+}
+
+func TestEnsureCodexAgentRouterCancelledPlanLeavesDefaultRouterUnchanged(t *testing.T) {
+	var putRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-suggestions":
+			_ = json.NewEncoder(w).Encode(map[string]any{"suggestions": []map[string]any{{
+				"id": "codex", "models": map[string][]string{"anthropic/claude-fable-5": {"high"}, "zai-org/GLM-5.3": {"high"}},
+			}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
+			_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}, "autorouting_allowed": false})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers":
+			// A free org's one-model Gateway router.
+			_ = json.NewEncoder(w).Encode(map[string]any{"routers": []map[string]any{{
+				"id":                    "rtr_default",
+				"name":                  "Default",
+				"is_default":            true,
+				"enabled_models":        []string{"custom/model"},
+				"model_thinking_levels": map[string][]string{"custom/model": {"off"}},
+			}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-catalog":
+			writeAgentModelCatalog(t, w)
+		case r.Method == http.MethodPut || r.Method == http.MethodPost:
+			putRequests++
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "rtr_default"})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	useTestAPIKey(t)
+	t.Setenv("DARI_API_URL", server.URL)
+	// Decline the subscription, accept the multi-model preset, then cancel the
+	// Autorouting prompt.
+	_, err := ensureAgentRouter(
+		context.Background(),
+		"codex",
+		agentRoutingAccess{apiURL: server.URL, scope: "test-org", key: "dari_route"},
+		strings.NewReader("n\n\n3\n"),
+		io.Discard,
+	)
+	if err == nil {
+		t.Fatal("expected the cancelled Autorouting prompt to stop the launch")
+	}
+	if putRequests != 0 {
+		t.Fatalf("router writes = %d, want 0 after a cancelled plan check", putRequests)
 	}
 }
 
@@ -1291,7 +1342,7 @@ func TestEnsureCodexAgentRouterSkipsPutForUnchangedSelectionInAnyOrder(t *testin
 			}}})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
-			_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}, "personal_subscriptions_allowed": false})
+			_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers":
 			// Default router lists the same models as the picker defaults,
@@ -1322,7 +1373,7 @@ func TestEnsureCodexAgentRouterSkipsPutForUnchangedSelectionInAnyOrder(t *testin
 		context.Background(),
 		"codex",
 		agentRoutingAccess{apiURL: server.URL, scope: "test-org", key: "dari_route"},
-		strings.NewReader("3\n\n"),
+		strings.NewReader("n\n\n"),
 		io.Discard,
 	)
 	if err != nil {

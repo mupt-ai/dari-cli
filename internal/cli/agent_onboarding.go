@@ -147,6 +147,34 @@ func ensureAgentRouter(
 	stdin io.Reader,
 	stderr io.Writer,
 ) (string, error) {
+	routerID, err := selectAgentRouter(ctx, agent, access, stdin, stderr)
+	if err != nil || routerID == "default" {
+		return routerID, err
+	}
+	client, err := auth.OrgKeyClient(access.apiURL)
+	if err != nil {
+		return "", err
+	}
+	routers, err := listAgentRouters(ctx, client)
+	if err != nil {
+		return "", err
+	}
+	router, ok := findAgentRouter(routers, func(router agentRouter) bool {
+		return router.ID == routerID
+	})
+	if !ok {
+		return routerID, nil
+	}
+	return routerID, ensureAgentAutoroutingPlan(ctx, client, router, stdin, stderr)
+}
+
+func selectAgentRouter(
+	ctx context.Context,
+	agent string,
+	access agentRoutingAccess,
+	stdin io.Reader,
+	stderr io.Writer,
+) (string, error) {
 	if agent != "claude" && agent != "codex" && agent != "opencode" && agent != "pi" {
 		return "default", nil
 	}
@@ -269,6 +297,11 @@ func ensureAgentRouter(
 	if err != nil {
 		return "", err
 	}
+	// Check the plan before writing: a cancelled check must not leave a
+	// selecting model set on a router that served as a Gateway router.
+	if err := ensureAgentAutoroutingPlan(ctx, client, agentRouterForChoices(choices), stdin, stderr); err != nil {
+		return "", err
+	}
 
 	routerID := defaultRouter.ID
 	if agent != "claude" {
@@ -347,16 +380,6 @@ func resolveAgentPersonalSubscription(
 	var listed agentSubscriptionStatus
 	if err := client.Do(ctx, http.MethodGet, "/v1/organizations/current/credentials", nil, &listed); err != nil {
 		return agentSubscriptionResolution{}, api.HumanError(err)
-	}
-	if previouslyOptedOut && listed.Allowed != nil && !*listed.Allowed {
-		return agentSubscriptionResolution{decided: true}, nil
-	}
-	allowed, err := ensureAgentSubscriptionPlan(ctx, client, stdin, stderr, &listed)
-	if err != nil {
-		return agentSubscriptionResolution{}, err
-	}
-	if !allowed {
-		return agentSubscriptionResolution{decided: true, preferenceChanged: true}, nil
 	}
 	if slices.ContainsFunc(listed.Credentials, func(credential agentCredential) bool {
 		return credential.OAuthProvider == provider.id
@@ -1208,6 +1231,15 @@ func agentProvidersFor(models []agentModel, ids []string) map[string]string {
 		providers[id] = provider
 	}
 	return providers
+}
+
+// agentRouterForChoices describes the router a selection would produce.
+func agentRouterForChoices(choices []agentModelChoice) agentRouter {
+	levels := make(map[string][]string, len(choices))
+	for _, choice := range choices {
+		levels[choice.ID] = choice.Levels
+	}
+	return agentRouter{EnabledModels: choiceIDs(choices), ModelThinkingLevels: levels}
 }
 
 func agentRouterNeedsUpdate(current agentRouter, choices []agentModelChoice) bool {

@@ -43,7 +43,7 @@ func TestLoggedInAgentConnectsMissingSubscription(t *testing.T) {
 					if connected {
 						credentials = append(credentials, agentCredential{OAuthProvider: tc.provider})
 					}
-					_ = json.NewEncoder(w).Encode(map[string]any{"credentials": credentials, "personal_subscriptions_allowed": true})
+					_ = json.NewEncoder(w).Encode(map[string]any{"credentials": credentials})
 				case "POST /v1/organizations/current/credentials/oauth/sessions":
 					var body map[string]string
 					_ = json.NewDecoder(r.Body).Decode(&body)
@@ -133,7 +133,7 @@ func TestDefaultAgentSubscriptionDeclineAndEOF(t *testing.T) {
 						http.NotFound(w, r)
 						return
 					}
-					_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}, "personal_subscriptions_allowed": true})
+					_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}})
 				}))
 				defer server.Close()
 				input := ""
@@ -184,7 +184,6 @@ func TestDefaultAgentSubscriptionDoesNotEnableRouterWhenAlreadyConnected(t *test
 				case "GET /v1/organizations/current/credentials":
 					_ = json.NewEncoder(w).Encode(map[string]any{
 						"credentials":                    []agentCredential{{OAuthProvider: tc.provider}},
-						"personal_subscriptions_allowed": true,
 					})
 				default:
 					if r.Method == http.MethodPut {
