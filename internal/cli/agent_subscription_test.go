@@ -3,9 +3,11 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -183,7 +185,7 @@ func TestDefaultAgentSubscriptionDoesNotEnableRouterWhenAlreadyConnected(t *test
 				switch r.Method + " " + r.URL.Path {
 				case "GET /v1/organizations/current/credentials":
 					_ = json.NewEncoder(w).Encode(map[string]any{
-						"credentials":                    []agentCredential{{OAuthProvider: tc.provider}},
+						"credentials": []agentCredential{{OAuthProvider: tc.provider}},
 					})
 				default:
 					if r.Method == http.MethodPut {
@@ -242,5 +244,85 @@ func TestCodexDeviceCodeSubscriptionUsesCodeAndEmptyCompletion(t *testing.T) {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("output missing %q: %s", want, output.String())
 		}
+	}
+}
+
+func TestAgentSubscriptionLinesListInRoutingOrder(t *testing.T) {
+	label := "Work"
+	lines := agentSubscriptionLines(personalSubscriptions([]subscriptionCredential{
+		{Name: "CLAUDE_2", OAuthProvider: claudeSubscription.id, CredentialScope: "user", CreatedAt: "2026-02", Label: &label},
+		{Name: "CODEX", OAuthProvider: codexSubscription.id, CredentialScope: "user", CreatedAt: "2026-01", SubscriptionActive: true, SafeMetadata: map[string]string{"account_email": "me@example.test"}},
+		{Name: "CLAUDE", OAuthProvider: claudeSubscription.id, CredentialScope: "user", CreatedAt: "2026-01"},
+		{Name: "TEAM", OAuthProvider: codexSubscription.id, CredentialScope: "organization"},
+	}), true)
+	got := stripANSI(strings.Join(lines, "\n"))
+	want := "  Claude Code  CLAUDE           standby\n  Claude Code  Work             standby\n  ChatGPT      me@example.test  active\n"
+	if got != want {
+		t.Fatalf("lines:\n%q\nwant:\n%q", got, want)
+	}
+	if empty := stripANSI(strings.Join(agentSubscriptionLines(nil, false), "\n")); !strings.Contains(empty, "No accounts connected yet.") {
+		t.Fatalf("empty list: %q", empty)
+	}
+}
+
+func TestAgentConnectNeedsATerminal(t *testing.T) {
+	err := connectAgentSubscriptionsOnRequest(context.Background(), "pi", agentRoutingAccess{}, strings.NewReader(""), io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "interactive terminal") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestAgentSubscriptionProvidersMatchTheAgent(t *testing.T) {
+	for agent, want := range map[string][]agentSubscriptionProvider{
+		"claude":   {claudeSubscription},
+		"codex":    {codexSubscription},
+		"opencode": {codexSubscription, claudeSubscription},
+		"pi":       {codexSubscription, claudeSubscription},
+	} {
+		if got := agentSubscriptionProviders(agent); !slices.Equal(got, want) {
+			t.Errorf("%s: providers = %v, want %v", agent, got, want)
+		}
+	}
+}
+
+func TestAgentSubscriptionAddsSurviveAnErrorOnTheAccountsPage(t *testing.T) {
+	useTestAPIKey(t)
+	var puts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		puts++
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "rtr_default"})
+	}))
+	defer server.Close()
+	client := api.New(server.URL)
+	router := agentRouter{ID: "rtr_default", Name: "Default", EnabledModels: []string{"openai/gpt-5.6-sol"}}
+	scope := "test-org|agent:pi"
+	pageErr := errors.New("agent onboarding canceled")
+
+	// One account was connected before Esc: it is stored, so routing must use it.
+	if err := recordAgentSubscriptionAdds(context.Background(), client, router, scope, 1, pageErr); err != pageErr {
+		t.Fatalf("error = %v, want the page error", err)
+	}
+	if puts != 1 {
+		t.Fatalf("router updates = %d, want the router routed through the account", puts)
+	}
+	if optedOut, err := state.AgentSubscriptionOptedOut(scope); err != nil || optedOut {
+		t.Fatalf("opted out = %v, err = %v; want subscriptions on", optedOut, err)
+	}
+
+	// Nothing connected and the page failed: no preference is recorded.
+	otherScope := "test-org|agent:codex"
+	if err := recordAgentSubscriptionAdds(context.Background(), client, router, otherScope, 0, pageErr); err != pageErr {
+		t.Fatalf("error = %v, want the page error", err)
+	}
+	if optedOut, err := state.AgentSubscriptionOptedOut(otherScope); err != nil || optedOut {
+		t.Fatalf("opted out = %v, err = %v; want no preference recorded", optedOut, err)
+	}
+	if puts != 1 {
+		t.Fatalf("router updates = %d, want none for a failed page with no accounts", puts)
 	}
 }

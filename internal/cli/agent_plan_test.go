@@ -31,12 +31,14 @@ func TestRouterModelsOffersRoutingOnlyWithThePlan(t *testing.T) {
 				}})
 			case "/v1/organizations/current/credentials":
 				_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}, "autorouting_allowed": tc.allowed})
+			case "/v1/auth/config":
+				_ = json.NewEncoder(w).Encode(map[string]any{"web_app_url": "https://app.example.test/"})
 			default:
 				t.Fatalf("unexpected request %s", r.URL.Path)
 			}
 		}))
 		var stderr strings.Builder
-		got, err := routerModels(t.Context(), api.New(server.URL), "default", &stderr)
+		got, err := routerModels(t.Context(), api.New(server.URL), "claude", "default", &stderr)
 		server.Close()
 		if err != nil {
 			t.Fatal(err)
@@ -44,7 +46,8 @@ func TestRouterModelsOffersRoutingOnlyWithThePlan(t *testing.T) {
 		if !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("allowed=%v: models = %+v, want %+v", tc.allowed, got, tc.want)
 		}
-		if notice := strings.Contains(stderr.String(), "Starting on dari/model/openai/gpt-5.6-sol."); notice != tc.wantNotice {
+		if notice := strings.Contains(stderr.String(), "Starting on dari/model/openai/gpt-5.6-sol.") &&
+			strings.Contains(stderr.String(), "run `dari claude --connect` to get auto-routing"); notice != tc.wantNotice {
 			t.Errorf("allowed=%v: notice %q", tc.allowed, stderr.String())
 		}
 	}

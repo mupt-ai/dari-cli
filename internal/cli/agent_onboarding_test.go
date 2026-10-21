@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -20,7 +21,7 @@ func TestSelectAgentModelsByNumberKeepsDefaultsOnEnter(t *testing.T) {
 	defaults := []string{"anthropic/claude-fable-5", "zai-org/GLM-5.3"}
 	var output strings.Builder
 
-	got, err := selectAgentModelsByNumber(strings.NewReader("\n"), &output, "Configure", models, defaults, nil, testRecommendedLevels())
+	got, err := selectAgentModelsByNumber(strings.NewReader("\n"), &output, "Configure", nil, models, defaults, nil, testRecommendedLevels())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,6 +38,7 @@ func TestSelectAgentModelsByNumberAcceptsConfiguredList(t *testing.T) {
 		strings.NewReader("3, 1, 3\n"),
 		io.Discard,
 		"Configure",
+		nil,
 		testAgentModels(),
 		[]string{"anthropic/claude-fable-5"},
 		nil,
@@ -55,7 +57,7 @@ func TestSelectAgentModelsByNumberRejectsInvalidSelection(t *testing.T) {
 	_, err := selectAgentModelsByNumber(
 		strings.NewReader("9\n"),
 		io.Discard,
-		"Configure",
+		"Configure", nil,
 		testAgentModels(),
 		nil,
 		nil,
@@ -68,7 +70,7 @@ func TestSelectAgentModelsByNumberRejectsInvalidSelection(t *testing.T) {
 
 func TestSelectAgentModelsByNumberLeavesUnconsumedStdinForAgent(t *testing.T) {
 	stdin := strings.NewReader("\nleftover agent input")
-	_, err := selectAgentModelsByNumber(stdin, io.Discard, "Configure", testAgentModels(), []string{"anthropic/claude-fable-5"}, nil, testRecommendedLevels())
+	_, err := selectAgentModelsByNumber(stdin, io.Discard, "Configure", nil, testAgentModels(), []string{"anthropic/claude-fable-5"}, nil, testRecommendedLevels())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +89,7 @@ func TestSelectAgentModelsByNumberPreservesCurrentLevels(t *testing.T) {
 	got, err := selectAgentModelsByNumber(
 		strings.NewReader("3\n"),
 		io.Discard,
-		"Configure",
+		"Configure", nil,
 		models,
 		nil,
 		current,
@@ -422,7 +424,7 @@ func TestResolveClaudePersonalSubscriptionDefaultsToConnect(t *testing.T) {
 		"Use your Claude Code personal subscription? [Y/n]",
 		"Open this URL to connect your Claude Code subscription",
 		"paste the authorization code Anthropic shows",
-		"Connected your Claude Code personal subscription.",
+		"Claude Code subscription connected",
 	} {
 		if !strings.Contains(stderr.String(), text) {
 			t.Errorf("stderr missing %q:\n%s", text, stderr.String())
@@ -430,22 +432,24 @@ func TestResolveClaudePersonalSubscriptionDefaultsToConnect(t *testing.T) {
 	}
 }
 
-func TestClaudeOAuthTUIUsesAgentPickerStyles(t *testing.T) {
-	output := strings.Join(agentOAuthLines(claudeSubscription, "https://claude.example.test/authorize", true, 80), "\n")
-
-	for _, text := range []string{
-		dariBanner,
-		"Connect Claude Code",
-		ansiCyan,
-		ansiGreen,
-		"Claude Code login opened in your browser",
-	} {
+func TestClaudeOAuthPromptKeepsURLWhole(t *testing.T) {
+	url := "https://claude.example.test/authorize?" + strings.Repeat("a", 120)
+	lines := agentOAuthLines(claudeSubscription, url, true, "", 80)
+	// Wrapped pieces stay inside the indent and link to the whole URL.
+	for _, line := range lines[2:4] {
+		if ansiVisibleWidth(line) > 80 || !strings.HasPrefix(line, "  ") || !strings.Contains(line, "\033]8;;"+url+"\033\\") {
+			t.Fatalf("URL line %q", line)
+		}
+	}
+	output := stripANSI(strings.Join(lines, "\n"))
+	output = regexp.MustCompile(`\x1b\]8;;[^\x1b]*\x1b\\`).ReplaceAllString(output, "")
+	output = strings.ReplaceAll(output, "\n  ", "")
+	for _, text := range []string{"Connect Claude Code", "Opened Claude Code in your browser", url, "code#state"} {
 		if !strings.Contains(output, text) {
-			t.Errorf("styled OAuth output missing %q:\n%s", text, output)
+			t.Errorf("OAuth prompt missing %q:\n%s", text, output)
 		}
 	}
 }
-
 func TestClaudeCodeInputIgnoresSplitTerminalEscapes(t *testing.T) {
 	input := agentCodeInputState{}
 	chunks := [][]byte{
@@ -1084,6 +1088,57 @@ func TestEnsureCodexAgentRouterUsesPresetInsteadOfSavedDefault(t *testing.T) {
 	}
 }
 
+func TestEnsureClaudeAgentRouterExplainsModelsByPlan(t *testing.T) {
+	for _, allowed := range []bool{true, false} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-suggestions":
+				_ = json.NewEncoder(w).Encode(map[string]any{"suggestions": []map[string]any{
+					{"id": "claude", "models": map[string][]string{"zai-org/GLM-5.3": {"high"}}},
+				}})
+			case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
+				_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}, "autorouting_allowed": allowed})
+			case r.Method == http.MethodGet && r.URL.Path == "/v1/auth/config":
+				_ = json.NewEncoder(w).Encode(map[string]any{"web_app_url": "https://app.example.test"})
+			case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers":
+				_ = json.NewEncoder(w).Encode(map[string]any{"routers": []map[string]any{{"id": "rtr_default", "is_default": true}}})
+			case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-catalog":
+				writeAgentModelCatalog(t, w)
+			case r.Method == http.MethodPost && r.URL.Path == "/v1/organizations/current/routers":
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "rtr_claude"})
+			default:
+				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				http.NotFound(w, r)
+			}
+		}))
+		useTestAPIKey(t)
+		t.Setenv("DARI_API_URL", server.URL)
+		if err := state.SaveAgentSubscriptionOptOut("test-org|agent:claude", true); err != nil {
+			t.Fatal(err)
+		}
+		var output strings.Builder
+		_, err := ensureAgentRouter(
+			context.Background(),
+			"claude",
+			agentRoutingAccess{apiURL: server.URL, scope: "test-org", key: "dari_route"},
+			strings.NewReader("\n"),
+			&output,
+		)
+		server.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Setup always asks; the note says how the models get used.
+		want := "Auto-routing picks the best of these"
+		if !allowed {
+			want = "Switch between them with /model.\nRun `dari claude --connect` to get auto-routing ($20/mo)"
+		}
+		if !strings.Contains(output.String(), "Choose models for Claude Code") || !strings.Contains(output.String(), want) {
+			t.Errorf("allowed=%v: output missing %q:\n%s", allowed, want, output.String())
+		}
+	}
+}
+
 func TestEnsurePiAgentRouterUsesDefaultPreset(t *testing.T) {
 	var putRequests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1144,7 +1199,7 @@ func TestEnsurePiAgentRouterUsesDefaultPreset(t *testing.T) {
 	if putRequests != 1 {
 		t.Fatalf("PUT requests = %d, want Pi to apply the default preset", putRequests)
 	}
-	if !strings.Contains(output.String(), "Configure the default router for Pi") {
+	if !strings.Contains(output.String(), "Choose models for Pi") {
 		t.Fatalf("output does not identify Pi setup: %s", output.String())
 	}
 }
@@ -1385,41 +1440,54 @@ func TestAgentRouterNeedsUpdateIgnoresModelOrder(t *testing.T) {
 	}
 }
 
-func TestRenderAgentPickerAlignsColumnsInRawMode(t *testing.T) {
+func TestAgentPickerLinesAlignAndScroll(t *testing.T) {
 	models := testAgentModels()
 	models[0].DisplayName = "A Very Long Model Name Indeed"
 	p := newAgentPickerState(models, []string{"anthropic/claude-fable-5"}, nil, testRecommendedLevels())
 	p.handleKey("down")
-	var out strings.Builder
-	renderAgentPicker(&out, "Configure", p, 0)
 
-	// Raw mode needs \r\n; bare \n staircases every line one column right.
-	if strings.Contains(out.String(), "\n") && strings.Contains(strings.ReplaceAll(out.String(), "\r\n", ""), "\n") {
-		t.Fatalf("render contains bare \\n newlines:\n%q", out.String())
+	// The thinking column lines up across rows regardless of name length.
+	levelCols := map[int]bool{}
+	for _, line := range agentPickerLines("Choose models", []string{"note"}, p, len(models))[2 : len(models)+2] {
+		plain := stripANSI(line)
+		trimmed := strings.TrimRight(strings.TrimSuffix(plain, "recommended"), " ")
+		levelCols[len([]rune(trimmed[:strings.LastIndex(trimmed, "  ")]))] = true
+	}
+	if len(levelCols) != 1 {
+		t.Fatalf("level column positions = %v, want one", levelCols)
 	}
 
-	// The thinking column must line up across rows regardless of name length
-	// or styling; measure the visible column by stripping ANSI escapes.
-	thinkCols := map[int]bool{}
-	for _, line := range strings.Split(stripANSI(out.String()), "\r\n") {
-		if col := strings.Index(line, "thinking:"); col >= 0 {
-			thinkCols[col] = true
-		}
-	}
-	if len(thinkCols) != 1 {
-		t.Fatalf("thinking column positions = %v, want one aligned column:\n%s", thinkCols, out.String())
-	}
-
-	// Redrawing must clear every row to end of line so shorter lines and
-	// spacer rows leave no remnants from earlier screen output.
-	frameLines := strings.Split(out.String(), "\r\n")
-	for _, line := range frameLines {
-		if line != "" && !strings.Contains(line, "\033[K") && !strings.HasSuffix(line, "\033[J") {
-			t.Fatalf("frame line not cleared to EOL: %q", line)
-		}
+	// Only the visible window renders, with counts for what is hidden.
+	p.cursor = len(models) - 1
+	plain := stripANSI(strings.Join(agentPickerLines("Choose models", []string{"note"}, p, 2), "\n"))
+	if !strings.Contains(plain, fmt.Sprintf("↑ %d more", len(models)-2)) || strings.Count(plain, " more") != 1 {
+		t.Fatalf("scrolled picker:\n%s", plain)
 	}
 }
 
+func TestAgentTUIRenderDrawsPageFromTop(t *testing.T) {
+	var out strings.Builder
+	session := &agentTUISession{stderr: &out}
+	session.render([]string{"one"})
+	got := out.String()
+	// Raw mode needs \r\n, and every row clears what an earlier page left.
+	if !strings.HasPrefix(got, "\033[H") || !strings.HasSuffix(got, "  one"+ansiReset+"\033[K\r\n\033[J") || strings.Contains(strings.ReplaceAll(got, "\r\n", ""), "\n") {
+		t.Fatalf("page = %q", got)
+	}
+	// The welcome box closes evenly.
+	widths := map[int]bool{}
+	for _, line := range agentPageHeader(0)[:4] {
+		widths[ansiVisibleWidth(line)] = true
+	}
+	// On a wide page the box sits in the middle.
+	top := agentPageHeader(100)[0]
+	if lead := len(top) - len(strings.TrimLeft(top, " ")); lead != (100-ansiVisibleWidth(strings.TrimLeft(top, " ")))/2 {
+		t.Fatalf("box indent = %d: %q", lead, top)
+	}
+	if len(widths) != 1 || !strings.Contains(stripANSI(got), "dari.dev") {
+		t.Fatalf("header widths %v:\n%s", widths, stripANSI(got))
+	}
+}
 func TestAgentPickerNeverSubmitsEmptyLevels(t *testing.T) {
 	// A model with supported levels but no recommended set, no default
 	// level, and no current router levels must still get a level.
@@ -1459,52 +1527,6 @@ func TestAgentPickerNeverSubmitsEmptyLevels(t *testing.T) {
 func stripANSI(s string) string {
 	re := regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 	return re.ReplaceAllString(s, "")
-}
-
-func TestRenderAgentPickerCentersBannerOnly(t *testing.T) {
-	p := newAgentPickerState(testAgentModels(), nil, nil, testRecommendedLevels())
-	var out strings.Builder
-	renderAgentPicker(&out, "Configure a router for Claude Code", p, 120)
-	lines := strings.Split(stripANSI(out.String()), "\r\n")
-
-	// The banner box is centered on the terminal.
-	var border string
-	for _, line := range lines {
-		if strings.Contains(line, "╭") {
-			border = line
-			break
-		}
-	}
-	if border == "" {
-		t.Fatalf("banner box missing:\n%s", out.String())
-	}
-	lead := len(border) - len(strings.TrimLeft(border, " "))
-	boxWidth := len([]rune(strings.TrimSpace(border)))
-	if want := (120 - boxWidth) / 2; lead != want || lead <= 0 {
-		t.Fatalf("banner leading pad = %d, want %d: %q", lead, want, border)
-	}
-
-	// The checklist and footer stay left-aligned.
-	for _, line := range lines {
-		if strings.Contains(line, "Fable") || strings.Contains(line, "Defaults are recommended") {
-			if lead := len(line) - len(strings.TrimLeft(line, " ")); lead > 2 {
-				t.Fatalf("picker line should stay left-aligned (pad %d): %q", lead, line)
-			}
-		}
-	}
-
-	// The title is centered inside the box.
-	for _, line := range lines {
-		if strings.Contains(line, "Configure a router for Claude Code") {
-			first, last := strings.Index(line, "│"), strings.LastIndex(line, "│")
-			inner := line[first+len("│") : last]
-			leftPad := len(inner) - len(strings.TrimLeft(inner, " "))
-			rightPad := len(inner) - len(strings.TrimRight(inner, " "))
-			if abs(leftPad-rightPad) > 1 {
-				t.Fatalf("title not centered in box: left %d right %d: %q", leftPad, rightPad, line)
-			}
-		}
-	}
 }
 
 func abs(n int) int {

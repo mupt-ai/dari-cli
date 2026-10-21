@@ -33,11 +33,15 @@ const (
 // reaches the agent untouched. Cobra only sees them when a Dari flag comes
 // first, which would be dropped, so those commands refuse to run.
 var agentLaunchers = map[string]string{
-	"claude":   "Launch Claude Code through Dari; forward all following arguments",
-	"codex":    "Launch Codex through Dari; forward all following arguments",
-	"opencode": "Launch OpenCode through Dari; forward all following arguments",
-	"pi":       "Launch Pi through Dari; forward all following arguments",
+	"claude":   "Launch Claude Code through Dari; forward all following arguments (--connect manages subscriptions)",
+	"codex":    "Launch Codex through Dari; forward all following arguments (--connect manages subscriptions)",
+	"opencode": "Launch OpenCode through Dari; forward all following arguments (--connect manages subscriptions)",
+	"pi":       "Launch Pi through Dari; forward all following arguments (--connect manages subscriptions)",
 }
+
+// agentConnectFlag opens the subscription list before launching. Dari removes
+// it, so the agent never sees it.
+const agentConnectFlag = "--connect"
 
 func init() {
 	commandRegistrars = append(commandRegistrars, func(root *cobra.Command, _ *globalFlags) {
@@ -55,8 +59,9 @@ func init() {
 }
 
 type agentLaunch struct {
-	name string
-	args []string
+	name    string
+	args    []string
+	connect bool
 }
 
 func parseAgentLaunch(args []string) (agentLaunch, bool) {
@@ -67,7 +72,19 @@ func parseAgentLaunch(args []string) (agentLaunch, bool) {
 	if _, ok := agentLaunchers[args[0]]; !ok {
 		return agentLaunch{}, false
 	}
-	return agentLaunch{name: args[0], args: append([]string(nil), args[1:]...)}, true
+	launch := agentLaunch{name: args[0], args: []string{}}
+	for i, arg := range args[1:] {
+		if arg == "--" {
+			launch.args = append(launch.args, args[1+i:]...)
+			break
+		}
+		if arg == agentConnectFlag {
+			launch.connect = true
+			continue
+		}
+		launch.args = append(launch.args, arg)
+	}
+	return launch, true
 }
 
 func runAgentLaunch(ctx context.Context, launch agentLaunch, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -83,12 +100,15 @@ func runAgentLaunch(ctx context.Context, launch agentLaunch, stdin io.Reader, st
 	if !agents.OnlyRequestsInfo(launch.args) {
 		var access agentRoutingAccess
 		access, err = resolveAgentRoutingAccess(ctx, stdin, stderr)
+		if err == nil && launch.connect {
+			err = connectAgentSubscriptionsOnRequest(ctx, launch.name, access, stdin, stderr)
+		}
 		if err == nil {
 			key = access.key
 			routerID, err = ensureAgentRouter(ctx, launch.name, access, stdin, stderr)
 		}
 		if err == nil {
-			models, err = agentModels(ctx, access, routerID, stderr)
+			models, err = agentModels(ctx, launch.name, access, routerID, stderr)
 		}
 		if err != nil {
 			fmt.Fprintln(stderr, err)
@@ -181,7 +201,7 @@ func resolveAgentRoutingKeyForScope(
 		return "", err
 	}
 	if created {
-		fmt.Fprintln(stderr, "Created and saved a Routing key for Dari coding agents.")
+		agentStep(stderr, "Routing key created")
 	}
 	return key, nil
 }

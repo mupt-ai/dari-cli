@@ -7,13 +7,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
-
-	"golang.org/x/term"
 
 	"github.com/mupt-ai/dari-cli/internal/api"
 	"github.com/mupt-ai/dari-cli/internal/auth"
@@ -242,13 +239,13 @@ func ensureAgentRouter(
 
 	// Each launcher preselects the named preset the frontend also shows. Codex
 	// and Pi both configure the default router; Pi starts from its preset.
-	title := "Configure the default router for Codex"
+	title := "Choose models for Codex"
 	suggestionID := agent
 	switch agent {
 	case "claude":
-		title = "Configure a router for Claude Code"
+		title = "Choose models for Claude Code"
 	case "pi":
-		title = "Configure the default router for Pi"
+		title = "Choose models for Pi"
 		suggestionID = "default"
 	}
 	suggestion, err := fetchAgentModelSuggestion(ctx, client, suggestionID)
@@ -265,9 +262,30 @@ func ensureAgentRouter(
 	if agent != "claude" {
 		models = includeCurrentAgentModels(models, defaultRouter)
 	}
-	choices, err := selectAgentModels(stdin, stderr, title, models, defaultIDs, nil, recommendedLevels)
-	if err != nil {
-		return "", err
+	var choices []agentModelChoice
+	for {
+		routing, err := autoroutingAllowed(ctx, client)
+		if err != nil {
+			return "", err
+		}
+		note := []string{"The checked models are recommended. Auto-routing picks the best of these for each request."}
+		if !routing {
+			offer := "Run `dari " + agent + " --connect` to get auto-routing ($20/mo) and have Dari pick for you."
+			if agentInputIsTerminal(stdin) {
+				offer = "Press a to get auto-routing ($20/mo) and have Dari pick for you."
+			}
+			note = []string{"The checked models are recommended. Switch between them with /model.", offer}
+		}
+		choices, err = selectAgentModels(stdin, stderr, title, note, !routing, models, defaultIDs, nil, recommendedLevels)
+		if !errors.Is(err, errAgentWantsAutorouting) {
+			if err != nil {
+				return "", err
+			}
+			break
+		}
+		if _, err := getAutorouting(ctx, client, stdin, stderr); err != nil {
+			return "", err
+		}
 	}
 	routerID := defaultRouter.ID
 	if agent != "claude" {
@@ -282,7 +300,7 @@ func ensureAgentRouter(
 		if agent == "pi" {
 			name = "Pi"
 		}
-		fmt.Fprintf(stderr, "%s will use your existing default router.\n", name)
+		agentStep(stderr, name+" will use your default router")
 	} else {
 		body := agentRouterCreateBody(
 			models,
@@ -294,7 +312,7 @@ func ensureAgentRouter(
 		createErr := client.Do(ctx, http.MethodPost, "/v1/organizations/current/routers", body, &created)
 		if createErr == nil {
 			routerID = created.ID
-			fmt.Fprintln(stderr, "Created a Claude Code router.")
+			agentStep(stderr, "Claude Code router created")
 		} else if api.AsHTTPError(createErr) != nil && api.AsHTTPError(createErr).Status == http.StatusConflict {
 			routers, err := listAgentRouters(ctx, client)
 			if err != nil {
@@ -356,34 +374,26 @@ func resolveAgentPersonalSubscription(
 		return agentSubscriptionResolution{decided: true}, nil
 	}
 
-	var useSubscription, answered bool
 	if agentInputIsTerminal(stdin) {
-		choice, err := runAgentChoiceTUI(
-			stdin,
-			stderr,
-			"Connect "+provider.name,
-			"Use your "+provider.name+" personal subscription?",
-			[]agentChoiceOption{
-				{label: "Use " + provider.name + " Subscription", note: "recommended"},
-				{label: "Use Dari managed billing"},
-			},
-			nil,
-		)
-		if err != nil {
-			return agentSubscriptionResolution{}, err
+		added, err := manageAgentSubscriptions(ctx, client, []agentSubscriptionProvider{provider}, stdin, stderr)
+		if added == 0 {
+			// A failed page with nothing connected records no preference.
+			if err != nil {
+				return agentSubscriptionResolution{}, err
+			}
+			return agentSubscriptionResolution{decided: true, preferenceChanged: true}, nil
 		}
-		useSubscription = choice == 0
-		answered = true
-	} else {
-		var err error
-		useSubscription, answered, err = confirmDefaultYes(
-			stdin,
-			stderr,
-			"Use your "+provider.name+" personal subscription? [Y/n] ",
-		)
-		if err != nil {
-			return agentSubscriptionResolution{}, err
-		}
+		// Accounts connected before an error are stored, so report them as
+		// connected alongside the error.
+		return agentSubscriptionResolution{enabled: true, decided: true, preferenceChanged: true, connectedNow: true}, err
+	}
+	useSubscription, answered, err := confirmDefaultYes(
+		stdin,
+		stderr,
+		"Use your "+provider.name+" personal subscription? [Y/n] ",
+	)
+	if err != nil {
+		return agentSubscriptionResolution{}, err
 	}
 	if !answered {
 		return agentSubscriptionResolution{}, nil
@@ -438,7 +448,7 @@ func connectAgentPersonalSubscription(
 		if err != nil {
 			return err
 		}
-		return completeAgentPersonalSubscription(ctx, provider, client, stderr, started.SessionToken, authorizationResponse, true)
+		return completeAgentPersonalSubscription(ctx, provider, client, stderr, started.SessionToken, authorizationResponse)
 	}
 
 	writeAgentOAuthInstructions(provider, stderr, started.AuthorizationURL, opened)
@@ -447,7 +457,7 @@ func connectAgentPersonalSubscription(
 	if err != nil {
 		return fmt.Errorf("read %s authorization code: %w", provider.name, err)
 	}
-	return completeAgentPersonalSubscription(ctx, provider, client, stderr, started.SessionToken, authorizationResponse, false)
+	return completeAgentPersonalSubscription(ctx, provider, client, stderr, started.SessionToken, authorizationResponse)
 }
 
 func connectAgentDeviceCodeSubscription(
@@ -459,6 +469,24 @@ func connectAgentDeviceCodeSubscription(
 	started agentSubscriptionOAuthStart,
 ) error {
 	opened := openAgentBrowser(started.AuthorizationURL)
+	complete := func() error {
+		return completeAgentPersonalSubscription(ctx, provider, client, stderr, started.SessionToken, "")
+	}
+	pending := func(err error) bool {
+		return err != nil && strings.HasPrefix(err.Error(), "OpenAI approval is still pending.")
+	}
+	if agentInputIsTerminal(stdin) {
+		err := runAgentDeviceCodeTUI(provider, stdin, stderr, started.AuthorizationURL, started.UserCode, opened, func() (bool, error) {
+			// The result is reported after the prompt is erased.
+			err := completeAgentPersonalSubscriptionQuietly(ctx, client, started.SessionToken, "")
+			return pending(err), err
+		})
+		if err != nil {
+			return err
+		}
+		agentStep(stderr, provider.name+" subscription connected")
+		return nil
+	}
 	writeAgentOAuthInstructions(provider, stderr, started.AuthorizationURL, opened)
 	fmt.Fprintf(stderr, "Enter this code at OpenAI: %s\n", started.UserCode)
 	for {
@@ -466,8 +494,8 @@ func connectAgentDeviceCodeSubscription(
 		if _, err := readAgentLine(stdin); err != nil {
 			return fmt.Errorf("read %s approval: %w", provider.name, err)
 		}
-		err := completeAgentPersonalSubscription(ctx, provider, client, stderr, started.SessionToken, "", false)
-		if err != nil && strings.HasPrefix(err.Error(), "OpenAI approval is still pending.") {
+		err := complete()
+		if pending(err) {
 			fmt.Fprintln(stderr, err)
 			continue
 		}
@@ -482,11 +510,18 @@ func completeAgentPersonalSubscription(
 	stderr io.Writer,
 	sessionToken string,
 	authorizationResponse string,
-	styled bool,
 ) error {
 	if strings.TrimSpace(authorizationResponse) == "" && provider.id != codexSubscription.id {
 		return fmt.Errorf("%s authorization was not completed", provider.name)
 	}
+	if err := completeAgentPersonalSubscriptionQuietly(ctx, client, sessionToken, authorizationResponse); err != nil {
+		return err
+	}
+	agentStep(stderr, provider.name+" subscription connected")
+	return nil
+}
+
+func completeAgentPersonalSubscriptionQuietly(ctx context.Context, client *api.Client, sessionToken, authorizationResponse string) error {
 	if err := client.Do(
 		ctx,
 		http.MethodPost,
@@ -498,11 +533,6 @@ func completeAgentPersonalSubscription(
 		nil,
 	); err != nil {
 		return api.HumanError(err)
-	}
-	if styled {
-		fmt.Fprintln(stderr, ansiGreen+"✓ "+provider.name+" personal subscription connected."+ansiReset)
-	} else {
-		fmt.Fprintf(stderr, "Connected your %s personal subscription.\n", provider.name)
 	}
 	return nil
 }
@@ -652,25 +682,31 @@ func includeCurrentAgentModels(models []agentModel, current agentRouter) []agent
 	return models
 }
 
+// selectAgentModels asks which models the router uses; note explains them
+// under the title. With offerAutorouting, pressing a returns
+// errAgentWantsAutorouting.
 func selectAgentModels(
 	stdin io.Reader,
 	stderr io.Writer,
 	title string,
+	note []string,
+	offerAutorouting bool,
 	models []agentModel,
 	defaults []string,
 	currentLevels map[string][]string,
 	recommendedLevels map[string][]string,
 ) ([]agentModelChoice, error) {
 	if agentInputIsTerminal(stdin) {
-		return runAgentPicker(stdin, stderr, title, models, defaults, currentLevels, recommendedLevels)
+		return runAgentPicker(stdin, stderr, title, note, offerAutorouting, models, defaults, currentLevels, recommendedLevels)
 	}
-	return selectAgentModelsByNumber(stdin, stderr, title, models, defaults, currentLevels, recommendedLevels)
+	return selectAgentModelsByNumber(stdin, stderr, title, note, models, defaults, currentLevels, recommendedLevels)
 }
 
 func selectAgentModelsByNumber(
 	stdin io.Reader,
 	stderr io.Writer,
 	title string,
+	note []string,
 	models []agentModel,
 	defaults []string,
 	currentLevels map[string][]string,
@@ -681,7 +717,11 @@ func selectAgentModelsByNumber(
 		byID[model.ID] = model
 	}
 
-	fmt.Fprintf(stderr, "\n%s\n\n", title)
+	fmt.Fprintf(stderr, "\n%s\n", title)
+	for _, line := range note {
+		fmt.Fprintln(stderr, line)
+	}
+	fmt.Fprintln(stderr)
 	for i, model := range models {
 		mark := " "
 		if slices.Contains(defaults, model.ID) {
@@ -796,6 +836,7 @@ func (row *agentPickerRow) usesRecommended() bool {
 type agentPickerState struct {
 	rows        []agentPickerRow
 	cursor      int
+	offset      int
 	editing     bool
 	levelCursor int
 }
@@ -883,7 +924,7 @@ func (p *agentPickerState) handleKey(key string) (done, canceled bool) {
 			return false, false
 		}
 		return true, false
-	case "quit":
+	case "quit", "esc":
 		return false, true
 	}
 	return false, false
@@ -925,246 +966,6 @@ func (p *agentPickerState) exitEditing() {
 		}
 	}
 	p.editing = false
-}
-
-const (
-	ansiReset = "\033[0m"
-	ansiBold  = "\033[1m"
-	ansiDim   = "\033[2m"
-	ansiCoral = "\033[38;5;209m"
-	ansiCyan  = "\033[38;5;117m"
-	ansiGreen = "\033[38;5;114m"
-	ansiGray  = "\033[38;5;245m"
-)
-
-const dariBanner = "DARI ROUTER"
-
-func agentInputIsTerminal(stdin io.Reader) bool {
-	file, ok := stdin.(*os.File)
-	return ok && term.IsTerminal(int(file.Fd()))
-}
-
-// agentBannerLines draws the boxed "DARI ROUTER" header with the task
-// title centered beneath it.
-func agentBannerLines(title string) []string {
-	inner := len(dariBanner)
-	if len(title) > inner {
-		inner = len(title)
-	}
-	center := func(text string) string {
-		pad := inner - len(text)
-		return strings.Repeat(" ", pad/2) + text + strings.Repeat(" ", pad-pad/2)
-	}
-	border := strings.Repeat("─", inner+2)
-	return []string{
-		ansiGray + "╭" + border + "╮" + ansiReset,
-		ansiGray + "│ " + ansiReset + ansiCoral + ansiBold + center(dariBanner) + ansiReset + ansiGray + " │" + ansiReset,
-		ansiGray + "│ " + ansiReset + center(title) + ansiGray + " │" + ansiReset,
-		ansiGray + "╰" + border + "╯" + ansiReset,
-		"",
-	}
-}
-
-func renderAgentPicker(stderr io.Writer, title string, p *agentPickerState, termWidth int) {
-	renderAgentScreen(stderr, agentPickerLines(title, p), termWidth)
-}
-
-func renderAgentScreen(stderr io.Writer, lines []string, termWidth int) {
-	banner := agentBannerLines("")
-	bannerPad := 0
-	if termWidth > 0 && len(lines) > 0 {
-		if w := ansiVisibleWidth(lines[0]); termWidth > w {
-			bannerPad = (termWidth - w) / 2
-		}
-	}
-	bannerLineCount := len(banner)
-	var frame strings.Builder
-	// Raw mode disables output post-processing, so newlines must be \r\n or
-	// each line renders one column further right than the last.
-	frame.WriteString("\033[H\033[K\r\n")
-	for i, line := range lines {
-		if i < bannerLineCount && bannerPad > 0 {
-			frame.WriteString(strings.Repeat(" ", bannerPad))
-		}
-		frame.WriteString(line)
-		frame.WriteString("\033[K\r\n")
-	}
-	frame.WriteString("\033[J")
-	_, _ = stderr.Write([]byte(frame.String()))
-}
-
-// ansiVisibleWidth counts printable cells, skipping ANSI escape sequences.
-func ansiVisibleWidth(s string) int {
-	width, inEscape := 0, false
-	for _, r := range s {
-		switch {
-		case inEscape:
-			if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
-				inEscape = false
-			}
-		case r == '\033':
-			inEscape = true
-		default:
-			width++
-		}
-	}
-	return width
-}
-
-func agentPickerLines(title string, p *agentPickerState) []string {
-	lines := agentBannerLines(title)
-	nameWidth := 0
-	for _, row := range p.rows {
-		if w := len(row.model.DisplayName); w > nameWidth {
-			nameWidth = w
-		}
-	}
-	for i, row := range p.rows {
-		cursor := "  "
-		if i == p.cursor {
-			cursor = ansiCoral + "> " + ansiReset
-		}
-		box := ansiGray + "[ ]" + ansiReset
-		if row.selected {
-			box = ansiCoral + "[x]" + ansiReset
-		}
-		name := fmt.Sprintf("%-*s", nameWidth, row.model.DisplayName)
-		switch {
-		case i == p.cursor && row.selected:
-			name = ansiBold + name + ansiReset
-		case i == p.cursor:
-			name = ansiDim + ansiBold + name + ansiReset
-		case !row.selected:
-			name = ansiDim + name + ansiReset
-		}
-		levels := strings.Join(row.checkedLevels(), "+")
-		if levels == "" {
-			levels = "default"
-		}
-		note := ""
-		if row.usesRecommended() {
-			note = "  " + ansiGreen + "· recommended" + ansiReset
-		}
-		lines = append(lines, cursor+box+" "+name+"  "+
-			ansiGray+"thinking:"+ansiReset+" "+ansiCyan+levels+ansiReset+note)
-		if p.editing && i == p.cursor {
-			levelWidth := 0
-			for _, level := range row.levelOpts {
-				if len(level) > levelWidth {
-					levelWidth = len(level)
-				}
-			}
-			for j, level := range row.levelOpts {
-				levelCursor := "      "
-				if j == p.levelCursor {
-					levelCursor = ansiCoral + "    > " + ansiReset
-				}
-				levelBox := ansiGray + "[ ]" + ansiReset
-				levelStyle := ansiDim
-				if row.checked[level] {
-					levelBox = ansiCoral + "[x]" + ansiReset
-					levelStyle = ansiCyan
-				}
-				rec := ""
-				if row.recommended[level] {
-					rec = "  " + ansiGreen + "· recommended" + ansiReset
-				}
-				lines = append(lines, levelCursor+levelBox+" "+
-					levelStyle+ansiBold+fmt.Sprintf("%-*s", levelWidth, level)+ansiReset+rec)
-			}
-		}
-	}
-	if p.editing {
-		lines = append(lines, "", ansiGray+"↑/↓ move   space toggle level   ←/enter done   q cancel"+ansiReset)
-	} else {
-		lines = append(lines,
-			"",
-			ansiGray+"↑/↓ move   space toggle   → edit thinking levels   enter confirm   q cancel"+ansiReset,
-			ansiGreen+"Defaults are recommended — press Enter to keep them."+ansiReset,
-		)
-	}
-	return lines
-}
-
-func parseAgentPickerKeys(raw []byte) []string {
-	keys := []string{}
-	for i := 0; i < len(raw); {
-		if raw[i] == 0x1b && i+2 < len(raw) && raw[i+1] == '[' {
-			switch raw[i+2] {
-			case 'A':
-				keys = append(keys, "up")
-			case 'B':
-				keys = append(keys, "down")
-			case 'C':
-				keys = append(keys, "right")
-			case 'D':
-				keys = append(keys, "left")
-			}
-			i += 3
-			continue
-		}
-		switch raw[i] {
-		case '\r', '\n':
-			keys = append(keys, "enter")
-		case 0x1b:
-			keys = append(keys, "esc")
-		case ' ':
-			keys = append(keys, " ")
-		case 'q', 'Q', 0x03:
-			keys = append(keys, "quit")
-		case 'k':
-			keys = append(keys, "k")
-		case 'j':
-			keys = append(keys, "j")
-		case 'h':
-			keys = append(keys, "h")
-		case 'l':
-			keys = append(keys, "l")
-		}
-		i++
-	}
-	return keys
-}
-
-func runAgentPicker(
-	stdin io.Reader,
-	stderr io.Writer,
-	title string,
-	models []agentModel,
-	defaults []string,
-	currentLevels map[string][]string,
-	recommendedLevels map[string][]string,
-) ([]agentModelChoice, error) {
-	p := newAgentPickerState(models, defaults, currentLevels, recommendedLevels)
-	if len(p.rows) == 0 {
-		return nil, errors.New("no managed-key models are available")
-	}
-	session, err := startAgentTUISession(stdin, stderr)
-	if err != nil {
-		return nil, err
-	}
-	defer session.Close()
-
-	buf := make([]byte, 16)
-	for {
-		renderAgentPicker(stderr, title, p, session.width)
-		n, readErr := session.file.Read(buf)
-		for _, key := range parseAgentPickerKeys(buf[:n]) {
-			done, canceled := p.handleKey(key)
-			if canceled {
-				return nil, errors.New("model selection canceled")
-			}
-			if done {
-				return p.choices(), nil
-			}
-		}
-		if readErr != nil {
-			if errors.Is(readErr, io.EOF) {
-				return nil, errors.New("model selection canceled")
-			}
-			return nil, fmt.Errorf("read selection: %w", readErr)
-		}
-	}
 }
 
 func choiceIDs(choices []agentModelChoice) []string {

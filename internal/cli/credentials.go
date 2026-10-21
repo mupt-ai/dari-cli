@@ -458,17 +458,22 @@ func listSubscriptionCredentials(cmd *cobra.Command, gf *globalFlags) ([]subscri
 	if err := orgKeyRequest(cmd, gf, http.MethodGet, "/v1/organizations/current/credentials", nil, &resp); err != nil {
 		return nil, err
 	}
-	subscriptions := slices.DeleteFunc(resp.Credentials, func(c subscriptionCredential) bool {
+	return personalSubscriptions(resp.Credentials), nil
+}
+
+// personalSubscriptions keeps the user's subscriptions, in connection order
+// per provider, which is the order routing switches through.
+func personalSubscriptions(credentials []subscriptionCredential) []subscriptionCredential {
+	subscriptions := slices.DeleteFunc(credentials, func(c subscriptionCredential) bool {
 		return c.CredentialScope != "user" || c.OAuthProvider == ""
 	})
-	// Connection order is the order routing switches through.
 	slices.SortStableFunc(subscriptions, func(a, b subscriptionCredential) int {
 		if c := strings.Compare(a.OAuthProvider, b.OAuthProvider); c != 0 {
 			return c
 		}
 		return strings.Compare(a.CreatedAt, b.CreatedAt)
 	})
-	return subscriptions, nil
+	return subscriptions
 }
 
 func subscriptionAlias(oauthProvider string) string {
