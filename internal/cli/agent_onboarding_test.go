@@ -1084,6 +1084,71 @@ func TestEnsureCodexAgentRouterUsesPresetInsteadOfSavedDefault(t *testing.T) {
 	}
 }
 
+func TestEnsurePiAgentRouterUsesDefaultPreset(t *testing.T) {
+	var putRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-suggestions":
+			_ = json.NewEncoder(w).Encode(map[string]any{"suggestions": []map[string]any{
+				{"id": "default", "models": map[string][]string{"openai/gpt-5.6-sol": {"medium"}}},
+				{"id": "codex", "models": map[string][]string{"zai-org/GLM-5.3": {"high"}}},
+			}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
+			_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}, "personal_subscriptions_allowed": true})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/auth/config":
+			_ = json.NewEncoder(w).Encode(map[string]any{"personal_subscriptions_allowed": false, "web_app_url": "https://app.dari.dev"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers":
+			_ = json.NewEncoder(w).Encode(map[string]any{"routers": []map[string]any{{
+				"id": "rtr_default", "name": "Default", "is_default": true,
+				"enabled_models":        []string{"zai-org/GLM-5.3"},
+				"model_thinking_levels": map[string][]string{"zai-org/GLM-5.3": {"high"}},
+			}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-catalog":
+			writeAgentModelCatalog(t, w)
+		case r.Method == http.MethodPut:
+			putRequests++
+			var body agentRouterUpdateRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(body.EnabledModels, []string{"openai/gpt-5.6-sol"}) {
+				t.Fatalf("models = %v, want default preset", body.EnabledModels)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "rtr_default"})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	useTestAPIKey(t)
+	if err := state.SaveAgentSubscriptionOptOut("test-org|agent:pi", true); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DARI_API_URL", server.URL)
+	var output strings.Builder
+	routerID, err := ensureAgentRouter(
+		context.Background(),
+		"pi",
+		agentRoutingAccess{apiURL: server.URL, scope: "test-org", key: "dari_route"},
+		strings.NewReader("\n"),
+		&output,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if routerID != "rtr_default" {
+		t.Fatalf("router ID = %q", routerID)
+	}
+	if putRequests != 1 {
+		t.Fatalf("PUT requests = %d, want Pi to apply the default preset", putRequests)
+	}
+	if !strings.Contains(output.String(), "Configure the default router for Pi") {
+		t.Fatalf("output does not identify Pi setup: %s", output.String())
+	}
+}
+
 func writeClaudeSubscriptionCredential(w http.ResponseWriter) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []map[string]any{{
 		"oauth_provider": "anthropic_claude_code",

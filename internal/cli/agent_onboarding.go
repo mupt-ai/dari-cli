@@ -176,7 +176,7 @@ func ensureAgentRouter(
 		if err := ensureDefaultAgentSubscription(ctx, agent, access, client, defaultRouter, stdin, stderr); err != nil {
 			return "", err
 		}
-		if agent == "opencode" || agent == "pi" || cachedRouterID != "" {
+		if agent == "opencode" || cachedRouterID != "" {
 			return defaultRouter.ID, nil
 		}
 	}
@@ -240,12 +240,18 @@ func ensureAgentRouter(
 		}
 	}
 
+	// Each launcher preselects the named preset the frontend also shows. Codex
+	// and Pi both configure the default router; Pi starts from its preset.
 	title := "Configure the default router for Codex"
-	if agent == "claude" {
+	suggestionID := agent
+	switch agent {
+	case "claude":
 		title = "Configure a router for Claude Code"
+	case "pi":
+		title = "Configure the default router for Pi"
+		suggestionID = "default"
 	}
-	// Both launchers use the same named presets exposed to the frontend.
-	suggestion, err := fetchAgentModelSuggestion(ctx, client, agent)
+	suggestion, err := fetchAgentModelSuggestion(ctx, client, suggestionID)
 	if err != nil {
 		return "", err
 	}
@@ -265,7 +271,7 @@ func ensureAgentRouter(
 	}
 
 	routerID := defaultRouter.ID
-	if agent == "codex" {
+	if agent != "claude" {
 		if agentRouterNeedsUpdate(defaultRouter, choices) {
 			body := agentRouterUpdateBody(defaultRouter, models, choices)
 			path := "/v1/organizations/current/routers/" + url.PathEscape(defaultRouter.ID)
@@ -273,7 +279,11 @@ func ensureAgentRouter(
 				return "", api.HumanError(err)
 			}
 		}
-		fmt.Fprintln(stderr, "Codex will use your existing default router.")
+		name := "Codex"
+		if agent == "pi" {
+			name = "Pi"
+		}
+		fmt.Fprintf(stderr, "%s will use your existing default router.\n", name)
 	} else {
 		body := agentRouterCreateBody(
 			models,
