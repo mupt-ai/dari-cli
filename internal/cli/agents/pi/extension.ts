@@ -2,15 +2,17 @@
 // Pi's footer: the model that served the turn, its thinking level, how many
 // turns remain on the current lease, and whether the last finished response
 // read the provider's prompt cache. The launcher supplies the status renderer
-// and cache TTL through the environment, along with the models to offer.
+// and cache TTL through the environment, along with the models to offer and
+// the router's base URL.
 export default function (pi: any) {
   const executable = process.env.DARI_STATUS_EXECUTABLE
   const cacheTTL = Number(process.env.DARI_CACHE_TTL_MS ?? 300000)
   // The launcher lists the models this organization can use, default first.
   const models: string[] = JSON.parse(process.env.DARI_MODELS ?? '["dari/routing"]')
+  const routingBaseURL = process.env.DARI_ROUTING_BASE_URL ?? "https://routing.dari.dev"
   pi.registerProvider("dari", {
     name: "Dari",
-    baseUrl: "https://routing.dari.dev/v1",
+    baseUrl: `${routingBaseURL}/v1`,
     apiKey: "$DARI_ROUTING_API_KEY",
     api: "openai-completions",
     compat: { sendSessionAffinityHeaders: true },

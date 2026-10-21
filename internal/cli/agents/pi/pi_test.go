@@ -12,11 +12,14 @@ import (
 
 func TestBuildPiAgentCommandUsesTemporaryProviderExtension(t *testing.T) {
 	command := agents.Command{Path: "/pi", Args: []string{"-p", "review"}, Env: []string{agents.RoutingAPIKeyEnv + "=dari_route"}}
-	if err := Configure(&command, agents.Models{Routing: true}); err != nil {
+	if err := Configure(&command, "https://routing.test/rtr_1", agents.Models{Routing: true}); err != nil {
 		t.Fatal(err)
 	}
 	if command.Cleanup == nil {
 		t.Fatal("Pi command has no cleanup")
+	}
+	if got := agents.EnvironmentValue(command.Env, "DARI_ROUTING_BASE_URL"); got != "https://routing.test/rtr_1" {
+		t.Fatalf("DARI_ROUTING_BASE_URL = %q", got)
 	}
 
 	extensionIndex := slices.Index(command.Args, "--extension")
@@ -41,6 +44,7 @@ func TestBuildPiAgentCommandUsesTemporaryProviderExtension(t *testing.T) {
 		`"--cached-tokens", String(message.usage.cacheRead ?? 0)`,
 		`if (cache === currentCache) render(ctx, ++revision).catch(() => {})`,
 		`process.env.DARI_STATUS_EXECUTABLE`, `}, cacheTTL);`,
+		"baseUrl: `${routingBaseURL}/v1`", `process.env.DARI_ROUTING_BASE_URL ?? "https://routing.dari.dev"`,
 		`setTimeout(() => {`,
 		`revision === expectedRevision`,
 	} {
@@ -183,7 +187,7 @@ process.exit(0);
 
 func TestPiScopesModelPickerToTheRouter(t *testing.T) {
 	command := agents.Command{Path: "/pi"}
-	if err := Configure(&command, agents.Models{Enabled: []string{"openai/gpt-6-luna", "anthropic/claude-sonnet-5-5"}}); err != nil {
+	if err := Configure(&command, "https://routing.dari.dev", agents.Models{Enabled: []string{"openai/gpt-6-luna", "anthropic/claude-sonnet-5-5"}}); err != nil {
 		t.Fatal(err)
 	}
 	defer command.Cleanup()
@@ -194,7 +198,7 @@ func TestPiScopesModelPickerToTheRouter(t *testing.T) {
 
 	// A scope the user chose stays theirs.
 	command = agents.Command{Path: "/pi", Args: []string{"--models", "mine/*"}}
-	if err := Configure(&command, agents.Models{Routing: true}); err != nil {
+	if err := Configure(&command, "https://routing.dari.dev", agents.Models{Routing: true}); err != nil {
 		t.Fatal(err)
 	}
 	defer command.Cleanup()

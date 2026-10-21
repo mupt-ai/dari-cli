@@ -10,7 +10,12 @@ import (
 
 func multipleSubscriptionsServer(t *testing.T, seen map[string]map[string]any) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return httptest.NewServer(multipleSubscriptionsHandler(t, seen))
+}
+
+func multipleSubscriptionsHandler(t *testing.T, seen map[string]map[string]any) http.HandlerFunc {
+	t.Helper()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
@@ -52,7 +57,7 @@ func multipleSubscriptionsServer(t *testing.T, seen map[string]map[string]any) *
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 }
 
 func TestSubscriptionListShowsConnectionOrderWithActiveAndHeld(t *testing.T) {

@@ -153,7 +153,7 @@ dari opencode
 dari pi
 ```
 
-The first Claude or Codex launch opens an arrow-key model checklist (up/down to move, space to toggle, right arrow to check any combination of thinking levels). Codex uses the shared Codex preset for the default router; Claude gets a separate router using the shared Claude model and eval preset. Dari applies recommended reasoning levels and managed providers to selected models, then privately caches the agent router and Routing key. Set `DARI_ROUTING_API_KEY` to supply the key explicitly. Every following argument is forwarded to the selected agent, and Dari's provider/model settings take precedence:
+The first Claude or Codex launch opens an arrow-key model checklist (up/down to move, space to toggle, right arrow to check any combination of thinking levels). Codex uses the shared Codex preset for the default router; Claude gets a separate router using the shared Claude model and eval preset. Dari applies recommended reasoning levels and managed providers to selected models, then privately caches the agent router and Routing key. Set `DARI_ROUTING_API_KEY` to supply the key explicitly. Set `DARI_GATEWAY_URL` and `DARI_GATEWAY_KEY` to launch through a self-hosted gateway instead; the launch then makes no hosted API calls. Every following argument is forwarded to the selected agent, and Dari's provider/model settings take precedence:
 
 ```bash
 dari claude --print "Review this diff"

@@ -95,28 +95,17 @@ func runAgentLaunch(ctx context.Context, launch agentLaunch, stdin io.Reader, st
 	}
 
 	key := "unused"
-	routerID := "default"
+	baseURL := routingBaseURL
 	var models agents.Models
 	if !agents.OnlyRequestsInfo(launch.args) {
-		var access agentRoutingAccess
-		access, err = resolveAgentRoutingAccess(ctx, stdin, stderr)
-		if err == nil && launch.connect {
-			err = connectAgentSubscriptionsOnRequest(ctx, launch.name, access, stdin, stderr)
-		}
-		if err == nil {
-			key = access.key
-			routerID, err = ensureAgentRouter(ctx, launch.name, access, stdin, stderr)
-		}
-		if err == nil {
-			models, err = agentModels(ctx, launch.name, access, routerID, stderr)
-		}
+		key, baseURL, models, err = resolveAgentRouting(ctx, launch, stdin, stderr)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
 	}
 
-	command, err := buildAgentCommand(path, launch, key, routerID, models)
+	command, err := buildAgentCommand(path, launch, key, baseURL, models)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -128,11 +117,11 @@ func runAgentLaunch(ctx context.Context, launch agentLaunch, stdin io.Reader, st
 		}
 	}()
 	if launch.name == "codex" && !agents.OnlyRequestsInfo(launch.args) {
-		if err := codex.PrepareCatalog(ctx, &command, key, agentRoutingBaseURL(routerID), models); err != nil {
+		if err := codex.PrepareCatalog(ctx, &command, key, baseURL, models); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		if err := codex.PrepareStatus(ctx, &command, launch.args, key, agentRoutingBaseURL(routerID)); err != nil {
+		if err := codex.PrepareStatus(ctx, &command, launch.args, key, baseURL); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -151,6 +140,40 @@ func runAgentLaunch(ctx context.Context, launch agentLaunch, stdin io.Reader, st
 		return 1
 	}
 	return 0
+}
+
+// resolveAgentRouting returns the key and base URL a launch routes through. In
+// gateway mode it makes no hosted calls and uses the gateway's default model.
+// Otherwise it signs in, sets up the agent's router, and uses that router.
+func resolveAgentRouting(ctx context.Context, launch agentLaunch, stdin io.Reader, stderr io.Writer) (string, string, agents.Models, error) {
+	gateway, err := gatewayFromEnv()
+	if err != nil {
+		return "", "", agents.Models{}, err
+	}
+	if gateway != nil {
+		if launch.connect {
+			return "", "", agents.Models{}, fmt.Errorf("--connect manages hosted accounts and is not available with %s; use `dari credentials subscription connect`", gatewayURLEnv)
+		}
+		return gateway.key, gateway.url, agents.Models{}, nil
+	}
+	access, err := resolveAgentRoutingAccess(ctx, stdin, stderr)
+	if err != nil {
+		return "", "", agents.Models{}, err
+	}
+	if launch.connect {
+		if err := connectAgentSubscriptionsOnRequest(ctx, launch.name, access, stdin, stderr); err != nil {
+			return "", "", agents.Models{}, err
+		}
+	}
+	routerID, err := ensureAgentRouter(ctx, launch.name, access, stdin, stderr)
+	if err != nil {
+		return "", "", agents.Models{}, err
+	}
+	models, err := agentModels(ctx, launch.name, access, routerID, stderr)
+	if err != nil {
+		return "", "", agents.Models{}, err
+	}
+	return access.key, agentRoutingBaseURL(routerID), models, nil
 }
 
 func agentExecutable(name string) (string, error) {
@@ -283,9 +306,8 @@ func issueAgentRoutingKey(ctx context.Context, apiURL string) (string, error) {
 	return issued.APIKey, err
 }
 
-func buildAgentCommand(path string, launch agentLaunch, key, routerID string, models agents.Models) (agents.Command, error) {
+func buildAgentCommand(path string, launch agentLaunch, key, baseURL string, models agents.Models) (agents.Command, error) {
 	command := agents.Command{Path: path, Args: launch.args, Env: agents.WithEnvironment(os.Environ(), map[string]string{agents.RoutingAPIKeyEnv: key})}
-	baseURL := agentRoutingBaseURL(routerID)
 	switch launch.name {
 	case "claude":
 		if err := claude.Configure(&command, key, baseURL, models); err != nil {
@@ -298,7 +320,7 @@ func buildAgentCommand(path string, launch agentLaunch, key, routerID string, mo
 			return agents.Command{}, err
 		}
 	case "pi":
-		if err := pi.Configure(&command, models); err != nil {
+		if err := pi.Configure(&command, baseURL, models); err != nil {
 			return agents.Command{}, err
 		}
 	default:

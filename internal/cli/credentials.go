@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mupt-ai/dari-cli/internal/auth"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -338,11 +337,7 @@ func newSubscriptionConnectCmd(gf *globalFlags) *cobra.Command {
 			if !ok {
 				return fmt.Errorf("unknown subscription %q: expected claude-code or codex", args[0])
 			}
-			apiURL, err := gf.resolveAPIURL()
-			if err != nil {
-				return err
-			}
-			client, err := auth.OrgKeyClient(apiURL)
+			client, err := subscriptionClient(gf)
 			if err != nil {
 				return err
 			}
@@ -365,7 +360,7 @@ func newSubscriptionCredentialCmd(gf *globalFlags, use, short, method string, pa
 				return err
 			}
 			var resp map[string]any
-			if err := orgKeyRequest(cmd, gf, method,
+			if err := subscriptionRequest(cmd, gf, method,
 				"/v1/organizations/current/credentials/"+path(name), nil, &resp); err != nil {
 				return err
 			}
@@ -388,12 +383,20 @@ func newSubscriptionAutoResetCmd(gf *globalFlags) *cobra.Command {
 			default:
 				return fmt.Errorf("expected on or off, got %q", args[1])
 			}
+			// Banked resets are a hosted-billing feature the gateway does not serve.
+			gateway, err := gatewayFromEnv()
+			if err != nil {
+				return err
+			}
+			if gateway != nil {
+				return fmt.Errorf("auto-reset is only available on the hosted Dari API; it is not supported with %s", gatewayURLEnv)
+			}
 			name, err := resolveSubscriptionName(cmd, gf, args[0])
 			if err != nil {
 				return err
 			}
 			var resp map[string]any
-			if err := orgKeyRequest(cmd, gf, http.MethodPut,
+			if err := subscriptionRequest(cmd, gf, http.MethodPut,
 				"/v1/organizations/current/credentials/"+url.PathEscape(name)+"/auto-reset",
 				map[string]bool{"enabled": enabled}, &resp); err != nil {
 				return err
@@ -414,7 +417,7 @@ func newSubscriptionRenameCmd(gf *globalFlags) *cobra.Command {
 				return err
 			}
 			var resp map[string]any
-			if err := orgKeyRequest(cmd, gf, http.MethodPut,
+			if err := subscriptionRequest(cmd, gf, http.MethodPut,
 				"/v1/organizations/current/credentials/"+url.PathEscape(name)+"/label",
 				map[string]string{"label": strings.TrimSpace(args[1])}, &resp); err != nil {
 				return err
@@ -455,7 +458,7 @@ func listSubscriptionCredentials(cmd *cobra.Command, gf *globalFlags) ([]subscri
 	var resp struct {
 		Credentials []subscriptionCredential `json:"credentials"`
 	}
-	if err := orgKeyRequest(cmd, gf, http.MethodGet, "/v1/organizations/current/credentials", nil, &resp); err != nil {
+	if err := subscriptionRequest(cmd, gf, http.MethodGet, "/v1/organizations/current/credentials", nil, &resp); err != nil {
 		return nil, err
 	}
 	return personalSubscriptions(resp.Credentials), nil

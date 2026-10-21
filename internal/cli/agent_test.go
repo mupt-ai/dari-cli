@@ -165,7 +165,7 @@ func TestBuildAgentCommandKeepsDariSettingsLast(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			command, err := buildAgentCommand("/agent", tt.launch, "dari_route", "default", agents.Models{Routing: true})
+			command, err := buildAgentCommand("/agent", tt.launch, "dari_route", routingBaseURL, agents.Models{Routing: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -192,7 +192,7 @@ func TestBuildAgentCommandInsertsSettingsBeforeDoubleDash(t *testing.T) {
 		"/claude",
 		agentLaunch{name: "claude", args: []string{"--print", "--", "--help"}},
 		"dari_route",
-		"default",
+		routingBaseURL,
 		agents.Models{Routing: true},
 	)
 	if err != nil {
@@ -291,38 +291,38 @@ func TestRootHelpListsAgentLaunchers(t *testing.T) {
 }
 
 func TestClaudeCommandUsesSelectedRouter(t *testing.T) {
-	for _, routerID := range []string{"", "default", "rtr_custom"} {
-		t.Run(routerID, func(t *testing.T) {
-			command, err := buildAgentCommand("/claude", agentLaunch{name: "claude"}, "test-key", routerID, agents.Models{Routing: true})
+	for _, tc := range []struct{ routerID, want string }{
+		{"", routingBaseURL},
+		{"default", routingBaseURL},
+		{"rtr_custom", routingBaseURL + "/rtr_custom"},
+	} {
+		t.Run(tc.routerID, func(t *testing.T) {
+			command, err := buildAgentCommand("/claude", agentLaunch{name: "claude"}, "test-key", agentRoutingBaseURL(tc.routerID), agents.Models{Routing: true})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if command.Cleanup != nil {
 				defer command.Cleanup()
 			}
-			want := routingBaseURL
-			if routerID == "rtr_custom" {
-				want += "/rtr_custom"
-			}
-			if got := agents.EnvironmentValue(command.Env, "ANTHROPIC_BASE_URL"); got != want {
-				t.Fatalf("base URL = %q, want %q", got, want)
+			if got := agents.EnvironmentValue(command.Env, "ANTHROPIC_BASE_URL"); got != tc.want {
+				t.Fatalf("base URL = %q, want %q", got, tc.want)
 			}
 		})
 	}
 }
 
 func TestCodexCommandUsesSelectedRouter(t *testing.T) {
-	for _, routerID := range []string{"", "default", "rtr_custom"} {
-		t.Run(routerID, func(t *testing.T) {
-			command, err := buildAgentCommand("/codex", agentLaunch{name: "codex"}, "test-key", routerID, agents.Models{Routing: true})
+	for _, tc := range []struct{ routerID, want string }{
+		{"", routingBaseURL},
+		{"default", routingBaseURL},
+		{"rtr_custom", routingBaseURL + "/rtr_custom"},
+	} {
+		t.Run(tc.routerID, func(t *testing.T) {
+			command, err := buildAgentCommand("/codex", agentLaunch{name: "codex"}, "test-key", agentRoutingBaseURL(tc.routerID), agents.Models{Routing: true})
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := routingBaseURL
-			if routerID == "rtr_custom" {
-				want += "/rtr_custom"
-			}
-			want = `model_providers.dari.base_url="` + want + `/v1"`
+			want := `model_providers.dari.base_url="` + tc.want + `/v1"`
 			found := false
 			for _, arg := range command.Args {
 				if arg == want {
@@ -333,5 +333,19 @@ func TestCodexCommandUsesSelectedRouter(t *testing.T) {
 				t.Fatalf("missing %q in %v", want, command.Args)
 			}
 		})
+	}
+}
+
+func TestPiCommandUsesSelectedRouter(t *testing.T) {
+	// Pi starts on the organization default router, so its requests must go to that router, not the shared endpoint.
+	command, err := buildAgentCommand("/pi", agentLaunch{name: "pi"}, "test-key", agentRoutingBaseURL("rtr_default"), agents.Models{Routing: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command.Cleanup != nil {
+		defer command.Cleanup()
+	}
+	if got := agents.EnvironmentValue(command.Env, "DARI_ROUTING_BASE_URL"); got != routingBaseURL+"/rtr_default" {
+		t.Fatalf("DARI_ROUTING_BASE_URL = %q", got)
 	}
 }

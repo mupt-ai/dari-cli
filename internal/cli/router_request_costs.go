@@ -36,6 +36,13 @@ func newRouterRequestCostsCmd() *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			gateway, err := gatewayFromEnv()
+			if err != nil {
+				return err
+			}
+			if gateway != nil {
+				return fmt.Errorf("request costs are only available on the hosted Dari API; they are not supported with %s", gatewayURLEnv)
+			}
 			key := strings.TrimSpace(os.Getenv(agents.RoutingAPIKeyEnv))
 			if key == "" {
 				return fmt.Errorf("DARI_ROUTING_API_KEY is required; use the key that made these requests")

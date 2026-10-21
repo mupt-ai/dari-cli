@@ -72,6 +72,18 @@ dari pi --tools read,grep,find,ls -p "Review this repository"
 
 The launcher subcommand must be the first argument. Dari-owned provider and model settings take precedence if conflicting agent flags are passed, so the process remains routed through Dari. The native agent executable must already be installed and available on `PATH`, or set `DARI_<AGENT>_PATH` (for example `DARI_OPENCODE_PATH`) to its location.
 
+## Self-Hosted Gateway
+
+Set `DARI_GATEWAY_URL` and `DARI_GATEWAY_KEY` to run the coding agents and subscription commands against a self-hosted Dari Gateway instead of the hosted API:
+
+```bash
+export DARI_GATEWAY_URL="http://localhost:8080"
+export DARI_GATEWAY_KEY="your-gateway-key"
+dari claude
+```
+
+In gateway mode, `dari claude`, `dari codex`, `dari opencode`, and `dari pi` make no hosted API calls. They skip sign-in, router setup, and plan checks, then launch the agent against the gateway with `DARI_GATEWAY_KEY` as its routing key. The URL may end in `/v1`. Agents start on the gateway's `dari/routing` model. `--connect` manages hosted accounts, so it is rejected in gateway mode. `dari credentials subscription list`, `connect`, `rename`, `mark-available`, and `disconnect` also use the gateway, which stores connected subscriptions in its own database. `dari credentials subscription auto-reset` and `dari router request-costs` are hosted-only and fail in gateway mode. Other commands, such as `dari router`, still use the hosted API.
+
 ## Common Workflows
 
 Create a router from flags:
