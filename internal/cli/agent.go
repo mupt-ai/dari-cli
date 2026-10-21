@@ -192,8 +192,26 @@ func agentExecutable(name string) (string, error) {
 	return path, nil
 }
 
+// launchedRoutingKeyEnv marks a DARI_ROUTING_API_KEY that a Dari launch set
+// for its agent. A launch from inside that agent resolves the current org's
+// key instead, since the inherited key belongs to the org the parent started in.
+const launchedRoutingKeyEnv = "DARI_ROUTING_API_KEY_FROM_LAUNCH"
+
+// explicitRoutingKey returns the DARI_ROUTING_API_KEY the user set, ignoring
+// one inherited from a parent launch.
+func explicitRoutingKey(stderr io.Writer) string {
+	if os.Getenv(launchedRoutingKeyEnv) != "" {
+		return ""
+	}
+	key := strings.TrimSpace(os.Getenv(agents.RoutingAPIKeyEnv))
+	if key != "" {
+		agentStep(stderr, "Using "+agents.RoutingAPIKeyEnv+" from the environment; unset it to use your current org's key")
+	}
+	return key
+}
+
 func resolveAgentRoutingKey(ctx context.Context, stdin io.Reader, stderr io.Writer) (string, error) {
-	if key := strings.TrimSpace(os.Getenv(agents.RoutingAPIKeyEnv)); key != "" {
+	if key := explicitRoutingKey(stderr); key != "" {
 		return key, nil
 	}
 
@@ -214,7 +232,7 @@ func resolveAgentRoutingKeyForScope(
 	scope string,
 	stderr io.Writer,
 ) (string, error) {
-	if key := strings.TrimSpace(os.Getenv(agents.RoutingAPIKeyEnv)); key != "" {
+	if key := explicitRoutingKey(stderr); key != "" {
 		return key, nil
 	}
 	key, created, err := state.EnsureRoutingKey(scope, func() (string, error) {
@@ -307,7 +325,7 @@ func issueAgentRoutingKey(ctx context.Context, apiURL string) (string, error) {
 }
 
 func buildAgentCommand(path string, launch agentLaunch, key, baseURL string, models agents.Models) (agents.Command, error) {
-	command := agents.Command{Path: path, Args: launch.args, Env: agents.WithEnvironment(os.Environ(), map[string]string{agents.RoutingAPIKeyEnv: key})}
+	command := agents.Command{Path: path, Args: launch.args, Env: agents.WithEnvironment(os.Environ(), map[string]string{agents.RoutingAPIKeyEnv: key, launchedRoutingKeyEnv: "1"})}
 	switch launch.name {
 	case "claude":
 		if err := claude.Configure(&command, key, baseURL, models); err != nil {

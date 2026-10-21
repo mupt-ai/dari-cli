@@ -178,6 +178,9 @@ func TestBuildAgentCommandKeepsDariSettingsLast(t *testing.T) {
 			if got := agents.EnvironmentValue(command.Env, agents.RoutingAPIKeyEnv); got != "dari_route" {
 				t.Errorf("%s = %q", agents.RoutingAPIKeyEnv, got)
 			}
+			if got := agents.EnvironmentValue(command.Env, launchedRoutingKeyEnv); got != "1" {
+				t.Errorf("%s = %q", launchedRoutingKeyEnv, got)
+			}
 			for name, want := range tt.wantEnv {
 				if got := agents.EnvironmentValue(command.Env, name); got != want {
 					t.Errorf("%s = %q, want %q", name, got, want)
@@ -266,11 +269,33 @@ func TestResolveAgentRoutingKeyCreatesAndReusesKey(t *testing.T) {
 
 func TestResolveAgentRoutingKeyPrefersEnvironment(t *testing.T) {
 	t.Setenv(agents.RoutingAPIKeyEnv, " dari_explicit ")
+	t.Setenv(launchedRoutingKeyEnv, "")
 	key, err := resolveAgentRoutingKey(context.Background(), strings.NewReader(""), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if key != "dari_explicit" {
+		t.Fatalf("key = %q", key)
+	}
+}
+
+func TestResolveAgentRoutingKeyIgnoresLaunchedKey(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"api_key": "dari_current_org"})
+	}))
+	defer server.Close()
+
+	t.Setenv("DARI_CONFIG_DIR", t.TempDir())
+	t.Setenv("DARI_API_URL", server.URL)
+	t.Setenv("DARI_API_KEY", "dari_management")
+	t.Setenv(agents.RoutingAPIKeyEnv, "dari_parent_org")
+	t.Setenv(launchedRoutingKeyEnv, "1")
+
+	key, err := resolveAgentRoutingKey(context.Background(), strings.NewReader(""), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key != "dari_current_org" {
 		t.Fatalf("key = %q", key)
 	}
 }
