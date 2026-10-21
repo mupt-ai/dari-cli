@@ -153,7 +153,7 @@ func TestBuildAgentCommandKeepsDariSettingsLast(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			command, err := buildAgentCommand("/agent", tt.launch, "dari_route", "default")
+			command, err := buildAgentCommand("/agent", tt.launch, "dari_route", "default", agents.Models{Routing: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -181,6 +181,7 @@ func TestBuildAgentCommandInsertsSettingsBeforeDoubleDash(t *testing.T) {
 		agentLaunch{name: "claude", args: []string{"--print", "--", "--help"}},
 		"dari_route",
 		"default",
+		agents.Models{Routing: true},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -280,7 +281,7 @@ func TestRootHelpListsAgentLaunchers(t *testing.T) {
 func TestClaudeCommandUsesSelectedRouter(t *testing.T) {
 	for _, routerID := range []string{"", "default", "rtr_custom"} {
 		t.Run(routerID, func(t *testing.T) {
-			command, err := buildAgentCommand("/claude", agentLaunch{name: "claude"}, "test-key", routerID)
+			command, err := buildAgentCommand("/claude", agentLaunch{name: "claude"}, "test-key", routerID, agents.Models{Routing: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -301,7 +302,7 @@ func TestClaudeCommandUsesSelectedRouter(t *testing.T) {
 func TestCodexCommandUsesSelectedRouter(t *testing.T) {
 	for _, routerID := range []string{"", "default", "rtr_custom"} {
 		t.Run(routerID, func(t *testing.T) {
-			command, err := buildAgentCommand("/codex", agentLaunch{name: "codex"}, "test-key", routerID)
+			command, err := buildAgentCommand("/codex", agentLaunch{name: "codex"}, "test-key", routerID, agents.Models{Routing: true})
 			if err != nil {
 				t.Fatal(err)
 			}

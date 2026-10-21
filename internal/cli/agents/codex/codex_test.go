@@ -21,7 +21,7 @@ func TestPrepareCodexCatalog(t *testing.T) {
 	}))
 	defer server.Close()
 	command := agents.Command{Args: []string{"-c", `approvals_reviewer="auto_review"`, "--", "prompt"}}
-	if err := PrepareCatalog(context.Background(), &command, "test-key", server.URL); err != nil {
+	if err := PrepareCatalog(context.Background(), &command, "test-key", server.URL, agents.Models{Routing: true}); err != nil {
 		t.Fatal(err)
 	}
 	defer command.Cleanup()
@@ -67,6 +67,35 @@ func TestPrepareCodexCatalog(t *testing.T) {
 	}
 }
 
+func TestPrepareCodexCatalogOffersOnlyTheLaunchModels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"models":[{"slug":"dari/routing","web_search_tool_type":"text"},{"slug":"dari/model/a/b","web_search_tool_type":"text"},{"slug":"dari/model/x/y","web_search_tool_type":"text"}]}`))
+	}))
+	defer server.Close()
+	command := agents.Command{}
+	if err := PrepareCatalog(context.Background(), &command, "test-key", server.URL, agents.Models{Enabled: []string{"a/b"}}); err != nil {
+		t.Fatal(err)
+	}
+	defer command.Cleanup()
+	path, err := strconv.Unquote(strings.TrimPrefix(command.Args[1], "model_catalog_json="))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(data, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Models) != 1 || catalog.Models[0]["slug"] != "dari/model/a/b" || catalog.Models[0]["auto_review_model_override"] != "dari/model/a/b" {
+		t.Fatalf("catalog: %v", catalog.Models)
+	}
+}
+
 func TestPrepareCodexCatalogFailsClosed(t *testing.T) {
 	for _, tc := range []struct {
 		name, body string
@@ -86,7 +115,7 @@ func TestPrepareCodexCatalogFailsClosed(t *testing.T) {
 			}))
 			defer server.Close()
 			command := agents.Command{}
-			err := PrepareCatalog(context.Background(), &command, "test-key", server.URL)
+			err := PrepareCatalog(context.Background(), &command, "test-key", server.URL, agents.Models{Routing: true})
 			if err == nil {
 				t.Fatal("expected error")
 			}

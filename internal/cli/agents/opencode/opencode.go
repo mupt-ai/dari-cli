@@ -38,14 +38,15 @@ var openCodeInProcessServers = map[string]bool{"acp": true, "serve": true}
 // the configured model instead, which outranks remembered selections.
 var openCodeModelCommands = map[string]bool{"mini": true, "run": true}
 
-// openCodeAgents are OpenCode's built-in primary agents, subagents, and
-// small-model tasks. Pinning each keeps an agent model set in the user's own
-// configuration from bypassing the router.
-var openCodeAgents = []string{"build", "plan", "general", "explore", "scout", "title", "summary", "compaction"}
+// openCodeAgents are OpenCode's built-in subagents and small-model tasks.
+// Pinning each keeps an agent model set in the user's own configuration from
+// bypassing the router. Primary agents stay unpinned so /models can switch
+// them; the configured model keeps them on Dari.
+var openCodeAgents = []string{"general", "explore", "scout", "title", "summary", "compaction"}
 
 // Configure points OpenCode at the router at baseURL through session-local
 // configuration and adds the status plugin.
-func Configure(command *agents.Command, baseURL string) error {
+func Configure(command *agents.Command, baseURL string, models agents.Models) error {
 	info := agents.OnlyRequestsInfo(command.Args)
 	subcommand := openCodeSubcommand(command.Args)
 	if !info && agents.ArgsContainFlag(command.Args, "--server") {
@@ -68,7 +69,7 @@ func Configure(command *agents.Command, baseURL string) error {
 		return err
 	}
 	command.Cleanup = func() { _ = os.RemoveAll(directory) }
-	config, err := openCodeConfig(baseURL, filepath.Join(directory, "plugin"))
+	config, err := openCodeConfig(baseURL, filepath.Join(directory, "plugin"), models)
 	if err != nil {
 		command.Cleanup()
 		return err
@@ -82,7 +83,10 @@ func Configure(command *agents.Command, baseURL string) error {
 		command.Args = agents.InsertBeforeDoubleDash(command.Args, []string{"--standalone"})
 	}
 	if openCodeModelCommands[subcommand] {
-		command.Args = replaceFlag(command.Args, "--model", []string{"--model", agents.RoutingModel})
+		// Keep a Dari model the user chose; anything else would bypass the router.
+		if !offered(models, flagValue(command.Args, "--model")) {
+			command.Args = replaceFlag(command.Args, "--model", []string{"--model", models.Default()})
+		}
 	}
 	return nil
 }
@@ -132,16 +136,61 @@ func replaceFlag(args []string, flag string, value []string) []string {
 	return agents.InsertBeforeDoubleDash(result, value)
 }
 
-func openCodeConfig(baseURL, pluginDirectory string) (string, error) {
+func flagValue(args []string, flag string) string {
+	for i, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if (arg == flag || flag == "--model" && arg == "-m") && i+1 < len(args) {
+			return args[i+1]
+		}
+		if value, ok := strings.CutPrefix(arg, flag+"="); ok {
+			return value
+		}
+	}
+	return ""
+}
+
+func offered(models agents.Models, model string) bool {
+	for _, candidate := range models.Menu() {
+		if candidate == model {
+			return true
+		}
+	}
+	return false
+}
+
+func openCodeConfig(baseURL, pluginDirectory string, models agents.Models) (string, error) {
+	defaultModel := models.Default()
 	pinned := make(map[string]any, len(openCodeAgents))
 	for _, name := range openCodeAgents {
-		pinned[name] = map[string]string{"model": agents.RoutingModel}
+		pinned[name] = map[string]string{"model": defaultModel}
+	}
+	// Keys follow the provider name, so OpenCode's "dari/<key>" reference is
+	// the same id the router accepts.
+	offeredModels := map[string]any{}
+	for _, model := range models.Menu() {
+		name := strings.TrimPrefix(model, agents.ExplicitModelPrefix)
+		if model == agents.RoutingModel {
+			name = "Dari Router"
+		}
+		offeredModels[strings.TrimPrefix(model, "dari/")] = map[string]any{
+			"id":         model,
+			"name":       name,
+			"attachment": true,
+			"reasoning":  false,
+			"tool_call":  true,
+			"limit":      map[string]int{"context": 1_000_000, "output": 128_000},
+			"modalities": map[string][]string{"input": {"text", "image"}, "output": {"text"}},
+		}
 	}
 	body, err := json.Marshal(map[string]any{
-		"model":       agents.RoutingModel,
-		"small_model": agents.RoutingModel,
+		"model":       defaultModel,
+		"small_model": defaultModel,
 		"agent":       pinned,
 		"plugins":     []string{pluginDirectory},
+		// /models lists only the router's models, not other configured providers.
+		"enabled_providers": []string{"dari"},
 		"provider": map[string]any{
 			"dari": map[string]any{
 				"npm":  "@ai-sdk/openai-compatible",
@@ -151,17 +200,7 @@ func openCodeConfig(baseURL, pluginDirectory string) (string, error) {
 					"baseURL": baseURL + "/v1",
 					"apiKey":  "{env:" + agents.RoutingAPIKeyEnv + "}",
 				},
-				"models": map[string]any{
-					"routing": map[string]any{
-						"id":         agents.RoutingModel,
-						"name":       "Dari Router",
-						"attachment": true,
-						"reasoning":  false,
-						"tool_call":  true,
-						"limit":      map[string]int{"context": 1_000_000, "output": 128_000},
-						"modalities": map[string][]string{"input": {"text", "image"}, "output": {"text"}},
-					},
-				},
+				"models": offeredModels,
 			},
 		},
 	})

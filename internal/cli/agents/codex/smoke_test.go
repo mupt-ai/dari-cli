@@ -32,13 +32,13 @@ func TestCodexInstalledStatus(t *testing.T) {
 	}
 	// Point both the catalog and response paths at the explicit mock boundary.
 	command := agents.Command{Path: path, Args: args, Env: agents.WithEnvironment(os.Environ(), map[string]string{agents.RoutingAPIKeyEnv: "test-key"})}
-	Configure(&command, base)
+	Configure(&command, base, agents.Models{Routing: true})
 	defer func() {
 		if command.Cleanup != nil {
 			command.Cleanup()
 		}
 	}()
-	if err := PrepareCatalog(context.Background(), &command, "test-key", base); err != nil {
+	if err := PrepareCatalog(context.Background(), &command, "test-key", base, agents.Models{Routing: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := PrepareStatus(context.Background(), &command, args, "test-key", base); err != nil {

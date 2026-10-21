@@ -79,6 +79,7 @@ func runAgentLaunch(ctx context.Context, launch agentLaunch, stdin io.Reader, st
 
 	key := "unused"
 	routerID := "default"
+	var models agents.Models
 	if !agents.OnlyRequestsInfo(launch.args) {
 		var access agentRoutingAccess
 		access, err = resolveAgentRoutingAccess(ctx, stdin, stderr)
@@ -86,13 +87,16 @@ func runAgentLaunch(ctx context.Context, launch agentLaunch, stdin io.Reader, st
 			key = access.key
 			routerID, err = ensureAgentRouter(ctx, launch.name, access, stdin, stderr)
 		}
+		if err == nil {
+			models, err = agentModels(ctx, access, routerID, stderr)
+		}
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
 	}
 
-	command, err := buildAgentCommand(path, launch, key, routerID)
+	command, err := buildAgentCommand(path, launch, key, routerID, models)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -104,7 +108,7 @@ func runAgentLaunch(ctx context.Context, launch agentLaunch, stdin io.Reader, st
 		}
 	}()
 	if launch.name == "codex" && !agents.OnlyRequestsInfo(launch.args) {
-		if err := codex.PrepareCatalog(ctx, &command, key, agentRoutingBaseURL(routerID)); err != nil {
+		if err := codex.PrepareCatalog(ctx, &command, key, agentRoutingBaseURL(routerID), models); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -259,22 +263,22 @@ func issueAgentRoutingKey(ctx context.Context, apiURL string) (string, error) {
 	return issued.APIKey, err
 }
 
-func buildAgentCommand(path string, launch agentLaunch, key, routerID string) (agents.Command, error) {
+func buildAgentCommand(path string, launch agentLaunch, key, routerID string, models agents.Models) (agents.Command, error) {
 	command := agents.Command{Path: path, Args: launch.args, Env: agents.WithEnvironment(os.Environ(), map[string]string{agents.RoutingAPIKeyEnv: key})}
 	baseURL := agentRoutingBaseURL(routerID)
 	switch launch.name {
 	case "claude":
-		if err := claude.Configure(&command, key, baseURL); err != nil {
+		if err := claude.Configure(&command, key, baseURL, models); err != nil {
 			return agents.Command{}, err
 		}
 	case "codex":
-		codex.Configure(&command, baseURL)
+		codex.Configure(&command, baseURL, models)
 	case "opencode":
-		if err := opencode.Configure(&command, baseURL); err != nil {
+		if err := opencode.Configure(&command, baseURL, models); err != nil {
 			return agents.Command{}, err
 		}
 	case "pi":
-		if err := pi.Configure(&command); err != nil {
+		if err := pi.Configure(&command, models); err != nil {
 			return agents.Command{}, err
 		}
 	default:

@@ -13,7 +13,7 @@ import (
 
 func TestBuildClaudeAgentCommandUsesTemporaryStatusLine(t *testing.T) {
 	command := agents.Command{Path: "/claude", Args: []string{"--print", "review"}}
-	if err := Configure(&command, "dari_route", "https://routing.dari.dev"); err != nil {
+	if err := Configure(&command, "dari_route", "https://routing.dari.dev", agents.Models{Routing: true}); err != nil {
 		t.Fatal(err)
 	}
 	if command.Cleanup == nil {
@@ -35,9 +35,22 @@ func TestBuildClaudeAgentCommandUsesTemporaryStatusLine(t *testing.T) {
 			Command         string `json:"command"`
 			RefreshInterval int    `json:"refreshInterval"`
 		} `json:"statusLine"`
+		ModelPicker struct {
+			Options               []map[string]string `json:"options"`
+			ReplaceBuiltInOptions bool                `json:"replaceBuiltInOptions"`
+		} `json:"modelPicker"`
 	}
 	if err := json.Unmarshal(data, &settings); err != nil {
 		t.Fatal(err)
+	}
+	for _, name := range []string{"ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL"} {
+		if got := agents.EnvironmentValue(command.Env, name); got != agents.RoutingModel {
+			t.Errorf("%s = %q, want the launch's model", name, got)
+		}
+	}
+	// The picker lists only the router's models, in place of Claude's own.
+	if !settings.ModelPicker.ReplaceBuiltInOptions || len(settings.ModelPicker.Options) == 0 {
+		t.Fatalf("modelPicker = %+v; want the router's models replacing the built-in lineup", settings.ModelPicker)
 	}
 	if settings.StatusLine.Type != "command" {
 		t.Fatalf("statusLine.type = %q", settings.StatusLine.Type)
@@ -60,7 +73,7 @@ func TestBuildClaudeAgentCommandUsesTemporaryStatusLine(t *testing.T) {
 
 func TestBuildClaudeAgentCommandSkipsStatusLineWhenSettingsFlagPresent(t *testing.T) {
 	command := agents.Command{Path: "/claude", Args: []string{"--settings", "mine.json"}}
-	if err := Configure(&command, "dari_route", "https://routing.dari.dev"); err != nil {
+	if err := Configure(&command, "dari_route", "https://routing.dari.dev", agents.Models{Routing: true}); err != nil {
 		t.Fatal(err)
 	}
 	if command.Cleanup != nil {

@@ -4,8 +4,10 @@ package pi
 
 import (
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/mupt-ai/dari-cli/internal/cli/agents"
 )
@@ -13,23 +15,39 @@ import (
 //go:embed extension.ts
 var extension string
 
-// Configure adds the Dari provider extension and selects dari/routing.
-func Configure(command *agents.Command) error {
+// Configure adds the Dari provider extension, which offers the launch's
+// models in Pi's model picker, and starts on the default model.
+func Configure(command *agents.Command, models agents.Models) error {
 	status, err := agents.StatusEnvironment()
 	if err != nil {
 		return err
 	}
+	menu, err := json.Marshal(models.Menu())
+	if err != nil {
+		return fmt.Errorf("encode Pi models: %w", err)
+	}
+	status["DARI_MODELS"] = string(menu)
 	extensionPath, err := writeExtension()
 	if err != nil {
 		return err
 	}
 	command.Env = agents.WithEnvironment(command.Env, status)
 	command.Cleanup = func() { _ = os.Remove(extensionPath) }
-	command.Args = agents.InsertBeforeDoubleDash(command.Args, []string{
+	args := []string{
 		"--extension", extensionPath,
 		"--provider", "dari",
-		"--model", agents.RoutingModel,
-	})
+		"--model", models.Default(),
+	}
+	// Scoping the router's models makes /model open on them rather than on
+	// every provider the user has signed in to.
+	if !agents.ArgsContainFlag(command.Args, "--models") {
+		scoped := make([]string, 0, len(models.Menu()))
+		for _, model := range models.Menu() {
+			scoped = append(scoped, "dari/"+model)
+		}
+		args = append(args, "--models", strings.Join(scoped, ","))
+	}
+	command.Args = agents.InsertBeforeDoubleDash(command.Args, args)
 	return nil
 }
 

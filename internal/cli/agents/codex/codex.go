@@ -14,11 +14,11 @@ import (
 	"time"
 )
 
-// Configure selects Dari's routing model through Codex config overrides that
-// point at the router at baseURL, leaving the user's Codex config untouched.
-func Configure(command *agents.Command, baseURL string) {
+// Configure selects the launch's default model through Codex config overrides
+// that point at the router at baseURL, leaving the user's Codex config untouched.
+func Configure(command *agents.Command, baseURL string, models agents.Models) {
 	command.Args = agents.InsertBeforeDoubleDash(command.Args, []string{
-		"--config", `model="dari/routing"`,
+		"--config", "model=" + strconv.Quote(models.Default()),
 		"--config", `model_provider="dari"`,
 		"--config", `model_reasoning_summary="none"`,
 		"--config", `model_providers.dari.name="Dari"`,
@@ -30,8 +30,9 @@ func Configure(command *agents.Command, baseURL string) {
 
 // Codex does not discover remote catalogs for env-key custom providers. Supply
 // the authenticated router catalog explicitly so auxiliary agents do not pick
-// bundled OpenAI models that the routing endpoint cannot serve.
-func PrepareCatalog(ctx context.Context, command *agents.Command, key, baseURL string) error {
+// bundled OpenAI models that the routing endpoint cannot serve. The catalog's
+// models fill Codex's /model menu; dari/routing is dropped without the plan.
+func PrepareCatalog(ctx context.Context, command *agents.Command, key, baseURL string, models agents.Models) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/models", nil)
@@ -62,29 +63,40 @@ func PrepareCatalog(ctx context.Context, command *agents.Command, key, baseURL s
 	if err := json.Unmarshal(body, &catalog); err != nil {
 		return fmt.Errorf("decode Codex model catalog: %w", err)
 	}
+	offered := map[string]bool{}
+	for _, model := range models.Menu() {
+		offered[model] = true
+	}
+	defaultModel := models.Default()
 	found := false
 	disableWebSearch := false
+	kept := catalog.Models[:0]
 	for _, model := range catalog.Models {
 		var slug string
-		if json.Unmarshal(model["slug"], &slug) == nil && slug == agents.RoutingModel {
-			// Older servers use null to indicate unavailable web search. Codex
-			// requires a concrete web-search enum, so disable the tool separately.
-			if string(model["web_search_tool_type"]) == "null" {
-				model["web_search_tool_type"] = json.RawMessage(`"text"`)
-				disableWebSearch = true
-			}
-			for _, field := range []string{"tool_mode", "multi_agent_version"} {
-				if string(model[field]) == "null" {
-					delete(model, field)
-				}
-			}
-			// Also works against servers deployed before the reviewer override.
-			model["auto_review_model_override"] = json.RawMessage(strconv.Quote(agents.RoutingModel))
-			found = true
+		if json.Unmarshal(model["slug"], &slug) != nil || !offered[slug] {
+			continue
 		}
+		// Older servers use null to indicate unavailable web search. Codex
+		// requires a concrete web-search enum, so disable the tool separately.
+		if slug == defaultModel && string(model["web_search_tool_type"]) == "null" {
+			disableWebSearch = true
+		}
+		if string(model["web_search_tool_type"]) == "null" {
+			model["web_search_tool_type"] = json.RawMessage(`"text"`)
+		}
+		for _, field := range []string{"tool_mode", "multi_agent_version"} {
+			if string(model[field]) == "null" {
+				delete(model, field)
+			}
+		}
+		// Also works against servers deployed before the reviewer override.
+		model["auto_review_model_override"] = json.RawMessage(strconv.Quote(slug))
+		found = found || slug == defaultModel
+		kept = append(kept, model)
 	}
+	catalog.Models = kept
 	if !found {
-		return fmt.Errorf("Codex model catalog is missing %s", agents.RoutingModel)
+		return fmt.Errorf("Codex model catalog is missing %s", defaultModel)
 	}
 	body, err = json.Marshal(catalog)
 	if err != nil {

@@ -8,14 +8,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/mupt-ai/dari-cli/internal/cli/agents"
 )
 
-// Configure points Claude Code at the router at baseURL and, unless the user
-// passed their own --settings, adds Dari's status line.
-func Configure(command *agents.Command, key, baseURL string) error {
+// Configure points Claude Code at the router at baseURL, starts it on the
+// launch's default model and, unless the user passed their own --settings,
+// adds Dari's status line and lists the router's models in /model.
+func Configure(command *agents.Command, key, baseURL string, models agents.Models) error {
 	command.Env = agents.WithEnvironment(command.Env, map[string]string{
 		"ANTHROPIC_BASE_URL":               baseURL,
 		"ANTHROPIC_AUTH_TOKEN":             key,
@@ -23,18 +25,38 @@ func Configure(command *agents.Command, key, baseURL string) error {
 		"CLAUDE_CODE_EFFORT_LEVEL":         "auto",
 		"CLAUDE_CODE_GATEWAY_HINT_HEADERS": "1",
 		"CLAUDE_CODE_MAX_CONTEXT_TOKENS":   "1000000",
-		"CLAUDE_CODE_SUBAGENT_MODEL":       agents.RoutingModel,
+		"CLAUDE_CODE_SUBAGENT_MODEL":       models.Default(),
+		// /model keeps a built-in Default row, and subagents may ask for an
+		// alias; both resolve to the launch's model rather than a native one.
+		// Haiku stays native: Dari serves background work on its cheapest model.
+		"ANTHROPIC_DEFAULT_OPUS_MODEL":   models.Default(),
+		"ANTHROPIC_DEFAULT_SONNET_MODEL": models.Default(),
+		"ANTHROPIC_DEFAULT_FABLE_MODEL":  models.Default(),
 	})
 	if !agents.ArgsContainFlag(command.Args, "--settings") {
-		if err := injectStatusLine(command); err != nil {
+		if err := injectSettings(command, models); err != nil {
 			return err
 		}
 	}
-	command.Args = agents.InsertBeforeDoubleDash(command.Args, []string{"--model", agents.RoutingModel})
+	command.Args = agents.InsertBeforeDoubleDash(command.Args, []string{"--model", models.Default()})
 	return nil
 }
 
-func injectStatusLine(command *agents.Command) error {
+// pickerOptions are /model rows for the router's models. Claude Code sends a
+// row's model id as written, so each row reaches the router unchanged.
+func pickerOptions(models agents.Models) []map[string]string {
+	options := []map[string]string{}
+	for _, model := range models.Menu() {
+		label := strings.TrimPrefix(model, agents.ExplicitModelPrefix)
+		if model == agents.RoutingModel {
+			label = "Dari Routing"
+		}
+		options = append(options, map[string]string{"model": model, "label": label})
+	}
+	return options
+}
+
+func injectSettings(command *agents.Command, models agents.Models) error {
 	executable, err := agents.StatusExecutable()
 	if err != nil {
 		return err
@@ -51,6 +73,8 @@ func injectStatusLine(command *agents.Command) error {
 			// Idle sessions must flip to "cache cold" once the cache TTL passes.
 			"refreshInterval": 30,
 		},
+		// Replace Claude Code's built-in lineup: only the router's models appear.
+		"modelPicker": map[string]any{"options": pickerOptions(models), "replaceBuiltInOptions": true},
 	})
 	if err == nil {
 		_, err = settings.Write(body)

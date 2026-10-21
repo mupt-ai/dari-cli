@@ -1015,9 +1015,8 @@ func TestEnsureClaudeAgentRouterRecoversFromConcurrentCreate(t *testing.T) {
 	if routerID != "rtr_other_computer" {
 		t.Fatalf("router ID = %q", routerID)
 	}
-	// The third listing finds the chosen router to check its Autorouting plan.
-	if routerLists != 3 {
-		t.Fatalf("router list requests = %d, want 3", routerLists)
+	if routerLists != 2 {
+		t.Fatalf("router list requests = %d, want 2", routerLists)
 	}
 	if !subscriptionUpdated {
 		t.Fatal("recovered router was not updated to require a personal subscription")
@@ -1147,56 +1146,6 @@ func TestEnsurePiAgentRouterUsesDefaultPreset(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "Configure the default router for Pi") {
 		t.Fatalf("output does not identify Pi setup: %s", output.String())
-	}
-}
-
-func TestEnsureCodexAgentRouterCancelledPlanLeavesDefaultRouterUnchanged(t *testing.T) {
-	var putRequests int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-suggestions":
-			_ = json.NewEncoder(w).Encode(map[string]any{"suggestions": []map[string]any{{
-				"id": "codex", "models": map[string][]string{"anthropic/claude-fable-5": {"high"}, "zai-org/GLM-5.3": {"high"}},
-			}}})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
-			_ = json.NewEncoder(w).Encode(map[string]any{"credentials": []any{}, "autorouting_allowed": false})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers":
-			// A free org's one-model Gateway router.
-			_ = json.NewEncoder(w).Encode(map[string]any{"routers": []map[string]any{{
-				"id":                    "rtr_default",
-				"name":                  "Default",
-				"is_default":            true,
-				"enabled_models":        []string{"custom/model"},
-				"model_thinking_levels": map[string][]string{"custom/model": {"off"}},
-			}}})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-catalog":
-			writeAgentModelCatalog(t, w)
-		case r.Method == http.MethodPut || r.Method == http.MethodPost:
-			putRequests++
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "rtr_default"})
-		default:
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	useTestAPIKey(t)
-	t.Setenv("DARI_API_URL", server.URL)
-	// Decline the subscription, accept the multi-model preset, then cancel the
-	// Autorouting prompt.
-	_, err := ensureAgentRouter(
-		context.Background(),
-		"codex",
-		agentRoutingAccess{apiURL: server.URL, scope: "test-org", key: "dari_route"},
-		strings.NewReader("n\n\n3\n"),
-		io.Discard,
-	)
-	if err == nil {
-		t.Fatal("expected the cancelled Autorouting prompt to stop the launch")
-	}
-	if putRequests != 0 {
-		t.Fatalf("router writes = %d, want 0 after a cancelled plan check", putRequests)
 	}
 }
 

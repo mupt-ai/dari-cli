@@ -13,7 +13,7 @@ import (
 
 func TestBuildOpenCodeCommandInjectsSessionConfig(t *testing.T) {
 	command := launch()
-	if err := Configure(&command, "https://routing.dari.dev/router_1"); err != nil {
+	if err := Configure(&command, "https://routing.dari.dev/router_1", agents.Models{Routing: true}); err != nil {
 		t.Fatal(err)
 	}
 	if command.Cleanup == nil {
@@ -27,11 +27,12 @@ func TestBuildOpenCodeCommandInjectsSessionConfig(t *testing.T) {
 		t.Fatal("config contains the secret key")
 	}
 	var config struct {
-		Model      string                       `json:"model"`
-		SmallModel string                       `json:"small_model"`
-		Agent      map[string]map[string]string `json:"agent"`
-		Plugins    []string                     `json:"plugins"`
-		Provider   map[string]struct {
+		Model            string                       `json:"model"`
+		SmallModel       string                       `json:"small_model"`
+		EnabledProviders []string                     `json:"enabled_providers"`
+		Agent            map[string]map[string]string `json:"agent"`
+		Plugins          []string                     `json:"plugins"`
+		Provider         map[string]struct {
 			Options map[string]string `json:"options"`
 			Models  map[string]struct {
 				ID         string              `json:"id"`
@@ -44,12 +45,21 @@ func TestBuildOpenCodeCommandInjectsSessionConfig(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &config); err != nil {
 		t.Fatal(err)
 	}
+	if !slices.Equal(config.EnabledProviders, []string{"dari"}) {
+		t.Errorf("enabled_providers = %q, want only dari in /models", config.EnabledProviders)
+	}
 	if config.Model != agents.RoutingModel || config.SmallModel != agents.RoutingModel {
 		t.Errorf("model = %q, small_model = %q", config.Model, config.SmallModel)
 	}
-	for _, name := range []string{"build", "plan", "general", "explore", "scout", "title", "summary", "compaction"} {
+	for _, name := range []string{"general", "explore", "scout", "title", "summary", "compaction"} {
 		if config.Agent[name]["model"] != agents.RoutingModel {
 			t.Errorf("agent %s model = %q", name, config.Agent[name]["model"])
+		}
+	}
+	// Primary agents follow /models.
+	for _, name := range []string{"build", "plan"} {
+		if _, pinned := config.Agent[name]; pinned {
+			t.Errorf("agent %s is pinned", name)
 		}
 	}
 	dari := config.Provider["dari"]
@@ -134,7 +144,7 @@ func TestBuildOpenCodeCommandArguments(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			command := launch(tt.args...)
-			if err := Configure(&command, "https://routing.dari.dev"); err != nil {
+			if err := Configure(&command, "https://routing.dari.dev", agents.Models{Routing: true}); err != nil {
 				t.Fatal(err)
 			}
 			defer command.Cleanup()
@@ -151,7 +161,7 @@ func TestBuildOpenCodeCommandArguments(t *testing.T) {
 func TestBuildOpenCodeManagementCommandsGetNoDariConfig(t *testing.T) {
 	for _, args := range [][]string{{"service", "start"}, {"session", "list"}, {"--print-logs", "service", "restart"}} {
 		command := launch(args...)
-		if err := Configure(&command, "https://routing.dari.dev"); err != nil {
+		if err := Configure(&command, "https://routing.dari.dev", agents.Models{Routing: true}); err != nil {
 			t.Fatal(err)
 		}
 		if command.Cleanup != nil {
@@ -170,7 +180,7 @@ func TestBuildOpenCodeManagementCommandsGetNoDariConfig(t *testing.T) {
 
 func TestBuildOpenCodeCommandRejectsPairing(t *testing.T) {
 	command := launch("--print-logs", "pair")
-	err := Configure(&command, "https://routing.dari.dev")
+	err := Configure(&command, "https://routing.dari.dev", agents.Models{Routing: true})
 	if err == nil || !strings.Contains(err.Error(), "dari opencode serve") {
 		t.Fatalf("error = %v", err)
 	}
@@ -178,7 +188,7 @@ func TestBuildOpenCodeCommandRejectsPairing(t *testing.T) {
 
 func TestBuildOpenCodeCommandRejectsSharedServer(t *testing.T) {
 	command := launch("--server", "http://127.0.0.1:4096")
-	err := Configure(&command, "https://routing.dari.dev")
+	err := Configure(&command, "https://routing.dari.dev", agents.Models{Routing: true})
 	if err == nil || !strings.Contains(err.Error(), "remove --server") {
 		t.Fatalf("error = %v", err)
 	}

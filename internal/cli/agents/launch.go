@@ -8,7 +8,39 @@ import "strings"
 const (
 	RoutingAPIKeyEnv = "DARI_ROUTING_API_KEY"
 	RoutingModel     = "dari/routing"
+	// ExplicitModelPrefix names one enabled model, served without routing.
+	ExplicitModelPrefix = "dari/model/"
 )
+
+// Models is the menu a launcher offers in its agent's model picker:
+// dari/routing when the organization has the Autorouting plan, then each
+// model enabled on the router.
+type Models struct {
+	Routing bool
+	Enabled []string
+}
+
+// Default is the model a launch starts on: routing when it is available,
+// else the router's first model. Launches that never resolved a router
+// keep dari/routing.
+func (m Models) Default() string {
+	if m.Routing || len(m.Enabled) == 0 {
+		return RoutingModel
+	}
+	return ExplicitModelPrefix + m.Enabled[0]
+}
+
+// Menu lists every model id a launch can switch to, default first.
+func (m Models) Menu() []string {
+	menu := make([]string, 0, len(m.Enabled)+1)
+	if m.Routing || len(m.Enabled) == 0 {
+		menu = append(menu, RoutingModel)
+	}
+	for _, model := range m.Enabled {
+		menu = append(menu, ExplicitModelPrefix+model)
+	}
+	return menu
+}
 
 // Command is the agent process to start. Cleanup removes anything the
 // launcher created for it, such as temporary settings or plugins.

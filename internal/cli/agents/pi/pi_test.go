@@ -12,7 +12,7 @@ import (
 
 func TestBuildPiAgentCommandUsesTemporaryProviderExtension(t *testing.T) {
 	command := agents.Command{Path: "/pi", Args: []string{"-p", "review"}, Env: []string{agents.RoutingAPIKeyEnv + "=dari_route"}}
-	if err := Configure(&command); err != nil {
+	if err := Configure(&command, agents.Models{Routing: true}); err != nil {
 		t.Fatal(err)
 	}
 	if command.Cleanup == nil {
@@ -178,5 +178,27 @@ process.exit(0);
 	}
 	if got := strings.TrimSpace(string(out)); got != "m · cache cold" {
 		t.Fatalf("final status = %q", got)
+	}
+}
+
+func TestPiScopesModelPickerToTheRouter(t *testing.T) {
+	command := agents.Command{Path: "/pi"}
+	if err := Configure(&command, agents.Models{Enabled: []string{"openai/gpt-6-luna", "anthropic/claude-sonnet-5-5"}}); err != nil {
+		t.Fatal(err)
+	}
+	defer command.Cleanup()
+	index := slices.Index(command.Args, "--models")
+	if index < 0 || command.Args[index+1] != "dari/dari/model/openai/gpt-6-luna,dari/dari/model/anthropic/claude-sonnet-5-5" {
+		t.Fatalf("args = %q, want the router's models scoped", command.Args)
+	}
+
+	// A scope the user chose stays theirs.
+	command = agents.Command{Path: "/pi", Args: []string{"--models", "mine/*"}}
+	if err := Configure(&command, agents.Models{Routing: true}); err != nil {
+		t.Fatal(err)
+	}
+	defer command.Cleanup()
+	if strings.Count(strings.Join(command.Args, " "), "--models") != 1 {
+		t.Fatalf("args = %q, want the user's --models only", command.Args)
 	}
 }
