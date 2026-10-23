@@ -1,8 +1,25 @@
-# Dari CLI
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/dari-logo-dark.svg">
+    <img src="assets/dari-logo-light.svg" alt="Dari" width="72">
+  </picture>
+</p>
 
-`dari` is the command-line client for creating and managing Dari routers, credentials, API keys, organizations, and evals.
+<h1 align="center">Dari CLI</h1>
 
-Full documentation: <https://docs.dari.dev>
+<p align="center">
+  <b>Create routers, manage credentials and keys, and launch coding agents through Dari.</b><br>
+  The command-line client for Dari routers, credentials, API keys, organizations, and evals.
+</p>
+
+<p align="center">
+  <a href="https://docs.dari.dev"><img src="https://img.shields.io/badge/Documentation-docs.dari.dev-111111?style=for-the-badge" alt="Documentation at docs.dari.dev"></a>
+  <a href="https://github.com/mupt-ai/dari-cli/releases/latest"><img src="https://img.shields.io/github/v/release/mupt-ai/dari-cli?style=for-the-badge&label=Download&color=16A34A" alt="Latest release"></a>
+</p>
+
+<p align="center">
+  <a href="#install">Install</a> · <a href="#sign-in">Sign In</a> · <a href="#coding-agents">Coding Agents</a> · <a href="#self-hosted-gateway">Self-Hosted Gateway</a> · <a href="#common-workflows">Workflows</a>
+</p>
 
 ## Install
 
@@ -202,3 +219,9 @@ go build ./cmd/dari
 ```
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for contributor guidance.
+
+---
+
+<p align="center">
+  <a href="https://dari.dev">dari.dev</a> · <a href="https://docs.dari.dev">Docs</a> · <a href="https://github.com/mupt-ai/dari-cli/releases">Releases</a>
+</p>
