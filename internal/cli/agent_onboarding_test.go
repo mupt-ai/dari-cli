@@ -627,11 +627,14 @@ func TestEnsureClaudeAgentRouterCreatesSeparateRouter(t *testing.T) {
 	if got := created["client_key"]; got != claudeRouterClientKey {
 		t.Errorf("client_key = %#v", got)
 	}
-	if got := created["personal_oauth_enabled"]; got != true {
-		t.Errorf("personal_oauth_enabled = %#v", got)
+	if got := stringSlice(created["subscription_providers"]); !slices.Equal(got, []string{"anthropic"}) {
+		t.Errorf("subscription_providers = %q", got)
 	}
-	if got := created["personal_oauth_fallback_enabled"]; got != false {
-		t.Errorf("personal_oauth_fallback_enabled = %#v", got)
+	if got, ok := created["subscription_api_fallback_models"].([]any); !ok || len(got) != 0 {
+		t.Errorf("subscription_api_fallback_models = %#v, want []", created["subscription_api_fallback_models"])
+	}
+	if _, ok := created["personal_oauth_enabled"]; ok {
+		t.Errorf("create payload still sends personal_oauth_enabled")
 	}
 	if _, ok := created["eval_ids"]; ok {
 		t.Errorf("create payload unexpectedly includes eval_ids: %#v", created["eval_ids"])
@@ -672,11 +675,10 @@ func TestEnsureClaudeAgentRouterUsesManagedRouterAfterOptOut(t *testing.T) {
 					"model_thinking_levels": map[string][]string{"openai/gpt-5.6-sol": {"medium"}},
 				},
 				{
-					"id":                              "rtr_personal",
-					"name":                            claudeRouterName,
-					"client_key":                      claudeRouterClientKey,
-					"personal_oauth_enabled":          true,
-					"personal_oauth_fallback_enabled": false,
+					"id":                     "rtr_personal",
+					"name":                   claudeRouterName,
+					"client_key":             claudeRouterClientKey,
+					"subscription_providers": []string{"anthropic"},
 				},
 			}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
@@ -723,8 +725,8 @@ func TestEnsureClaudeAgentRouterUsesManagedRouterAfterOptOut(t *testing.T) {
 	if got := created["name"]; got != claudeManagedRouterName {
 		t.Errorf("name = %#v", got)
 	}
-	if got := created["personal_oauth_enabled"]; got != false {
-		t.Errorf("personal_oauth_enabled = %#v", got)
+	if got, ok := created["subscription_providers"].([]any); !ok || len(got) != 0 {
+		t.Errorf("subscription_providers = %#v, want []", created["subscription_providers"])
 	}
 }
 
@@ -736,11 +738,10 @@ func TestEnsureClaudeAgentRouterAvoidsPersonalRouterWithoutCredentialsOnEOF(t *t
 			_ = json.NewEncoder(w).Encode(map[string]any{"routers": []map[string]any{
 				{"id": "rtr_default", "name": "Default", "is_default": true},
 				{
-					"id":                              "rtr_claude",
-					"name":                            claudeRouterName,
-					"client_key":                      claudeRouterClientKey,
-					"personal_oauth_enabled":          true,
-					"personal_oauth_fallback_enabled": false,
+					"id":                     "rtr_claude",
+					"name":                   claudeRouterName,
+					"client_key":             claudeRouterClientKey,
+					"subscription_providers": []string{"anthropic"},
 				},
 			}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
@@ -864,14 +865,13 @@ func TestEnsureClaudeAgentRouterRequiresSubscriptionAfterRename(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"routers": []map[string]any{
 				{"id": "rtr_default", "name": "Default", "is_default": true},
 				{
-					"id":                              "rtr_claude",
-					"name":                            "Renamed by user",
-					"client_key":                      claudeRouterClientKey,
-					"enabled_models":                  []string{"anthropic/claude-fable-5"},
-					"model_providers":                 map[string]string{"anthropic/claude-fable-5": "anthropic"},
-					"model_thinking_levels":           map[string][]string{"anthropic/claude-fable-5": {"high"}},
-					"personal_oauth_enabled":          false,
-					"personal_oauth_fallback_enabled": true,
+					"id":                     "rtr_claude",
+					"name":                   "Renamed by user",
+					"client_key":             claudeRouterClientKey,
+					"enabled_models":         []string{"anthropic/claude-fable-5", "openai/gpt-5.6-sol"},
+					"model_providers":        map[string]string{"anthropic/claude-fable-5": "anthropic", "openai/gpt-5.6-sol": "openai"},
+					"model_thinking_levels":  map[string][]string{"anthropic/claude-fable-5": {"high"}, "openai/gpt-5.6-sol": {"medium"}},
+					"subscription_providers": []string{"openai"},
 				},
 			}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
@@ -902,16 +902,18 @@ func TestEnsureClaudeAgentRouterRequiresSubscriptionAfterRename(t *testing.T) {
 	if routerID != "rtr_claude" {
 		t.Fatalf("router ID = %q", routerID)
 	}
-	if got := updated["personal_oauth_enabled"]; got != true {
-		t.Errorf("personal_oauth_enabled = %#v", got)
+	// Claude Code adds its own provider and leaves the router's other
+	// subscriptions and API fallback models alone.
+	if got := stringSlice(updated["subscription_providers"]); !slices.Equal(got, []string{"openai", "anthropic"}) {
+		t.Errorf("subscription_providers = %q", got)
 	}
-	if got := updated["personal_oauth_fallback_enabled"]; got != false {
-		t.Errorf("personal_oauth_fallback_enabled = %#v", got)
+	if _, ok := updated["subscription_api_fallback_models"]; ok {
+		t.Errorf("update must keep the router's API fallback models: %#v", updated["subscription_api_fallback_models"])
 	}
 	if got := updated["name"]; got != "Renamed by user" {
 		t.Errorf("name = %#v", got)
 	}
-	if got := stringSlice(updated["enabled_models"]); !slices.Equal(got, []string{"anthropic/claude-fable-5"}) {
+	if got := stringSlice(updated["enabled_models"]); !slices.Equal(got, []string{"anthropic/claude-fable-5", "openai/gpt-5.6-sol"}) {
 		t.Errorf("enabled_models = %q", got)
 	}
 }
@@ -924,11 +926,10 @@ func TestEnsureClaudeAgentRouterSkipsUpdateForCompliantRouter(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"routers": []map[string]any{
 				{"id": "rtr_default", "name": "Default", "is_default": true},
 				{
-					"id":                              "rtr_claude",
-					"name":                            "Renamed by user",
-					"client_key":                      claudeRouterClientKey,
-					"personal_oauth_enabled":          true,
-					"personal_oauth_fallback_enabled": false,
+					"id":                     "rtr_claude",
+					"name":                   "Renamed by user",
+					"client_key":             claudeRouterClientKey,
+					"subscription_providers": []string{"anthropic"},
 				},
 			}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
@@ -975,10 +976,11 @@ func TestEnsureClaudeAgentRouterRecoversFromConcurrentCreate(t *testing.T) {
 			}}
 			if routerLists > 1 {
 				routers = append(routers, map[string]any{
-					"id":             "rtr_other_computer",
-					"name":           "Renamed",
-					"client_key":     claudeRouterClientKey,
-					"enabled_models": []string{"anthropic/claude-fable-5"},
+					"id":              "rtr_other_computer",
+					"name":            "Renamed",
+					"client_key":      claudeRouterClientKey,
+					"enabled_models":  []string{"anthropic/claude-fable-5"},
+					"model_providers": map[string]string{"anthropic/claude-fable-5": "anthropic"},
 				})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"routers": routers})
@@ -995,8 +997,7 @@ func TestEnsureClaudeAgentRouterRecoversFromConcurrentCreate(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&updated); err != nil {
 				t.Error(err)
 			}
-			subscriptionUpdated = updated["personal_oauth_enabled"] == true &&
-				updated["personal_oauth_fallback_enabled"] == false
+			subscriptionUpdated = slices.Equal(stringSlice(updated["subscription_providers"]), []string{"anthropic"})
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "rtr_other_computer"})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)

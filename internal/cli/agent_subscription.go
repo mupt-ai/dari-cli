@@ -14,13 +14,14 @@ import (
 	"github.com/mupt-ai/dari-cli/internal/state"
 )
 
+// routerProvider is the router provider whose models the subscription serves.
 type agentSubscriptionProvider struct {
-	id, name string
+	id, name, routerProvider string
 }
 
 var (
-	claudeSubscription = agentSubscriptionProvider{"anthropic_claude_code", "Claude Code"}
-	codexSubscription  = agentSubscriptionProvider{"openai_codex", "ChatGPT"}
+	claudeSubscription = agentSubscriptionProvider{"anthropic_claude_code", "Claude Code", "anthropic"}
+	codexSubscription  = agentSubscriptionProvider{"openai_codex", "ChatGPT", "openai"}
 )
 
 // Codex, OpenCode, and Pi use the organization's default router, but their
@@ -54,8 +55,9 @@ func ensureDefaultAgentSubscription(ctx context.Context, agent string, access ag
 			return nil
 		}
 		if agentInputIsTerminal(stdin) {
-			added, manageErr := manageAgentSubscriptions(ctx, client, agentSubscriptionProviders(agent), stdin, stderr)
-			return recordAgentSubscriptionAdds(ctx, client, router, scope, added, manageErr)
+			providers := agentSubscriptionProviders(agent)
+			added, manageErr := manageAgentSubscriptions(ctx, client, providers, stdin, stderr)
+			return recordAgentSubscriptionAdds(ctx, client, router, providers, scope, added, manageErr)
 		}
 		choice := 0
 		fmt.Fprint(stderr, "Connect a subscription: [1] ChatGPT [2] Claude Code [3] Dari managed billing: ")
@@ -88,7 +90,7 @@ func ensureDefaultAgentSubscription(ctx context.Context, agent string, access ag
 		if err := state.SaveAgentSubscriptionOptOut(scope, false); err != nil {
 			return err
 		}
-		return setAgentRouterSubscription(ctx, client, router, true, router.PersonalOAuthFallbackEnabled)
+		return setAgentRouterSubscription(ctx, client, router, agentSubscriptionProviders(agent), true)
 	}
 	resolution, resolveErr := resolveAgentPersonalSubscription(ctx, provider, client, stdin, stderr, optedOut)
 	if resolution.preferenceChanged {
@@ -101,7 +103,7 @@ func ensureDefaultAgentSubscription(ctx context.Context, agent string, access ag
 	// re-enable it just because a credential already exists. Accounts connected
 	// before an error are stored, so route through them before reporting it.
 	if resolution.connectedNow {
-		if err := setAgentRouterSubscription(ctx, client, router, true, router.PersonalOAuthFallbackEnabled); err != nil {
+		if err := setAgentRouterSubscription(ctx, client, router, agentSubscriptionProviders(agent), true); err != nil {
 			return err
 		}
 	}
@@ -143,7 +145,7 @@ func connectAgentSubscriptionsOnRequest(ctx context.Context, agent string, acces
 	if !ok {
 		return errors.New("organization has no default router")
 	}
-	if err := setAgentRouterSubscription(ctx, client, router, true, router.PersonalOAuthFallbackEnabled); err != nil {
+	if err := setAgentRouterSubscription(ctx, client, router, agentSubscriptionProviders(agent), true); err != nil {
 		return err
 	}
 	return manageErr
@@ -166,7 +168,7 @@ func agentSubscriptionProviders(agent string) []agentSubscriptionProvider {
 // Connected accounts stay stored, and later launches skip setup, so the router
 // must be routed through them now. With none connected, managed billing is
 // recorded unless the page failed.
-func recordAgentSubscriptionAdds(ctx context.Context, client *api.Client, router agentRouter, scope string, added int, manageErr error) error {
+func recordAgentSubscriptionAdds(ctx context.Context, client *api.Client, router agentRouter, subscriptions []agentSubscriptionProvider, scope string, added int, manageErr error) error {
 	if added == 0 {
 		if manageErr != nil {
 			return manageErr
@@ -176,7 +178,7 @@ func recordAgentSubscriptionAdds(ctx context.Context, client *api.Client, router
 	if err := state.SaveAgentSubscriptionOptOut(scope, false); err != nil {
 		return err
 	}
-	if err := setAgentRouterSubscription(ctx, client, router, true, router.PersonalOAuthFallbackEnabled); err != nil {
+	if err := setAgentRouterSubscription(ctx, client, router, subscriptions, true); err != nil {
 		return err
 	}
 	return manageErr

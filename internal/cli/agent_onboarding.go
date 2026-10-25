@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -33,15 +34,14 @@ type agentRoutingAccess struct {
 }
 
 type agentRouter struct {
-	ID                           string              `json:"id"`
-	Name                         string              `json:"name"`
-	ClientKey                    string              `json:"client_key"`
-	IsDefault                    bool                `json:"is_default"`
-	EnabledModels                []string            `json:"enabled_models"`
-	ModelProviders               map[string]string   `json:"model_providers"`
-	ModelThinkingLevels          map[string][]string `json:"model_thinking_levels"`
-	PersonalOAuthEnabled         bool                `json:"personal_oauth_enabled"`
-	PersonalOAuthFallbackEnabled bool                `json:"personal_oauth_fallback_enabled"`
+	ID                    string              `json:"id"`
+	Name                  string              `json:"name"`
+	ClientKey             string              `json:"client_key"`
+	IsDefault             bool                `json:"is_default"`
+	EnabledModels         []string            `json:"enabled_models"`
+	ModelProviders        map[string]string   `json:"model_providers"`
+	ModelThinkingLevels   map[string][]string `json:"model_thinking_levels"`
+	SubscriptionProviders []string            `json:"subscription_providers"`
 }
 
 type agentModel struct {
@@ -78,8 +78,8 @@ type agentRouterCreateRequest struct {
 	PrimaryRetries                    int                 `json:"primary_retries"`
 	ModelFallbackEnabled              bool                `json:"model_fallback_enabled"`
 	FallbackRequiresDifferentProvider bool                `json:"fallback_requires_different_provider"`
-	PersonalOAuthEnabled              bool                `json:"personal_oauth_enabled"`
-	PersonalOAuthFallbackEnabled      bool                `json:"personal_oauth_fallback_enabled"`
+	SubscriptionProviders             []string            `json:"subscription_providers"`
+	SubscriptionAPIFallbackModels     []string            `json:"subscription_api_fallback_models"`
 	EvalScoreImputation               bool                `json:"eval_score_imputation"`
 }
 
@@ -91,13 +91,13 @@ type agentRouterUpdateRequest struct {
 	ModelThinkingLevels map[string][]string `json:"model_thinking_levels"`
 }
 
+// Omitting subscription_api_fallback_models keeps the router's current ones.
 type agentRouterSubscriptionUpdateRequest struct {
-	Name                         string              `json:"name"`
-	EnabledModels                []string            `json:"enabled_models"`
-	ModelProviders               map[string]string   `json:"model_providers,omitempty"`
-	ModelThinkingLevels          map[string][]string `json:"model_thinking_levels,omitempty"`
-	PersonalOAuthEnabled         bool                `json:"personal_oauth_enabled"`
-	PersonalOAuthFallbackEnabled bool                `json:"personal_oauth_fallback_enabled"`
+	Name                  string              `json:"name"`
+	EnabledModels         []string            `json:"enabled_models"`
+	ModelProviders        map[string]string   `json:"model_providers,omitempty"`
+	ModelThinkingLevels   map[string][]string `json:"model_thinking_levels,omitempty"`
+	SubscriptionProviders []string            `json:"subscription_providers"`
 }
 
 type agentCredential struct {
@@ -227,7 +227,7 @@ func ensureAgentRouter(
 			return router.ClientKey == claudeClientKey
 		})
 		if found {
-			if err := setAgentRouterSubscription(ctx, client, existing, usePersonalSubscription, false); err != nil {
+			if err := setAgentRouterSubscription(ctx, client, existing, agentSubscriptionProviders(agent), usePersonalSubscription); err != nil {
 				return "", err
 			}
 			if err := state.SaveAgentRouterID(scope, existing.ID); err != nil {
@@ -324,7 +324,7 @@ func ensureAgentRouter(
 			if !found {
 				return "", api.HumanError(createErr)
 			}
-			if err := setAgentRouterSubscription(ctx, client, existing, usePersonalSubscription, false); err != nil {
+			if err := setAgentRouterSubscription(ctx, client, existing, agentSubscriptionProviders(agent), usePersonalSubscription); err != nil {
 				return "", err
 			}
 			routerID = existing.ID
@@ -584,26 +584,42 @@ func readAgentLine(stdin io.Reader) (string, error) {
 	}
 }
 
+// setAgentRouterSubscription adds the subscriptions' providers to, or removes
+// them from, the router's subscription providers. Providers without enabled
+// models on the router are skipped, and API fallback models stay as they are.
 func setAgentRouterSubscription(
 	ctx context.Context,
 	client *api.Client,
 	router agentRouter,
+	subscriptions []agentSubscriptionProvider,
 	enabled bool,
-	fallbackEnabled bool,
 ) error {
-	if router.PersonalOAuthEnabled == enabled && router.PersonalOAuthFallbackEnabled == fallbackEnabled {
+	providers := slices.DeleteFunc(slices.Clone(router.SubscriptionProviders), func(provider string) bool {
+		return !enabled && slices.ContainsFunc(subscriptions, func(s agentSubscriptionProvider) bool { return s.routerProvider == provider })
+	})
+	if enabled {
+		served := slices.Collect(maps.Values(router.ModelProviders))
+		for _, subscription := range subscriptions {
+			if !slices.Contains(providers, subscription.routerProvider) && slices.Contains(served, subscription.routerProvider) {
+				providers = append(providers, subscription.routerProvider)
+			}
+		}
+	}
+	if providers == nil {
+		providers = []string{}
+	}
+	if sameStringSet(providers, router.SubscriptionProviders) {
 		return nil
 	}
 	if strings.TrimSpace(router.Name) == "" || len(router.EnabledModels) == 0 {
 		return errors.New("Dari returned an incomplete agent router")
 	}
 	body := agentRouterSubscriptionUpdateRequest{
-		Name:                         router.Name,
-		EnabledModels:                router.EnabledModels,
-		ModelProviders:               router.ModelProviders,
-		ModelThinkingLevels:          router.ModelThinkingLevels,
-		PersonalOAuthEnabled:         enabled,
-		PersonalOAuthFallbackEnabled: fallbackEnabled,
+		Name:                  router.Name,
+		EnabledModels:         router.EnabledModels,
+		ModelProviders:        router.ModelProviders,
+		ModelThinkingLevels:   router.ModelThinkingLevels,
+		SubscriptionProviders: providers,
 	}
 	path := "/v1/organizations/current/routers/" + url.PathEscape(router.ID)
 	if err := client.Do(ctx, http.MethodPut, path, body, &router); err != nil {
@@ -1045,6 +1061,10 @@ func agentRouterCreateBody(
 	if clientKey == claudeManagedRouterClientKey {
 		name = claudeManagedRouterName
 	}
+	subscriptionProviders := []string{}
+	if usePersonalSubscription && providerSources[claudeSubscription.routerProvider] != "" {
+		subscriptionProviders = append(subscriptionProviders, claudeSubscription.routerProvider)
+	}
 	return agentRouterCreateRequest{
 		Name:                              name,
 		ClientKey:                         clientKey,
@@ -1057,8 +1077,8 @@ func agentRouterCreateBody(
 		PrimaryRetries:                    3,
 		ModelFallbackEnabled:              true,
 		FallbackRequiresDifferentProvider: true,
-		PersonalOAuthEnabled:              usePersonalSubscription,
-		PersonalOAuthFallbackEnabled:      false,
+		SubscriptionProviders:             subscriptionProviders,
+		SubscriptionAPIFallbackModels:     []string{},
 		EvalScoreImputation:               true,
 	}
 }

@@ -147,6 +147,8 @@ provider_credential_ids:
 routing_strategy: dari
 ```
 
+To serve OpenAI or Anthropic models from the attributed user's personal subscription, pass `--subscription openai` or `--subscription anthropic` (or set `subscription_providers` in `router.yml`). The provider's `--managed-key` or `--provider-credential` choice becomes the API fallback credential. Models passed with `--api-fallback MODEL` (or listed in `subscription_api_fallback_models`) run on it while the subscription is unavailable; the provider's other models pause until the subscription is back. On update, either flag replaces its list, an empty value clears it, and omitting it keeps the current list.
+
 Use `dari credentials provider update` to change a saved credential without changing its ID. For AWS IAM credentials, pass only `--aws-region` to keep the stored keys, or include `--aws-access-key-id-env`, `--aws-secret-access-key-env`, and optional `--aws-session-token-env` to replace them. Run `dari router models` first to see the current catalog. `dari router request-costs <request_uuid>...` looks up content-free model reference costs for requests made by the `DARI_ROUTING_API_KEY`; set that environment variable to the key used for inference. Results are scoped to the key, may be delayed while telemetry lands, and are not a subscription cash charge.
 
 Inspect and manage routers:

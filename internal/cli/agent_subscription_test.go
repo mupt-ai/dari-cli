@@ -37,8 +37,8 @@ func TestLoggedInAgentConnectsMissingSubscription(t *testing.T) {
 				switch r.Method + " " + r.URL.Path {
 				case "GET /v1/organizations/current/routers":
 					_ = json.NewEncoder(w).Encode(map[string]any{"routers": []agentRouter{
-						{ID: "default", Name: "Default", IsDefault: true, EnabledModels: []string{"openai/test"}},
-						{ID: "claude", Name: "Claude", ClientKey: claudeRouterClientKey, EnabledModels: []string{"anthropic/test"}},
+						{ID: "default", Name: "Default", IsDefault: true, EnabledModels: []string{"openai/test", "anthropic/test"}, ModelProviders: map[string]string{"openai/test": "openai", "anthropic/test": "anthropic"}},
+						{ID: "claude", Name: "Claude", ClientKey: claudeRouterClientKey, EnabledModels: []string{"anthropic/test"}, ModelProviders: map[string]string{"anthropic/test": "anthropic"}},
 					}})
 				case "GET /v1/organizations/current/credentials":
 					credentials := []agentCredential{}
@@ -72,7 +72,7 @@ func TestLoggedInAgentConnectsMissingSubscription(t *testing.T) {
 				case "PUT /v1/organizations/current/routers/default", "PUT /v1/organizations/current/routers/claude":
 					var body agentRouterSubscriptionUpdateRequest
 					_ = json.NewDecoder(r.Body).Decode(&body)
-					updated = body.PersonalOAuthEnabled
+					updated = slices.Contains(body.SubscriptionProviders, map[string]string{"openai_codex": "openai", "anthropic_claude_code": "anthropic"}[tc.provider])
 					_ = json.NewEncoder(w).Encode(map[string]any{})
 				default:
 					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -299,12 +299,12 @@ func TestAgentSubscriptionAddsSurviveAnErrorOnTheAccountsPage(t *testing.T) {
 	}))
 	defer server.Close()
 	client := api.New(server.URL)
-	router := agentRouter{ID: "rtr_default", Name: "Default", EnabledModels: []string{"openai/gpt-5.6-sol"}}
+	router := agentRouter{ID: "rtr_default", Name: "Default", EnabledModels: []string{"openai/gpt-5.6-sol"}, ModelProviders: map[string]string{"openai/gpt-5.6-sol": "openai"}}
 	scope := "test-org|agent:pi"
 	pageErr := errors.New("agent onboarding canceled")
 
 	// One account was connected before Esc: it is stored, so routing must use it.
-	if err := recordAgentSubscriptionAdds(context.Background(), client, router, scope, 1, pageErr); err != pageErr {
+	if err := recordAgentSubscriptionAdds(context.Background(), client, router, agentSubscriptionProviders("pi"), scope, 1, pageErr); err != pageErr {
 		t.Fatalf("error = %v, want the page error", err)
 	}
 	if puts != 1 {
@@ -316,7 +316,7 @@ func TestAgentSubscriptionAddsSurviveAnErrorOnTheAccountsPage(t *testing.T) {
 
 	// Nothing connected and the page failed: no preference is recorded.
 	otherScope := "test-org|agent:codex"
-	if err := recordAgentSubscriptionAdds(context.Background(), client, router, otherScope, 0, pageErr); err != pageErr {
+	if err := recordAgentSubscriptionAdds(context.Background(), client, router, agentSubscriptionProviders("codex"), otherScope, 0, pageErr); err != pageErr {
 		t.Fatalf("error = %v, want the page error", err)
 	}
 	if optedOut, err := state.AgentSubscriptionOptedOut(otherScope); err != nil || optedOut {

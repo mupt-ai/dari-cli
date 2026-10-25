@@ -85,15 +85,6 @@ func newRouterModelsCmd(gf *globalFlags) *cobra.Command {
 	}
 }
 
-// The replacement served for one model while its personal subscription is
-// exhausted. It runs on a different provider with one thinking level.
-type routerSubscriptionFallback struct {
-	Model         string `json:"model" yaml:"model"`
-	Provider      string `json:"provider,omitempty" yaml:"provider"`
-	ThinkingLevel string `json:"thinking_level,omitempty" yaml:"thinking_level"`
-	FastMode      bool   `json:"fast_mode" yaml:"fast_mode"`
-}
-
 type routerCustomRule struct {
 	When          string  `json:"when" yaml:"when"`
 	Use           string  `json:"use" yaml:"use"`
@@ -119,20 +110,24 @@ type routerCreateRequest struct {
 	CustomConfig          *routerCustomConfig `json:"custom_config,omitempty"`
 	ModelThinkingLevels   map[string][]string `json:"model_thinking_levels,omitempty"`
 	FastModels            []string            `json:"fast_models,omitempty"`
-	// Source model -> replacement served while its personal subscription is exhausted.
-	SubscriptionFallbackModels map[string]*routerSubscriptionFallback `json:"subscription_fallback_models,omitempty"`
+	// Providers served by the attributed user's subscription, and the models
+	// that keep running on the provider's API credential while it is unavailable.
+	SubscriptionProviders         []string `json:"subscription_providers,omitempty"`
+	SubscriptionAPIFallbackModels []string `json:"subscription_api_fallback_models,omitempty"`
 }
 
 type routerUpdateRequest struct {
-	AllowLongContext           *bool                                  `json:"allow_long_context,omitempty"`
-	EvalScoreImputation        *bool                                  `json:"eval_score_imputation,omitempty"`
-	Name                       string                                 `json:"name"`
-	EnabledModels              []string                               `json:"enabled_models"`
-	ProviderKeys               map[string]string                      `json:"provider_keys,omitempty"`
-	ProviderCredentialIDs      map[string]string                      `json:"provider_credential_ids,omitempty"`
-	ProviderKeySources         map[string]string                      `json:"provider_key_sources,omitempty"`
-	RoutingStrategy            string                                 `json:"routing_strategy,omitempty"`
-	SubscriptionFallbackModels map[string]*routerSubscriptionFallback `json:"subscription_fallback_models,omitempty"`
+	AllowLongContext      *bool             `json:"allow_long_context,omitempty"`
+	EvalScoreImputation   *bool             `json:"eval_score_imputation,omitempty"`
+	Name                  string            `json:"name"`
+	EnabledModels         []string          `json:"enabled_models"`
+	ProviderKeys          map[string]string `json:"provider_keys,omitempty"`
+	ProviderCredentialIDs map[string]string `json:"provider_credential_ids,omitempty"`
+	ProviderKeySources    map[string]string `json:"provider_key_sources,omitempty"`
+	RoutingStrategy       string            `json:"routing_strategy,omitempty"`
+	// Omitted keeps the current list; an empty list clears it.
+	SubscriptionProviders         *[]string `json:"subscription_providers,omitempty"`
+	SubscriptionAPIFallbackModels *[]string `json:"subscription_api_fallback_models,omitempty"`
 }
 
 type routerCurrent struct {
@@ -142,33 +137,35 @@ type routerCurrent struct {
 }
 
 type routerCreateManifest struct {
-	AllowLongContext           bool                                  `yaml:"allow_long_context"`
-	EvalScoreImputation        *bool                                 `yaml:"eval_score_imputation"`
-	Name                       string                                `yaml:"name"`
-	EnabledModels              []string                              `yaml:"enabled_models"`
-	ModelProviders             map[string]string                     `yaml:"model_providers"`
-	ProviderKeys               map[string]string                     `yaml:"provider_keys"`
-	ProviderKeyEnvs            map[string]string                     `yaml:"provider_key_envs"`
-	ProviderCredentialIDs      map[string]string                     `yaml:"provider_credential_ids"`
-	ProviderKeySources         map[string]string                     `yaml:"provider_key_sources"`
-	RoutingStrategy            string                                `yaml:"routing_strategy"`
-	CustomConfig               *routerCustomConfig                   `yaml:"custom_config"`
-	ModelThinkingLevels        map[string][]string                   `yaml:"model_thinking_levels"`
-	FastModels                 []string                              `yaml:"fast_models"`
-	SubscriptionFallbackModels map[string]routerSubscriptionFallback `yaml:"subscription_fallback_models"`
+	AllowLongContext              bool                `yaml:"allow_long_context"`
+	EvalScoreImputation           *bool               `yaml:"eval_score_imputation"`
+	Name                          string              `yaml:"name"`
+	EnabledModels                 []string            `yaml:"enabled_models"`
+	ModelProviders                map[string]string   `yaml:"model_providers"`
+	ProviderKeys                  map[string]string   `yaml:"provider_keys"`
+	ProviderKeyEnvs               map[string]string   `yaml:"provider_key_envs"`
+	ProviderCredentialIDs         map[string]string   `yaml:"provider_credential_ids"`
+	ProviderKeySources            map[string]string   `yaml:"provider_key_sources"`
+	RoutingStrategy               string              `yaml:"routing_strategy"`
+	CustomConfig                  *routerCustomConfig `yaml:"custom_config"`
+	ModelThinkingLevels           map[string][]string `yaml:"model_thinking_levels"`
+	FastModels                    []string            `yaml:"fast_models"`
+	SubscriptionProviders         []string            `yaml:"subscription_providers"`
+	SubscriptionAPIFallbackModels []string            `yaml:"subscription_api_fallback_models"`
 }
 
 type routerConfigFlags struct {
-	allowLongContext           bool
-	evalScoreImputation        bool
-	models                     []string
-	subscriptionFallbackModels []string
-	providerKeyPairs           []string
-	providerKeyEnvs            []string
-	providerCredentials        []string
-	managedKeyProvider         []string
-	strategy                   string
-	flagNames                  []string
+	allowLongContext      bool
+	evalScoreImputation   bool
+	models                []string
+	subscriptionProviders []string
+	apiFallbackModels     []string
+	providerKeyPairs      []string
+	providerKeyEnvs       []string
+	providerCredentials   []string
+	managedKeyProvider    []string
+	strategy              string
+	flagNames             []string
 }
 
 func (rf *routerConfigFlags) register(cmd *cobra.Command) {
@@ -186,59 +183,37 @@ func (rf *routerConfigFlags) register(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&rf.strategy, name("strategy"), "", "Routing strategy: dari; use a manifest for custom rules")
 	cmd.Flags().BoolVar(&rf.allowLongContext, name("allow-long-context"), false, "Allow provider long-context surcharges (off by default)")
 	cmd.Flags().BoolVar(&rf.evalScoreImputation, name("eval-score-imputation"), true, "Estimate missing eval scores for a model and thinking level from related measured scores (on by default)")
-	cmd.Flags().StringArrayVar(&rf.subscriptionFallbackModels, name("subscription-fallback-model"), nil, "Replacement served while a model's personal subscription is exhausted, as SOURCE_MODEL=FALLBACK_MODEL[,via=PROVIDER][,thinking=LEVEL][,fast] (repeatable); SOURCE_MODEL= clears it")
+	cmd.Flags().StringSliceVar(&rf.subscriptionProviders, name("subscription"), nil, "Serve this provider's models from the attributed user's personal subscription: openai or anthropic (repeatable or comma-separated). The provider's --provider-credential or --managed-key choice becomes its API fallback credential. On update this replaces the list; an empty value clears it")
+	cmd.Flags().StringSliceVar(&rf.apiFallbackModels, name("api-fallback"), nil, "Keep this subscription model running on the provider's API credential while the subscription is unavailable; models without it pause until the subscription is back (repeatable or comma-separated). On update this replaces the list; an empty value clears it")
 }
 
-// A bare "SOURCE_MODEL=" clears that model's fallback on update, so the value
-// is nullable rather than omitted. Legacy provider keys remain accepted.
-func (rf *routerConfigFlags) subscriptionFallbacks() (map[string]*routerSubscriptionFallback, error) {
-	if len(rf.subscriptionFallbackModels) == 0 {
-		return nil, nil
-	}
-	fallbacks := map[string]*routerSubscriptionFallback{}
-	for _, pair := range rf.subscriptionFallbackModels {
-		sourceModel, spec, ok := strings.Cut(pair, "=")
-		sourceModel = strings.ToLower(strings.TrimSpace(sourceModel))
-		if !ok || sourceModel == "" {
-			return nil, fmt.Errorf("invalid --subscription-fallback-model %q: expected SOURCE_MODEL=FALLBACK_MODEL[,via=PROVIDER][,thinking=LEVEL][,fast]", pair)
+// subscriptionSettings returns the subscription lists, nil when their flag
+// was not passed so update keeps the router's current list.
+func (rf *routerConfigFlags) subscriptionSettings(cmd *cobra.Command) (providers, apiFallbackModels *[]string, err error) {
+	if cmd.Flags().Changed("subscription") {
+		cleaned := []string{}
+		for _, provider := range rf.subscriptionProviders {
+			provider = strings.ToLower(strings.TrimSpace(provider))
+			if provider == "" {
+				continue
+			}
+			if provider != "openai" && provider != "anthropic" {
+				return nil, nil, fmt.Errorf("--subscription %s: subscriptions serve openai or anthropic", provider)
+			}
+			cleaned = append(cleaned, provider)
 		}
-		spec = strings.TrimSpace(spec)
-		if spec == "" {
-			fallbacks[sourceModel] = nil
-			continue
-		}
-		fallback, err := parseSubscriptionFallbackSpec(spec)
-		if err != nil {
-			return nil, fmt.Errorf("invalid --subscription-fallback-model %q: %w", pair, err)
-		}
-		fallbacks[sourceModel] = fallback
+		providers = &cleaned
 	}
-	return fallbacks, nil
-}
-
-// MODEL_ID followed by optional comma-separated options: via=PROVIDER,
-// thinking=LEVEL, fast.
-func parseSubscriptionFallbackSpec(spec string) (*routerSubscriptionFallback, error) {
-	parts := strings.Split(spec, ",")
-	fallback := &routerSubscriptionFallback{Model: strings.TrimSpace(parts[0])}
-	if fallback.Model == "" {
-		return nil, errors.New("expected MODEL_ID")
-	}
-	for _, option := range parts[1:] {
-		key, value, _ := strings.Cut(strings.TrimSpace(option), "=")
-		value = strings.TrimSpace(value)
-		switch strings.ToLower(strings.TrimSpace(key)) {
-		case "via":
-			fallback.Provider = strings.ToLower(value)
-		case "thinking":
-			fallback.ThinkingLevel = strings.ToLower(value)
-		case "fast":
-			fallback.FastMode = value == "" || value == "true"
-		default:
-			return nil, fmt.Errorf("unknown option %q; expected via=PROVIDER, thinking=LEVEL, or fast", option)
+	if cmd.Flags().Changed("api-fallback") {
+		cleaned := []string{}
+		for _, model := range rf.apiFallbackModels {
+			if model = strings.TrimSpace(model); model != "" {
+				cleaned = append(cleaned, model)
+			}
 		}
+		apiFallbackModels = &cleaned
 	}
-	return fallback, nil
+	return providers, apiFallbackModels, nil
 }
 
 func (rf *routerConfigFlags) changed(cmd *cobra.Command) bool {
@@ -338,11 +313,16 @@ func newRouterCreateCmd(gf *globalFlags) *cobra.Command {
 			if cmd.Flags().Changed("eval-score-imputation") {
 				body.EvalScoreImputation = &rf.evalScoreImputation
 			}
-			fallbacks, err := rf.subscriptionFallbacks()
+			subscriptionProviders, apiFallbackModels, err := rf.subscriptionSettings(cmd)
 			if err != nil {
 				return err
 			}
-			body.SubscriptionFallbackModels = fallbacks
+			if subscriptionProviders != nil {
+				body.SubscriptionProviders = *subscriptionProviders
+			}
+			if apiFallbackModels != nil {
+				body.SubscriptionAPIFallbackModels = *apiFallbackModels
+			}
 			keys, err := rf.providerKeys(cmd.ErrOrStderr())
 			if err != nil {
 				return err
@@ -427,7 +407,7 @@ func newRouterUpdateCmd(gf *globalFlags) *cobra.Command {
 			if cmd.Flags().Changed("eval-score-imputation") {
 				body.EvalScoreImputation = &rf.evalScoreImputation
 			}
-			if body.SubscriptionFallbackModels, err = rf.subscriptionFallbacks(); err != nil {
+			if body.SubscriptionProviders, body.SubscriptionAPIFallbackModels, err = rf.subscriptionSettings(cmd); err != nil {
 				return err
 			}
 			if cmd.Flags().Changed("name") {
@@ -685,7 +665,15 @@ func (manifest routerCreateManifest) createRequest(path string, resolveCatalogDe
 	if err != nil {
 		return routerCreateRequest{}, err
 	}
-	fastModels, err := normalizeManifestFastModels(path, manifest.FastModels, models)
+	fastModels, err := normalizeManifestModelList(path, "fast_models", manifest.FastModels, models)
+	if err != nil {
+		return routerCreateRequest{}, err
+	}
+	subscriptionProviders, err := normalizeManifestSubscriptionProviders(path, manifest.SubscriptionProviders)
+	if err != nil {
+		return routerCreateRequest{}, err
+	}
+	apiFallbackModels, err := normalizeManifestModelList(path, "subscription_api_fallback_models", manifest.SubscriptionAPIFallbackModels, models)
 	if err != nil {
 		return routerCreateRequest{}, err
 	}
@@ -728,14 +716,8 @@ func (manifest routerCreateManifest) createRequest(path string, resolveCatalogDe
 	body.CustomConfig = customConfig
 	body.ModelThinkingLevels = modelThinkingLevels
 	body.FastModels = fastModels
-	if len(manifest.SubscriptionFallbackModels) > 0 {
-		body.SubscriptionFallbackModels = map[string]*routerSubscriptionFallback{}
-		for sourceModel, fallback := range manifest.SubscriptionFallbackModels {
-			fallback := fallback
-			fallback.Model = strings.TrimSpace(fallback.Model)
-			body.SubscriptionFallbackModels[strings.ToLower(strings.TrimSpace(sourceModel))] = &fallback
-		}
-	}
+	body.SubscriptionProviders = subscriptionProviders
+	body.SubscriptionAPIFallbackModels = apiFallbackModels
 	return body, nil
 }
 
@@ -1037,7 +1019,9 @@ func normalizeManifestModelThinkingLevels(
 	return normalized, nil
 }
 
-func normalizeManifestFastModels(path string, raw, models []string) ([]string, error) {
+// normalizeManifestModelList checks that every entry of a model list field is
+// an enabled model and returns them in enabled_models order.
+func normalizeManifestModelList(path, field string, raw, models []string) ([]string, error) {
 	if raw == nil {
 		return nil, nil
 	}
@@ -1049,10 +1033,10 @@ func normalizeManifestFastModels(path string, raw, models []string) ([]string, e
 	for index, rawModel := range raw {
 		model := strings.TrimSpace(rawModel)
 		if model == "" {
-			return nil, fmt.Errorf("%s: fast_models[%d] must be non-empty", path, index)
+			return nil, fmt.Errorf("%s: %s[%d] must be non-empty", path, field, index)
 		}
 		if !enabled[model] {
-			return nil, fmt.Errorf("%s: fast_models[%d] must be one of enabled_models", path, index)
+			return nil, fmt.Errorf("%s: %s[%d] must be one of enabled_models", path, field, index)
 		}
 		selected[model] = true
 	}
@@ -1063,6 +1047,23 @@ func normalizeManifestFastModels(path string, raw, models []string) ([]string, e
 		}
 	}
 	return normalized, nil
+}
+
+func normalizeManifestSubscriptionProviders(path string, raw []string) ([]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	providers := make([]string, 0, len(raw))
+	for index, rawProvider := range raw {
+		provider := strings.ToLower(strings.TrimSpace(rawProvider))
+		if provider != "openai" && provider != "anthropic" {
+			return nil, fmt.Errorf("%s: subscription_providers[%d] must be openai or anthropic", path, index)
+		}
+		if !slices.Contains(providers, provider) {
+			providers = append(providers, provider)
+		}
+	}
+	return providers, nil
 }
 
 func normalizeManifestCustomConfig(
