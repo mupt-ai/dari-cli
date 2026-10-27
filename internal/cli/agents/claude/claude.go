@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/mupt-ai/dari-cli/internal/cli/agents"
 )
@@ -70,8 +69,6 @@ func injectSettings(command *agents.Command, models agents.Models) error {
 		"statusLine": map[string]any{
 			"type":    "command",
 			"command": agents.ShellQuote(executable) + " agent-status --claude",
-			// Idle sessions must flip to "cache cold" once the cache TTL passes.
-			"refreshInterval": 30,
 		},
 		// Replace Claude Code's built-in lineup: only the router's models appear.
 		"modelPicker": map[string]any{"options": pickerOptions(models), "replaceBuiltInOptions": true},
@@ -94,8 +91,7 @@ func injectSettings(command *agents.Command, models agents.Models) error {
 
 // TranscriptStatus renders the status line from the status-line input Claude
 // Code passes on stdin. The transcript keeps routing metadata and usage on
-// each assistant entry, so cache state and its response timestamp stay
-// aligned to one turn.
+// each assistant entry.
 func TranscriptStatus(input io.Reader) (agents.Status, error) {
 	var payload struct {
 		TranscriptPath string `json:"transcript_path"`
@@ -113,19 +109,13 @@ func TranscriptStatus(input io.Reader) (agents.Status, error) {
 	scanner.Buffer(make([]byte, 64<<10), 16<<20)
 	for scanner.Scan() {
 		var entry struct {
-			Type      string    `json:"type"`
-			Timestamp time.Time `json:"timestamp"`
-			Message   struct {
+			Type    string `json:"type"`
+			Message struct {
 				Routing agents.Status `json:"dari_routing"`
-				Usage   struct {
-					CacheReadInputTokens *int64 `json:"cache_read_input_tokens"`
-				} `json:"usage"`
 			} `json:"message"`
 		}
 		if json.Unmarshal(scanner.Bytes(), &entry) == nil && entry.Type == "assistant" && entry.Message.Routing.Model != "" {
 			last = entry.Message.Routing
-			last.CachedTokens = entry.Message.Usage.CacheReadInputTokens
-			last.RespondedAt = entry.Timestamp
 		}
 	}
 	return last, scanner.Err()

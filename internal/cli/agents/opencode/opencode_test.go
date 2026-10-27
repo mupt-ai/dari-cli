@@ -89,10 +89,9 @@ func TestBuildOpenCodeCommandInjectsSessionConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{`ctx.session.hook("model.request"`, `"x-opencode-request-kind"`, `"x-opencode-agent"`, `ctx.session.hook("http.response"`, `"x-dari-selected-model"`, `"agent-status", "--headers"`, `providerID: "dari"`,
-		`"--cached-tokens", String(route.cachedTokens)`, `const copy = event.response.clone()`, `, ...args], { stdout: "pipe"`,
-		`expiries[event.sessionID] = setTimeout(() => render(event.sessionID).catch(() => {}), cacheTTL)`,
-		`process.env.DARI_STATUS_EXECUTABLE`, `process.env.DARI_CACHE_TTL_MS`,
-		`generations[sessionID] !== generation`, `clearTimeout(expiries[event.sessionID])`,
+		`, ...args], { stdout: "pipe"`,
+		`process.env.DARI_STATUS_EXECUTABLE`,
+		`generations[sessionID] !== generation`,
 	} {
 		if !strings.Contains(string(server), want) {
 			t.Errorf("server plugin does not record routing status (%s missing)", want)
@@ -101,8 +100,8 @@ func TestBuildOpenCodeCommandInjectsSessionConfig(t *testing.T) {
 	if string(server) != serverPlugin {
 		t.Error("server plugin differs from agents/opencode/server.ts")
 	}
-	if agents.EnvironmentValue(command.Env, "DARI_STATUS_EXECUTABLE") == "" || agents.EnvironmentValue(command.Env, "DARI_CACHE_TTL_MS") != "300000" {
-		t.Errorf("status environment = %q, %q", agents.EnvironmentValue(command.Env, "DARI_STATUS_EXECUTABLE"), agents.EnvironmentValue(command.Env, "DARI_CACHE_TTL_MS"))
+	if agents.EnvironmentValue(command.Env, "DARI_STATUS_EXECUTABLE") == "" {
+		t.Errorf("status environment = %q", agents.EnvironmentValue(command.Env, "DARI_STATUS_EXECUTABLE"))
 	}
 	tui, err := os.ReadFile(filepath.Join(plugin, "tui.tsx"))
 	if err != nil {
@@ -194,148 +193,9 @@ func TestBuildOpenCodeCommandRejectsSharedServer(t *testing.T) {
 	}
 }
 
-// A TTL render that captured an older cache reading must not overwrite the
-// newer warm status written when the next response's usage arrives.
-func TestOpenCodeStatusPluginDropsStaleRenders(t *testing.T) {
-	bun, err := exec.LookPath("bun")
-	if err != nil {
-		t.Skip("bun not installed")
-	}
-	dir := t.TempDir()
-	// Expired readings render slowly, so the TTL render finishes last.
-	script := `const i = process.argv.indexOf("--responded-at")
-const age = i < 0 ? Infinity : Date.now() - Number(process.argv[i + 1])
-if (age >= 300) { await Bun.sleep(800); console.log("m · cache cold") } else console.log("m · cache warm")
-`
-	source := serverPlugin
-	if err := os.MkdirAll(filepath.Join(dir, "plugin"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "plugin", "server.ts"), []byte(source), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	harness := `import plugin from "./plugin/server.ts";
-import { readFileSync } from "node:fs";
-let hook: Function = () => {};
-await plugin.setup({ session: { hook: async (_: string, fn: Function) => { hook = fn; } } });
-const usage = 'data: {"usage":{"prompt_tokens_details":{"cached_tokens":8}}}\n';
-const headers = { "x-dari-selected-model": "m" };
-await hook({ kind: "primary", sessionID: "s", response: new Response(usage, { headers }) });
-await Bun.sleep(150);
-let finish: Function = () => {};
-const body = new ReadableStream({ start(c) { finish = () => { c.enqueue(new TextEncoder().encode(usage)); c.close() } } });
-await hook({ kind: "primary", sessionID: "s", response: new Response(body, { headers }) });
-await Bun.sleep(300); // The first TTL render has started on the old reading.
-finish();
-await Bun.sleep(900); // The stale render has finished; the new TTL has not.
-console.log(JSON.parse(readFileSync("./status.json", "utf8")).s);
-process.exit(0);
-`
-	if err := os.WriteFile(filepath.Join(dir, "run.ts"), []byte(harness), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cmd := statusPluginCommand(t, bun, dir, script, "300")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("bun: %v\n%s", err, out)
-	}
-	if got := strings.TrimSpace(string(out)); got != "m · cache warm" {
-		t.Fatalf("status = %q", got)
-	}
-}
-
-// A header render that computed "cache warm" just before expiry and finishes
-// after the TTL re-render must not leave the footer warm.
-func TestOpenCodeStatusPluginExpiryBeatsInFlightWarmRender(t *testing.T) {
-	bun, err := exec.LookPath("bun")
-	if err != nil {
-		t.Skip("bun not installed")
-	}
-	dir := t.TempDir()
-	script := `const i = process.argv.indexOf("--responded-at")
-const age = i < 0 ? Infinity : Date.now() - Number(process.argv[i + 1])
-if (age < 300) { await Bun.sleep(400); console.log("m · cache warm") } else console.log("m · cache cold")
-`
-	source := serverPlugin
-	if err := os.MkdirAll(filepath.Join(dir, "plugin"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "plugin", "server.ts"), []byte(source), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	harness := `import plugin from "./plugin/server.ts";
-import { readFileSync } from "node:fs";
-let hook: Function = () => {};
-await plugin.setup({ session: { hook: async (_: string, fn: Function) => { hook = fn; } } });
-const usage = 'data: {"usage":{"prompt_tokens_details":{"cached_tokens":8}}}\n';
-const headers = { "x-dari-selected-model": "m" };
-await hook({ kind: "primary", sessionID: "s", response: new Response(usage, { headers }) });
-await Bun.sleep(100); // The usage render is in flight; the TTL timer is armed.
-// Same model, body never finishes: this render copies the warm reading.
-hook({ kind: "primary", sessionID: "s", response: new Response(new ReadableStream({}), { headers }) });
-await Bun.sleep(1200);
-console.log(JSON.parse(readFileSync("./status.json", "utf8")).s);
-process.exit(0);
-`
-	if err := os.WriteFile(filepath.Join(dir, "run.ts"), []byte(harness), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cmd := statusPluginCommand(t, bun, dir, script, "300")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("bun: %v\n%s", err, out)
-	}
-	if got := strings.TrimSpace(string(out)); got != "m · cache cold" {
-		t.Fatalf("status = %q", got)
-	}
-}
-
-// The client may consume the body as soon as the hook returns; the usage copy
-// must already exist so cache warmth still updates.
-func TestOpenCodeStatusPluginClonesBeforeClientReads(t *testing.T) {
-	bun, err := exec.LookPath("bun")
-	if err != nil {
-		t.Skip("bun not installed")
-	}
-	dir := t.TempDir()
-	script := `await Bun.sleep(100)
-console.log(process.argv.includes("--cached-tokens") ? "m · cache warm" : "m · cache cold")
-`
-	source := serverPlugin
-	if err := os.MkdirAll(filepath.Join(dir, "plugin"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "plugin", "server.ts"), []byte(source), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	harness := `import plugin from "./plugin/server.ts";
-import { readFileSync } from "node:fs";
-let hook: Function = () => {};
-await plugin.setup({ session: { hook: async (_: string, fn: Function) => { hook = fn; } } });
-const response = new Response('data: {"usage":{"prompt_tokens_details":{"cached_tokens":8}}}\n', { headers: { "x-dari-selected-model": "m" } });
-const pending = hook({ kind: "primary", sessionID: "s", response });
-await response.text(); // The client reads the whole body right away.
-await pending;
-await Bun.sleep(800);
-console.log(JSON.parse(readFileSync("./status.json", "utf8")).s);
-process.exit(0);
-`
-	if err := os.WriteFile(filepath.Join(dir, "run.ts"), []byte(harness), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cmd := statusPluginCommand(t, bun, dir, script, "60000")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("bun: %v\n%s", err, out)
-	}
-	if got := strings.TrimSpace(string(out)); got != "m · cache warm" {
-		t.Fatalf("status = %q", got)
-	}
-}
-
 // statusPluginCommand runs a bun harness in dir with the environment an agent
 // launch sets, using renderScript as the status renderer.
-func statusPluginCommand(t *testing.T, bun, dir, renderScript, ttl string) *exec.Cmd {
+func statusPluginCommand(t *testing.T, bun, dir, renderScript string) *exec.Cmd {
 	t.Helper()
 	script := filepath.Join(dir, "render.ts")
 	renderer := filepath.Join(dir, "render.sh")
@@ -348,7 +208,7 @@ func statusPluginCommand(t *testing.T, bun, dir, renderScript, ttl string) *exec
 	}
 	cmd := exec.Command(bun, "run.ts")
 	cmd.Dir = dir
-	cmd.Env = agents.WithEnvironment(os.Environ(), map[string]string{"DARI_STATUS_EXECUTABLE": renderer, "DARI_CACHE_TTL_MS": ttl})
+	cmd.Env = agents.WithEnvironment(os.Environ(), map[string]string{"DARI_STATUS_EXECUTABLE": renderer})
 	return cmd
 }
 

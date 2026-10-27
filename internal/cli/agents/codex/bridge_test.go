@@ -160,7 +160,7 @@ func TestCodexBridgeStreamsAndPreservesNames(t *testing.T) {
 		t.Fatalf("stream: %q %v", line, err)
 	}
 	notice := read()
-	if notice["method"] != "thread/name/updated" || notice["params"].(map[string]any)["threadName"] != "test/served-model · high · lease 2 turns left · cache cold" {
+	if notice["method"] != "thread/name/updated" || notice["params"].(map[string]any)["threadName"] != "test/served-model · high · lease 2 turns left" {
 		t.Fatal(notice)
 	}
 	close(release)
@@ -182,32 +182,8 @@ func TestCodexBridgeStreamsAndPreservesNames(t *testing.T) {
 	if name := read()["result"].(map[string]any)["thread"].(map[string]any)["name"]; name != "My New Title" {
 		t.Fatal(name)
 	}
-	if read()["params"].(map[string]any)["threadName"] != "test/served-model · high · lease 2 turns left · cache cold" {
+	if read()["params"].(map[string]any)["threadName"] != "test/served-model · high · lease 2 turns left" {
 		t.Fatal("resume lost status")
-	}
-	for i, tc := range []struct {
-		cached int
-		want   string
-	}{
-		{4096, "test/served-model · high · lease 2 turns left · cache warm"},
-		{0, "test/served-model · high · lease 2 turns left · cache cold"},
-	} {
-		send(10+i, "test/usage", map[string]any{"cachedInputTokens": tc.cached, "inputTokens": 5000})
-		var name any
-		for forwarded, acknowledged := false, false; name == nil || !forwarded || !acknowledged; {
-			message := read()
-			switch {
-			case message["method"] == "thread/name/updated":
-				name = message["params"].(map[string]any)["threadName"]
-			case message["method"] == "thread/tokenUsage/updated":
-				forwarded = true
-			case message["id"] != nil:
-				acknowledged = true
-			}
-		}
-		if name != tc.want {
-			t.Fatalf("cache status=%q, want %q", name, tc.want)
-		}
 	}
 	bridge.mu.Lock()
 	session := bridge.session
@@ -240,7 +216,7 @@ func TestCodexBridgeStreamsAndPreservesNames(t *testing.T) {
 	if name := read()["result"].(map[string]any)["thread"].(map[string]any)["name"]; name != "My New Title" {
 		t.Fatal("backend state lost on reconnect", name)
 	}
-	if read()["params"].(map[string]any)["threadName"] != "test/served-model · high · lease 2 turns left · cache cold" {
+	if read()["params"].(map[string]any)["threadName"] != "test/served-model · high · lease 2 turns left" {
 		t.Fatal("reconnect lost status")
 	}
 }
@@ -270,40 +246,5 @@ func TestCodexBridgeIdentityAndIsolation(t *testing.T) {
 		if got := session.statuses[tc.threadID].Model != ""; got != tc.want {
 			t.Errorf("%+v status=%v", tc, got)
 		}
-	}
-}
-
-func TestCodexDisplayCacheState(t *testing.T) {
-	session := &codexDisplaySession{statuses: map[string]agents.Status{}, dirty: map[string]bool{}, wake: make(chan struct{}, 1)}
-	session.updateCache("main", 10)
-	if _, ok := session.statuses["main"]; ok {
-		t.Fatal("usage created status")
-	}
-	session.update("main", agents.Status{Model: "test/model"})
-	session.updateCache("main", 10)
-	if got := session.statuses["main"].String(); got != "test/model · cache warm" {
-		t.Fatal(got)
-	}
-	session.update("main", agents.Status{Model: "test/other"})
-	if got := session.statuses["main"].String(); got != "test/other · cache cold" {
-		t.Fatal(got)
-	}
-	for _, message := range []string{`{"method":"thread/tokenUsage/updated","params":{"threadId":"main","tokenUsage":{"last":{}}}}`, `{"method":"thread/tokenUsage/updated","params":{"tokenUsage":{"last":{"cachedInputTokens":1}}}}`} {
-		if _, _, ok := codexTokenUsage([]byte(message)); ok {
-			t.Errorf("parsed malformed usage %s", message)
-		}
-	}
-
-	// Reconnected sessions re-arm expiries from the copied response timestamp.
-	old := time.Now().Add(-agents.CacheTTL - time.Second)
-	session.statuses["reconnected"] = agents.Status{Model: "test/model", CachedTokens: func() *int64 { n := int64(1); return &n }(), RespondedAt: old}
-	session.scheduleCacheExpiries()
-	select {
-	case <-session.wake:
-	case <-time.After(time.Second):
-		t.Fatal("expired cache status was not re-armed on reconnect")
-	}
-	if got := session.statuses["reconnected"].String(); got != "test/model · cache cold" {
-		t.Fatal(got)
 	}
 }

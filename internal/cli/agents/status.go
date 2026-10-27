@@ -3,28 +3,25 @@ package agents
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
-	"time"
 	"unicode"
 )
 
 // Status is the common display contract. Remaining counts turns after the
-// current response; the display includes the current turn. CachedTokens is
-// the prompt-cache read on the last response, which finished at RespondedAt.
-// The cache shows cold until a response reports a read.
+// current response; the display includes the current turn. RequestID is the
+// last response's routing request, which opens its conversation in Activity.
 type Status struct {
-	Model        string    `json:"selected_model"`
-	Thinking     string    `json:"reasoning_effort"`
-	Remaining    *int      `json:"lease_turns_remaining"`
-	CachedTokens *int64    `json:"-"`
-	RespondedAt  time.Time `json:"-"`
+	Model     string `json:"selected_model"`
+	Thinking  string `json:"reasoning_effort"`
+	Remaining *int   `json:"lease_turns_remaining"`
+	RequestID string `json:"request_id"`
 }
 
-// CacheTTL is the shortest default retention among served providers:
-// Anthropic keeps ephemeral prefixes for five minutes and OpenAI for 5–10.
-const CacheTTL = 5 * time.Minute
+// A self-hosted gateway (GatewayURLEnv) has no Activity dashboard to link to.
+const dashboardBaseURL = "https://app.dari.dev"
 
 func (s Status) String() string {
 	model := statusLabel(s.Model)
@@ -43,10 +40,8 @@ func (s Status) String() string {
 		}
 		parts = append(parts, fmt.Sprintf("lease %d %s left", turns, unit))
 	}
-	if s.CachedTokens != nil && *s.CachedTokens > 0 && time.Since(s.RespondedAt) < CacheTTL {
-		parts = append(parts, "cache warm")
-	} else {
-		parts = append(parts, "cache cold")
+	if requestID := statusLabel(s.RequestID); requestID != "" && os.Getenv(GatewayURLEnv) == "" {
+		parts = append(parts, dashboardBaseURL+"/activity/conversations/"+url.PathEscape(requestID))
 	}
 	return strings.Join(parts, " · ")
 }
@@ -64,8 +59,9 @@ func statusLabel(value string) string {
 // StatusFromHeaders reads the routing headers Dari sets on every response.
 func StatusFromHeaders(headers http.Header) Status {
 	status := Status{
-		Model:    headers.Get("x-dari-selected-model"),
-		Thinking: headers.Get("x-dari-thinking-level"),
+		Model:     headers.Get("x-dari-selected-model"),
+		Thinking:  headers.Get("x-dari-thinking-level"),
+		RequestID: headers.Get("x-request-id"),
 	}
 	if remaining, err := strconv.Atoi(headers.Get("x-dari-lease-turns-remaining")); err == nil {
 		status.Remaining = &remaining
@@ -92,7 +88,6 @@ func StatusEnvironment() (map[string]string, error) {
 	}
 	return map[string]string{
 		"DARI_STATUS_EXECUTABLE": executable,
-		"DARI_CACHE_TTL_MS":      strconv.FormatInt(CacheTTL.Milliseconds(), 10),
 	}, nil
 }
 

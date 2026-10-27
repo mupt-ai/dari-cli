@@ -1,7 +1,6 @@
 package codex
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"github.com/mupt-ai/dari-cli/internal/cli/agents"
@@ -75,7 +74,6 @@ func (b *codexStatusBridge) serveAppServer(w http.ResponseWriter, r *http.Reques
 	}
 	b.session = session
 	b.mu.Unlock()
-	session.scheduleCacheExpiries()
 	stop := context.AfterFunc(ctx, session.close)
 	defer stop()
 	defer session.close()
@@ -119,61 +117,13 @@ func (s *codexDisplaySession) send(message []byte) error {
 
 func (s *codexDisplaySession) update(threadID string, status agents.Status) {
 	s.mu.Lock()
-	previous, ok := s.statuses[threadID]
-	if len(s.statuses) >= 512 && !ok {
+	if _, ok := s.statuses[threadID]; len(s.statuses) >= 512 && !ok {
 		s.mu.Unlock()
 		return
-	}
-	if previous.Model == status.Model {
-		status.CachedTokens, status.RespondedAt = previous.CachedTokens, previous.RespondedAt
 	}
 	s.statuses[threadID] = status
 	s.mu.Unlock()
 	s.markDirty(threadID)
-}
-
-func (s *codexDisplaySession) updateCache(threadID string, cachedTokens int64) {
-	s.mu.Lock()
-	status, ok := s.statuses[threadID]
-	if !ok {
-		s.mu.Unlock()
-		return
-	}
-	status.CachedTokens, status.RespondedAt = &cachedTokens, time.Now()
-	s.statuses[threadID] = status
-	s.mu.Unlock()
-	s.markDirty(threadID)
-	s.scheduleCacheExpiry(threadID, status.RespondedAt)
-}
-
-func (s *codexDisplaySession) scheduleCacheExpiries() {
-	s.mu.Lock()
-	deadlines := make(map[string]time.Time, len(s.statuses))
-	for threadID, status := range s.statuses {
-		if status.CachedTokens != nil && *status.CachedTokens > 0 {
-			deadlines[threadID] = status.RespondedAt
-		}
-	}
-	s.mu.Unlock()
-	for threadID, respondedAt := range deadlines {
-		s.scheduleCacheExpiry(threadID, respondedAt)
-	}
-}
-
-func (s *codexDisplaySession) scheduleCacheExpiry(threadID string, respondedAt time.Time) {
-	delay := time.Until(respondedAt.Add(agents.CacheTTL))
-	if delay < 0 {
-		delay = 0
-	}
-	time.AfterFunc(delay, func() {
-		s.mu.Lock()
-		status, ok := s.statuses[threadID]
-		current := ok && status.RespondedAt.Equal(respondedAt)
-		s.mu.Unlock()
-		if current {
-			s.markDirty(threadID)
-		}
-	})
 }
 
 func (s *codexDisplaySession) markDirty(threadID string) {
@@ -239,9 +189,6 @@ func (s *codexDisplaySession) forwardOutput() {
 		if err != nil {
 			return
 		}
-		if id, cachedTokens, ok := codexTokenUsage(message); ok {
-			s.updateCache(id, cachedTokens)
-		}
 		if s.send(message) != nil {
 			return
 		}
@@ -284,27 +231,4 @@ func codexDisplayThread(message []byte) string {
 	default:
 		return ""
 	}
-}
-
-// Codex reports cache reads on the last completed response in this notification.
-func codexTokenUsage(message []byte) (string, int64, bool) {
-	var envelope struct {
-		Method string `json:"method"`
-		Params struct {
-			ThreadID   string `json:"threadId"`
-			TokenUsage struct {
-				Last struct {
-					CachedInputTokens *int64 `json:"cachedInputTokens"`
-				} `json:"last"`
-			} `json:"tokenUsage"`
-		} `json:"params"`
-	}
-	if !bytes.Contains(message, []byte(`"thread/tokenUsage/updated"`)) || json.Unmarshal(message, &envelope) != nil || envelope.Method != "thread/tokenUsage/updated" {
-		return "", 0, false
-	}
-	cached := envelope.Params.TokenUsage.Last.CachedInputTokens
-	if envelope.Params.ThreadID == "" || cached == nil {
-		return "", 0, false
-	}
-	return envelope.Params.ThreadID, *cached, true
 }

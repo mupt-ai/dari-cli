@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -18,7 +17,6 @@ func init() {
 	commandRegistrars = append(commandRegistrars, func(root *cobra.Command, _ *globalFlags) {
 		var fromClaude bool
 		var headersJSON string
-		var cachedTokens, respondedAt int64
 		command := &cobra.Command{
 			Use:    "agent-status",
 			Short:  "Render coding-agent routing status",
@@ -40,10 +38,6 @@ func init() {
 						headers.Set(name, value)
 					}
 					status = agents.StatusFromHeaders(headers)
-					if cachedTokens >= 0 {
-						status.CachedTokens = &cachedTokens
-						status.RespondedAt = time.UnixMilli(respondedAt)
-					}
 				}
 				if text := status.String(); text != "" {
 					fmt.Fprintln(cmd.OutOrStdout(), text)
@@ -53,8 +47,6 @@ func init() {
 		}
 		command.Flags().BoolVar(&fromClaude, "claude", false, "Read Claude Code status input from stdin")
 		command.Flags().StringVar(&headersJSON, "headers", "{}", "Routing response headers as JSON")
-		command.Flags().Int64Var(&cachedTokens, "cached-tokens", -1, "Prompt-cache input tokens read by the last response")
-		command.Flags().Int64Var(&respondedAt, "responded-at", 0, "When the last response finished, in Unix milliseconds")
 		root.AddCommand(command)
 	})
 }

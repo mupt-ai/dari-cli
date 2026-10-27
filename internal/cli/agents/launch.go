@@ -7,6 +7,7 @@ import "strings"
 
 const (
 	RoutingAPIKeyEnv = "DARI_ROUTING_API_KEY"
+	GatewayURLEnv    = "DARI_GATEWAY_URL"
 	RoutingModel     = "dari/routing"
 	// ExplicitModelPrefix names one enabled model, served without routing.
 	ExplicitModelPrefix = "dari/model/"

@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestBuildClaudeAgentCommandUsesTemporaryStatusLine(t *testing.T) {
@@ -58,9 +57,6 @@ func TestBuildClaudeAgentCommandUsesTemporaryStatusLine(t *testing.T) {
 	if !strings.Contains(settings.StatusLine.Command, " agent-status --claude") {
 		t.Fatalf("status command = %q", settings.StatusLine.Command)
 	}
-	if settings.StatusLine.RefreshInterval <= 0 || settings.StatusLine.RefreshInterval*int(time.Second) >= int(agents.CacheTTL) {
-		t.Fatalf("status refresh = %d", settings.StatusLine.RefreshInterval)
-	}
 	if strings.Contains(string(data), "dari_route") {
 		t.Fatal("Claude status settings contain the secret key")
 	}
@@ -86,19 +82,16 @@ func TestBuildClaudeAgentCommandSkipsStatusLineWhenSettingsFlagPresent(t *testin
 
 func TestClaudeStatusLineReadsDariRouting(t *testing.T) {
 	transcript := filepath.Join(t.TempDir(), "transcript.jsonl")
-	assistant := func(model string, cacheRead any, respondedAt time.Time) map[string]any {
-		message := map[string]any{
+	assistant := func(model, requestID string) map[string]any {
+		return map[string]any{"type": "assistant", "message": map[string]any{
 			"model": model,
 			"dari_routing": map[string]any{
 				"selected_model":        model,
 				"reasoning_effort":      "high",
 				"lease_turns_remaining": 1,
+				"request_id":            requestID,
 			},
-		}
-		if cacheRead != nil {
-			message["usage"] = map[string]any{"input_tokens": 12, "cache_read_input_tokens": cacheRead}
-		}
-		return map[string]any{"type": "assistant", "timestamp": respondedAt.Format(time.RFC3339Nano), "message": message}
+		}}
 	}
 	writeTranscript := func(lines ...map[string]any) {
 		t.Helper()
@@ -128,20 +121,13 @@ func TestClaudeStatusLineReadsDariRouting(t *testing.T) {
 		return status.String()
 	}
 	stdin := map[string]any{"transcript_path": transcript}
-	now := time.Now()
 	for _, tc := range []struct {
 		lines []map[string]any
 		want  string
 	}{
-		{[]map[string]any{assistant("xai/grok-4.6", nil, now)}, "xai/grok-4.6 · high · lease 2 turns left · cache cold"},
-		{[]map[string]any{assistant("xai/grok-4.6", 4096, now)}, "xai/grok-4.6 · high · lease 2 turns left · cache warm"},
-		{[]map[string]any{assistant("xai/grok-4.6", 0, now)}, "xai/grok-4.6 · high · lease 2 turns left · cache cold"},
-		{[]map[string]any{assistant("xai/grok-4.6", 4096, now.Add(-agents.CacheTTL-time.Second))}, "xai/grok-4.6 · high · lease 2 turns left · cache cold"},
-		// A new model's first entry carries its own usage, not the previous turn's.
-		{[]map[string]any{assistant("xai/grok-4.6", 4096, now), assistant("openai/gpt-5.5", 0, now)}, "openai/gpt-5.5 · high · lease 2 turns left · cache cold"},
-		// A switched model's in-progress entry has no cache usage yet; the
-		// previous model's warm usage must not carry over.
-		{[]map[string]any{assistant("xai/grok-4.6", 4096, now), assistant("openai/gpt-5.5", nil, now)}, "openai/gpt-5.5 · high · lease 2 turns left · cache cold"},
+		{[]map[string]any{assistant("xai/grok-4.6", "req_1")}, "xai/grok-4.6 · high · lease 2 turns left · https://app.dari.dev/activity/conversations/req_1"},
+		// The last assistant entry wins, so a model switch shows the new turn's link.
+		{[]map[string]any{assistant("xai/grok-4.6", "req_1"), assistant("openai/gpt-5.5", "req_2")}, "openai/gpt-5.5 · high · lease 2 turns left · https://app.dari.dev/activity/conversations/req_2"},
 	} {
 		writeTranscript(tc.lines...)
 		if got := render(stdin); got != tc.want {

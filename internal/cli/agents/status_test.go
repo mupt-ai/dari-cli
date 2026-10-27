@@ -3,17 +3,16 @@ package agents
 import (
 	"net/http"
 	"testing"
-	"time"
 )
 
 func TestStatusFromHeaders(t *testing.T) {
 	for _, tc := range []struct{ remaining, thinking, want string }{
-		{"0", "off", "test/model · lease 1 turn left · cache cold"},
-		{"1", "high", "test/model · high · lease 2 turns left · cache cold"},
-		{"", "", "test/model · cache cold"},
-		{"bad", "high", "test/model · high · cache cold"},
-		{"-1", "off", "test/model · cache cold"},
-		{"1000000", "off", "test/model · cache cold"},
+		{"0", "off", "test/model · lease 1 turn left"},
+		{"1", "high", "test/model · high · lease 2 turns left"},
+		{"", "", "test/model"},
+		{"bad", "high", "test/model · high"},
+		{"-1", "off", "test/model"},
+		{"1000000", "off", "test/model"},
 	} {
 		headers := http.Header{}
 		headers.Set("x-dari-selected-model", "test/model")
@@ -26,27 +25,20 @@ func TestStatusFromHeaders(t *testing.T) {
 	if got := (Status{Thinking: "high"}).String(); got != "" {
 		t.Fatal(got)
 	}
-	if got := (Status{Model: "test\n/model\x1b‮"}).String(); got != "test/model · cache cold" {
+	if got := (Status{Model: "test\n/model\x1b‮"}).String(); got != "test/model" {
 		t.Fatal(got)
 	}
 }
 
-func TestStatusCache(t *testing.T) {
-	cached := func(tokens int64) *int64 { return &tokens }
-	now := time.Now()
-	for _, tc := range []struct {
-		status Status
-		want   string
-	}{
-		{Status{Model: "m"}, "m · cache cold"},
-		{Status{Model: "m", CachedTokens: cached(1), RespondedAt: now}, "m · cache warm"},
-		{Status{Model: "m", CachedTokens: cached(0), RespondedAt: now}, "m · cache cold"},
-		{Status{Model: "m", CachedTokens: cached(1), RespondedAt: now.Add(-CacheTTL)}, "m · cache cold"},
-		{Status{Model: "m", CachedTokens: cached(1)}, "m · cache cold"},
-		{Status{CachedTokens: cached(1), RespondedAt: now}, ""},
-	} {
-		if got := tc.status.String(); got != tc.want {
-			t.Errorf("%+v: got %q, want %q", tc.status, got, tc.want)
-		}
+func TestStatusDashboardLink(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("x-dari-selected-model", "m")
+	headers.Set("x-request-id", "req/1")
+	if got := StatusFromHeaders(headers).String(); got != "m · https://app.dari.dev/activity/conversations/req%2F1" {
+		t.Fatal(got)
+	}
+	t.Setenv(GatewayURLEnv, "http://127.0.0.1:8787")
+	if got := StatusFromHeaders(headers).String(); got != "m" {
+		t.Fatal(got)
 	}
 }

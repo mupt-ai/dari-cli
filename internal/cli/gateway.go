@@ -10,13 +10,14 @@ import (
 
 	"github.com/mupt-ai/dari-cli/internal/api"
 	"github.com/mupt-ai/dari-cli/internal/auth"
+	"github.com/mupt-ai/dari-cli/internal/cli/agents"
 )
 
 // A self-hosted Dari Gateway serves the routing and subscription paths of the
 // hosted API. DARI_GATEWAY_URL points the agent launchers and subscription
 // commands at it, and then they make no hosted control-plane calls.
 const (
-	gatewayURLEnv = "DARI_GATEWAY_URL"
+	gatewayURLEnv = agents.GatewayURLEnv
 	gatewayKeyEnv = "DARI_GATEWAY_KEY"
 )
 
