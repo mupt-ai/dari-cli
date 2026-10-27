@@ -1693,6 +1693,16 @@ func TestEnsureMuseAgentRouterServesThePlanOnceMetaModelsAreAdded(t *testing.T) 
 			if got := stringSlice(puts[len(puts)-1]["subscription_providers"]); !slices.Equal(got, []string{"meta"}) {
 				t.Fatalf("subscription_providers = %q, want [meta]; updates: %#v", got, puts)
 			}
+			last := puts[len(puts)-1]
+			providers, _ := last["model_providers"].(map[string]any)
+			var providerIDs []string
+			for id := range providers {
+				providerIDs = append(providerIDs, id)
+			}
+			slices.Sort(providerIDs)
+			if got := stringSlice(last["enabled_models"]); !slices.Equal(providerIDs, got) {
+				t.Fatalf("model_providers keys = %q, want exactly enabled_models %q", providerIDs, got)
+			}
 		})
 	}
 }

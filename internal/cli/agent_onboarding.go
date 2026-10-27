@@ -297,9 +297,13 @@ func ensureAgentRouter(
 		if agentRouterNeedsUpdate(defaultRouter, choices) {
 			body := agentRouterUpdateBody(defaultRouter, models, choices)
 			path := "/v1/organizations/current/routers/" + url.PathEscape(defaultRouter.ID)
-			if err := client.Do(ctx, http.MethodPut, path, body, &defaultRouter); err != nil {
+			// Decode into a fresh router: JSON decoding merges into existing maps,
+			// so a model the update removed would keep its old provider entry.
+			var updated agentRouter
+			if err := client.Do(ctx, http.MethodPut, path, body, &updated); err != nil {
 				return "", api.HumanError(err)
 			}
+			defaultRouter = updated
 		}
 		// The plan was applied before the picker, when the router may not
 		// have served any Meta model yet.
@@ -637,7 +641,9 @@ func setAgentRouterSubscription(
 		SubscriptionProviders: providers,
 	}
 	path := "/v1/organizations/current/routers/" + url.PathEscape(router.ID)
-	if err := client.Do(ctx, http.MethodPut, path, body, &router); err != nil {
+	// Decode into a fresh router so the caller's maps are not merged with the response.
+	var updated agentRouter
+	if err := client.Do(ctx, http.MethodPut, path, body, &updated); err != nil {
 		return api.HumanError(err)
 	}
 	return nil
