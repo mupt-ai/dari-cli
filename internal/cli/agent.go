@@ -19,6 +19,7 @@ import (
 	"github.com/mupt-ai/dari-cli/internal/cli/agents"
 	"github.com/mupt-ai/dari-cli/internal/cli/agents/claude"
 	"github.com/mupt-ai/dari-cli/internal/cli/agents/codex"
+	"github.com/mupt-ai/dari-cli/internal/cli/agents/muse"
 	"github.com/mupt-ai/dari-cli/internal/cli/agents/opencode"
 	"github.com/mupt-ai/dari-cli/internal/cli/agents/pi"
 	"github.com/mupt-ai/dari-cli/internal/state"
@@ -37,6 +38,7 @@ var agentLaunchers = map[string]string{
 	"codex":    "Launch Codex through Dari; forward all following arguments (--connect manages subscriptions)",
 	"opencode": "Launch OpenCode through Dari; forward all following arguments (--connect manages subscriptions)",
 	"pi":       "Launch Pi through Dari; forward all following arguments (--connect manages subscriptions)",
+	"muse":     "Launch Muse Code through Dari; forward all following arguments (--connect manages subscriptions)",
 }
 
 // agentConnectFlag opens the subscription list before launching. Dari removes
@@ -126,12 +128,22 @@ func runAgentLaunch(ctx context.Context, launch agentLaunch, stdin io.Reader, st
 			return 1
 		}
 	}
+	if launch.name == "muse" && !agents.OnlyRequestsInfo(launch.args) {
+		if err := muse.Prepare(&command, launch.args, key, baseURL); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
 	cmd := exec.CommandContext(ctx, command.Path, command.Args...)
 	cmd.Env = command.Env
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	if err := cmd.Run(); err != nil {
+	run := cmd.Run
+	if command.Run != nil {
+		run = func() error { return command.Run(cmd) }
+	}
+	if err := run(); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			return exitErr.ExitCode()
@@ -341,6 +353,8 @@ func buildAgentCommand(path string, launch agentLaunch, key, baseURL string, mod
 		if err := pi.Configure(&command, baseURL, models); err != nil {
 			return agents.Command{}, err
 		}
+	case "muse":
+		muse.Configure(&command, key, models)
 	default:
 		return agents.Command{}, fmt.Errorf("unsupported coding agent %q", launch.name)
 	}

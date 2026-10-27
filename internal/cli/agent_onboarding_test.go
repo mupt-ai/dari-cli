@@ -1605,3 +1605,94 @@ func TestEnsureClaudeAgentRouterIgnoresMatchingDefaultRouter(t *testing.T) {
 		}
 	}
 }
+
+func TestEnsureMuseAgentRouterServesThePlanOnceMetaModelsAreAdded(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		connected bool
+		input     string
+	}{
+		{name: "newly connected", connected: false, input: "y\n\n\n"},
+		{name: "already connected", connected: true, input: "\n\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var puts []map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers":
+					_ = json.NewEncoder(w).Encode(map[string]any{"routers": []map[string]any{{
+						"id":                    "rtr_default",
+						"name":                  "Default",
+						"is_default":            true,
+						"enabled_models":        []string{"openai/gpt-5.6-sol"},
+						"model_providers":       map[string]string{"openai/gpt-5.6-sol": "openai"},
+						"model_thinking_levels": map[string][]string{"openai/gpt-5.6-sol": {"medium"}},
+					}}})
+				case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/credentials":
+					credentials := []any{}
+					if tc.connected {
+						credentials = append(credentials, map[string]any{"oauth_provider": museSubscription.id})
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"credentials": credentials})
+				case r.Method == http.MethodPost && r.URL.Path == "/v1/organizations/current/credentials/oauth/sessions":
+					_ = json.NewEncoder(w).Encode(agentSubscriptionOAuthStart{SessionToken: "session", AuthorizationURL: "https://auth.meta.com/oauth/device/", UserCode: "BLXG-CHNZ"})
+				case r.Method == http.MethodPost && r.URL.Path == "/v1/organizations/current/credentials/oauth/sessions/complete":
+					w.WriteHeader(http.StatusOK)
+				case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-catalog":
+					_ = json.NewEncoder(w).Encode(map[string]any{"groups": []map[string]any{{
+						"provider":             "managed",
+						"supports_managed_key": true,
+						"models": []map[string]any{
+							{"id": "meta/muse-spark", "display_name": "Muse Spark", "provider": "meta", "default_provider": "meta", "default_thinking_level": "high", "supports_managed_key": true},
+							{"id": "openai/gpt-5.6-sol", "display_name": "Sol", "provider": "openai", "default_provider": "openai", "default_thinking_level": "medium", "supports_managed_key": true},
+						},
+					}}})
+				case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/current/routers/model-suggestions":
+					_ = json.NewEncoder(w).Encode(map[string]any{"suggestions": []map[string]any{{
+						"id":        "default",
+						"model_ids": []string{"meta/muse-spark"},
+						"models":    map[string]any{"meta/muse-spark": []string{"high"}},
+					}}})
+				case r.Method == http.MethodPut && r.URL.Path == "/v1/organizations/current/routers/rtr_default":
+					var body map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Error(err)
+					}
+					puts = append(puts, body)
+					body["id"] = "rtr_default"
+					body["is_default"] = true
+					_ = json.NewEncoder(w).Encode(body)
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+
+			useTestAPIKey(t)
+			t.Setenv("DARI_API_URL", server.URL)
+			original := openAgentBrowser
+			openAgentBrowser = func(string) bool { return false }
+			t.Cleanup(func() { openAgentBrowser = original })
+			routerID, err := ensureAgentRouter(
+				context.Background(),
+				"muse",
+				agentRoutingAccess{apiURL: server.URL, scope: "test-org", key: "dari_route"},
+				strings.NewReader(tc.input),
+				io.Discard,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if routerID != "rtr_default" {
+				t.Fatalf("router ID = %q", routerID)
+			}
+			if len(puts) == 0 {
+				t.Fatal("router was never updated")
+			}
+			if got := stringSlice(puts[len(puts)-1]["subscription_providers"]); !slices.Equal(got, []string{"meta"}) {
+				t.Fatalf("subscription_providers = %q, want [meta]; updates: %#v", got, puts)
+			}
+		})
+	}
+}

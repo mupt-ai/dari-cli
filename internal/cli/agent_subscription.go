@@ -14,28 +14,56 @@ import (
 	"github.com/mupt-ai/dari-cli/internal/state"
 )
 
-// routerProvider is the router provider whose models the subscription serves.
+// routerProvider is the router provider whose models the subscription serves,
+// and vendor the company whose sign-in connects it. A device-code sign-in shows
+// a code to enter at the vendor; the others paste back the vendor's code.
 type agentSubscriptionProvider struct {
-	id, name, routerProvider string
+	id, name, routerProvider, vendor string
+	deviceCode                       bool
 }
 
 var (
-	claudeSubscription = agentSubscriptionProvider{"anthropic_claude_code", "Claude Code", "anthropic"}
-	codexSubscription  = agentSubscriptionProvider{"openai_codex", "ChatGPT", "openai"}
+	claudeSubscription = agentSubscriptionProvider{"anthropic_claude_code", "Claude Code", "anthropic", "Anthropic", false}
+	codexSubscription  = agentSubscriptionProvider{"openai_codex", "ChatGPT", "openai", "OpenAI", true}
+	// Muse Code subscriptions serve only Muse Code, so no agent launcher offers one.
+	museSubscription = agentSubscriptionProvider{"meta_muse", "Muse Code", "meta", "Meta", true}
 )
 
-// Codex, OpenCode, and Pi use the organization's default router, but their
-// subscription decision is per user and launcher, not implied by a cached
-// router or login.
-func ensureDefaultAgentSubscription(ctx context.Context, agent string, access agentRoutingAccess, client *api.Client, router agentRouter, stdin io.Reader, stderr io.Writer) error {
+// Codex, OpenCode, Pi, and Muse use the organization's default router, but
+// their subscription decision is per user and launcher, not implied by a
+// cached router or login. It reports whether the Muse plan is enabled for this
+// launch, so the router serves it once the model picker adds Meta models.
+func ensureDefaultAgentSubscription(ctx context.Context, agent string, access agentRoutingAccess, client *api.Client, router agentRouter, stdin io.Reader, stderr io.Writer) (bool, error) {
 	scope, err := agentSubscriptionPreferenceScope(access.scope, agent)
 	if err != nil {
-		return err
+		return false, err
 	}
 	optedOut, err := state.AgentSubscriptionOptedOut(scope)
 	if err != nil {
-		return err
+		return false, err
 	}
+	if agent == "muse" {
+		// Only Muse Code can use a Muse subscription, so the launch asks for it.
+		resolution, resolveErr := resolveAgentPersonalSubscription(ctx, museSubscription, client, stdin, stderr, optedOut)
+		if resolution.preferenceChanged {
+			if err := state.SaveAgentSubscriptionOptOut(scope, !resolution.enabled); err != nil {
+				return false, err
+			}
+		}
+		// Muse Code is launched only to use its plan, so an enabled plan is
+		// served whether it was just connected or connected earlier.
+		if resolution.enabled {
+			if err := setAgentRouterSubscription(ctx, client, router, agentSubscriptionProviders(agent), true); err != nil {
+				return false, err
+			}
+		}
+		return resolution.enabled, resolveErr
+	}
+	err = ensureCodexAgentSubscription(ctx, agent, scope, optedOut, client, router, stdin, stderr)
+	return false, err
+}
+
+func ensureCodexAgentSubscription(ctx context.Context, agent, scope string, optedOut bool, client *api.Client, router agentRouter, stdin io.Reader, stderr io.Writer) error {
 	provider := codexSubscription
 	if agent == "opencode" || agent == "pi" {
 		// Reuse either supported subscription before asking which one to connect.
@@ -159,6 +187,8 @@ func agentSubscriptionProviders(agent string) []agentSubscriptionProvider {
 		return []agentSubscriptionProvider{claudeSubscription}
 	case "codex":
 		return []agentSubscriptionProvider{codexSubscription}
+	case "muse":
+		return []agentSubscriptionProvider{museSubscription}
 	}
 	return []agentSubscriptionProvider{codexSubscription, claudeSubscription}
 }
@@ -271,13 +301,19 @@ func agentSubscriptionLines(subscriptions []subscriptionCredential, showProvider
 	for i, subscription := range subscriptions {
 		line := "  "
 		if showProvider {
-			provider := codexSubscription.name
-			if subscription.OAuthProvider == claudeSubscription.id {
-				provider = claudeSubscription.name
-			}
-			line += fmt.Sprintf("%-11s  ", provider)
+			line += fmt.Sprintf("%-11s  ", subscriptionProviderFor(subscription.OAuthProvider).name)
 		}
 		lines = append(lines, line+fmt.Sprintf("%-*s  %s", width, names[i], ansiGray+subscriptionStatus(subscription)+ansiReset))
 	}
 	return append(lines, "")
+}
+
+// subscriptionProviderFor names the provider of a stored subscription.
+func subscriptionProviderFor(oauthProvider string) agentSubscriptionProvider {
+	for _, provider := range subscriptionProviders {
+		if provider.id == oauthProvider {
+			return provider
+		}
+	}
+	return agentSubscriptionProvider{id: oauthProvider, name: oauthProvider}
 }

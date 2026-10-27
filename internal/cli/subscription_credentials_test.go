@@ -41,12 +41,19 @@ func multipleSubscriptionsHandler(t *testing.T, seen map[string]map[string]any) 
 					"name": "ANTHROPIC_CLAUDE_CODE_OAUTH_TOKEN", "credential_scope": "user",
 					"oauth_provider": "anthropic_claude_code", "created_at": "2026-10-01T00:00:00Z", "subscription_active": true,
 				},
+				map[string]any{
+					"name": "META_MUSE_OAUTH_TOKEN", "credential_scope": "user", "oauth_provider": "meta_muse",
+					"created_at": "2026-10-04T00:00:00Z", "subscription_active": true,
+				},
 				map[string]any{"name": "OPENAI_API_KEY", "credential_scope": "organization"},
 			}})
 		case "POST /v1/organizations/current/credentials/OPENAI_CODEX_OAUTH_TOKEN/mark-available",
 			"DELETE /v1/organizations/current/credentials/ANTHROPIC_CLAUDE_CODE_OAUTH_TOKEN",
 			"PUT /v1/organizations/current/credentials/OPENAI_CODEX_OAUTH_TOKEN_2/auto-reset",
-			"PUT /v1/organizations/current/credentials/ANTHROPIC_CLAUDE_CODE_OAUTH_TOKEN/label":
+			"PUT /v1/organizations/current/credentials/ANTHROPIC_CLAUDE_CODE_OAUTH_TOKEN/label",
+			"POST /v1/organizations/current/credentials/META_MUSE_OAUTH_TOKEN/mark-available",
+			"DELETE /v1/organizations/current/credentials/META_MUSE_OAUTH_TOKEN",
+			"PUT /v1/organizations/current/credentials/META_MUSE_OAUTH_TOKEN/label":
 			_ = json.NewEncoder(w).Encode(map[string]any{"name": "ok"})
 		case "POST /v1/organizations/current/credentials/oauth/sessions":
 			_ = json.NewEncoder(w).Encode(agentSubscriptionOAuthStart{
@@ -86,6 +93,7 @@ func TestSubscriptionListShowsConnectionOrderWithActiveAndHeld(t *testing.T) {
 	}
 	want := []string{
 		"claude-code ANTHROPIC_CLAUDE_CODE_OAUTH_TOKEN active",
+		"muse-code META_MUSE_OAUTH_TOKEN active",
 		"codex OPENAI_CODEX_OAUTH_TOKEN held",
 		"codex OPENAI_CODEX_OAUTH_TOKEN_2 active",
 		"codex OPENAI_CODEX_OAUTH_TOKEN_3 standby",
@@ -93,7 +101,7 @@ func TestSubscriptionListShowsConnectionOrderWithActiveAndHeld(t *testing.T) {
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("subscriptions =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
-	if email := listed.Subscriptions[2].AccountEmail; email == nil || *email != "second@example.test" {
+	if email := listed.Subscriptions[3].AccountEmail; email == nil || *email != "second@example.test" {
 		t.Fatalf("account_email = %v", email)
 	}
 }
@@ -116,6 +124,9 @@ func TestSubscriptionCommandsNeedANameWhenSeveralAreConnected(t *testing.T) {
 		{"credentials", "subscription", "mark-available", "openai_codex_oauth_token"},
 		// The only Claude Code subscription is found by its provider alias.
 		{"credentials", "subscription", "disconnect", "claude-code"},
+		{"credentials", "subscription", "mark-available", "muse-code"},
+		{"credentials", "subscription", "rename", "muse-code", "Muse Max"},
+		{"credentials", "subscription", "disconnect", "muse-code"},
 	} {
 		cmd := newRootCmd("dev")
 		cmd.SetArgs(append([]string{"--api-url", srv.URL}, args...))
@@ -126,6 +137,9 @@ func TestSubscriptionCommandsNeedANameWhenSeveralAreConnected(t *testing.T) {
 	for _, want := range []string{
 		"POST /v1/organizations/current/credentials/OPENAI_CODEX_OAUTH_TOKEN/mark-available",
 		"DELETE /v1/organizations/current/credentials/ANTHROPIC_CLAUDE_CODE_OAUTH_TOKEN",
+		"POST /v1/organizations/current/credentials/META_MUSE_OAUTH_TOKEN/mark-available",
+		"PUT /v1/organizations/current/credentials/META_MUSE_OAUTH_TOKEN/label",
+		"DELETE /v1/organizations/current/credentials/META_MUSE_OAUTH_TOKEN",
 	} {
 		if _, ok := seen[want]; !ok {
 			t.Fatalf("did not see request %s", want)
@@ -144,6 +158,11 @@ func TestSubscriptionConnectAddsAnotherOrReconnectsOne(t *testing.T) {
 		want map[string]any
 	}{
 		{[]string{"codex"}, map[string]any{"provider": "openai_codex"}},
+		{[]string{"muse-code"}, map[string]any{"provider": "meta_muse"}},
+		{
+			[]string{"muse-code", "--reconnect", "meta_muse_oauth_token"},
+			map[string]any{"provider": "meta_muse", "credential_name": "META_MUSE_OAUTH_TOKEN"},
+		},
 		{
 			[]string{"codex", "--reconnect", "openai_codex_oauth_token_2"},
 			map[string]any{"provider": "openai_codex", "credential_name": "OPENAI_CODEX_OAUTH_TOKEN_2"},

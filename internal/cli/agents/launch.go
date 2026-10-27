@@ -3,7 +3,10 @@
 // agent shows in its UI. Each agent's own setup lives in a subpackage.
 package agents
 
-import "strings"
+import (
+	"os/exec"
+	"strings"
+)
 
 const (
 	RoutingAPIKeyEnv = "DARI_ROUTING_API_KEY"
@@ -44,12 +47,15 @@ func (m Models) Menu() []string {
 }
 
 // Command is the agent process to start. Cleanup removes anything the
-// launcher created for it, such as temporary settings or plugins.
+// launcher created for it, such as temporary settings or plugins. Run, when
+// set, starts the process in place of running it directly, for launchers that
+// own the agent's terminal.
 type Command struct {
 	Path    string
 	Args    []string
 	Env     []string
 	Cleanup func()
+	Run     func(*exec.Cmd) error
 }
 
 // InsertBeforeDoubleDash adds arguments before any `--`, so they are read as

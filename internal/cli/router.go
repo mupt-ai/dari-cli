@@ -183,7 +183,7 @@ func (rf *routerConfigFlags) register(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&rf.strategy, name("strategy"), "", "Routing strategy: dari; use a manifest for custom rules")
 	cmd.Flags().BoolVar(&rf.allowLongContext, name("allow-long-context"), false, "Allow provider long-context surcharges (off by default)")
 	cmd.Flags().BoolVar(&rf.evalScoreImputation, name("eval-score-imputation"), true, "Estimate missing eval scores for a model and thinking level from related measured scores (on by default)")
-	cmd.Flags().StringSliceVar(&rf.subscriptionProviders, name("subscription"), nil, "Serve this provider's models from the attributed user's personal subscription: openai or anthropic (repeatable or comma-separated). The provider's --provider-credential or --managed-key choice becomes its API fallback credential. On update this replaces the list; an empty value clears it")
+	cmd.Flags().StringSliceVar(&rf.subscriptionProviders, name("subscription"), nil, "Serve this provider's models from the attributed user's personal subscription: openai, anthropic, or meta (repeatable or comma-separated). The provider's --provider-credential or --managed-key choice becomes its API fallback credential. On update this replaces the list; an empty value clears it")
 	cmd.Flags().StringSliceVar(&rf.apiFallbackModels, name("api-fallback"), nil, "Keep this subscription model running on the provider's API credential while the subscription is unavailable; models without it pause until the subscription is back (repeatable or comma-separated). On update this replaces the list; an empty value clears it")
 }
 
@@ -197,8 +197,8 @@ func (rf *routerConfigFlags) subscriptionSettings(cmd *cobra.Command) (providers
 			if provider == "" {
 				continue
 			}
-			if provider != "openai" && provider != "anthropic" {
-				return nil, nil, fmt.Errorf("--subscription %s: subscriptions serve openai or anthropic", provider)
+			if !isSubscriptionRouterProvider(provider) {
+				return nil, nil, fmt.Errorf("--subscription %s: subscriptions serve openai, anthropic, or meta", provider)
 			}
 			cleaned = append(cleaned, provider)
 		}
@@ -1056,8 +1056,8 @@ func normalizeManifestSubscriptionProviders(path string, raw []string) ([]string
 	providers := make([]string, 0, len(raw))
 	for index, rawProvider := range raw {
 		provider := strings.ToLower(strings.TrimSpace(rawProvider))
-		if provider != "openai" && provider != "anthropic" {
-			return nil, fmt.Errorf("%s: subscription_providers[%d] must be openai or anthropic", path, index)
+		if !isSubscriptionRouterProvider(provider) {
+			return nil, fmt.Errorf("%s: subscription_providers[%d] must be openai, anthropic, or meta", path, index)
 		}
 		if !slices.Contains(providers, provider) {
 			providers = append(providers, provider)
@@ -1185,4 +1185,13 @@ func routerStrategyForManifest(path, strategy string, hasCustomConfig bool) (str
 	default:
 		return "", nil
 	}
+}
+
+// isSubscriptionRouterProvider reports whether a personal subscription can
+// serve the router provider's models.
+func isSubscriptionRouterProvider(provider string) bool {
+	return slices.ContainsFunc(
+		[]agentSubscriptionProvider{codexSubscription, claudeSubscription, museSubscription},
+		func(subscription agentSubscriptionProvider) bool { return subscription.routerProvider == provider },
+	)
 }

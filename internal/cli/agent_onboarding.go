@@ -144,7 +144,7 @@ func ensureAgentRouter(
 	stdin io.Reader,
 	stderr io.Writer,
 ) (string, error) {
-	if agent != "claude" && agent != "codex" && agent != "opencode" && agent != "pi" {
+	if agent != "claude" && agent != "codex" && agent != "opencode" && agent != "pi" && agent != "muse" {
 		return "default", nil
 	}
 
@@ -169,8 +169,10 @@ func ensureAgentRouter(
 		return "", errors.New("organization has no default router")
 	}
 
+	museEnabled := false
 	if agent != "claude" {
-		if err := ensureDefaultAgentSubscription(ctx, agent, access, client, defaultRouter, stdin, stderr); err != nil {
+		museEnabled, err = ensureDefaultAgentSubscription(ctx, agent, access, client, defaultRouter, stdin, stderr)
+		if err != nil {
 			return "", err
 		}
 		if agent == "opencode" || cachedRouterID != "" {
@@ -247,6 +249,9 @@ func ensureAgentRouter(
 	case "pi":
 		title = "Choose models for Pi"
 		suggestionID = "default"
+	case "muse":
+		title = "Choose models for Muse Code"
+		suggestionID = "default"
 	}
 	suggestion, err := fetchAgentModelSuggestion(ctx, client, suggestionID)
 	if err != nil {
@@ -296,9 +301,19 @@ func ensureAgentRouter(
 				return "", api.HumanError(err)
 			}
 		}
+		// The plan was applied before the picker, when the router may not
+		// have served any Meta model yet.
+		if museEnabled {
+			if err := setAgentRouterSubscription(ctx, client, defaultRouter, agentSubscriptionProviders(agent), true); err != nil {
+				return "", err
+			}
+		}
 		name := "Codex"
-		if agent == "pi" {
+		switch agent {
+		case "pi":
 			name = "Pi"
+		case "muse":
+			name = "Muse Code"
 		}
 		agentStep(stderr, name+" will use your default router")
 	} else {
@@ -435,9 +450,9 @@ func connectAgentPersonalSubscription(
 		return fmt.Errorf("Dari returned an incomplete %s authorization session", provider.name)
 	}
 
-	if provider.id == codexSubscription.id {
+	if provider.deviceCode {
 		if strings.TrimSpace(started.UserCode) == "" {
-			return errors.New("Dari returned a ChatGPT authorization session without a device code")
+			return fmt.Errorf("Dari returned a %s authorization session without a device code", provider.name)
 		}
 		return connectAgentDeviceCodeSubscription(ctx, provider, client, stdin, stderr, started)
 	}
@@ -452,7 +467,7 @@ func connectAgentPersonalSubscription(
 	}
 
 	writeAgentOAuthInstructions(provider, stderr, started.AuthorizationURL, opened)
-	fmt.Fprint(stderr, "After approving, paste the authorization code Anthropic shows: ")
+	fmt.Fprintf(stderr, "After approving, paste the authorization code %s shows: ", provider.vendor)
 	authorizationResponse, err := readAgentLine(stdin)
 	if err != nil {
 		return fmt.Errorf("read %s authorization code: %w", provider.name, err)
@@ -473,7 +488,7 @@ func connectAgentDeviceCodeSubscription(
 		return completeAgentPersonalSubscription(ctx, provider, client, stderr, started.SessionToken, "")
 	}
 	pending := func(err error) bool {
-		return err != nil && strings.HasPrefix(err.Error(), "OpenAI approval is still pending.")
+		return err != nil && strings.HasPrefix(err.Error(), provider.vendor+" approval is still pending.")
 	}
 	if agentInputIsTerminal(stdin) {
 		err := runAgentDeviceCodeTUI(provider, stdin, stderr, started.AuthorizationURL, started.UserCode, opened, func() (bool, error) {
@@ -488,7 +503,7 @@ func connectAgentDeviceCodeSubscription(
 		return nil
 	}
 	writeAgentOAuthInstructions(provider, stderr, started.AuthorizationURL, opened)
-	fmt.Fprintf(stderr, "Enter this code at OpenAI: %s\n", started.UserCode)
+	fmt.Fprintf(stderr, "Enter this code at %s: %s\n", provider.vendor, started.UserCode)
 	for {
 		fmt.Fprintln(stderr, "After approving access, press Enter here to finish connecting.")
 		if _, err := readAgentLine(stdin); err != nil {
@@ -511,7 +526,7 @@ func completeAgentPersonalSubscription(
 	sessionToken string,
 	authorizationResponse string,
 ) error {
-	if strings.TrimSpace(authorizationResponse) == "" && provider.id != codexSubscription.id {
+	if strings.TrimSpace(authorizationResponse) == "" && !provider.deviceCode {
 		return fmt.Errorf("%s authorization was not completed", provider.name)
 	}
 	if err := completeAgentPersonalSubscriptionQuietly(ctx, client, sessionToken, authorizationResponse); err != nil {

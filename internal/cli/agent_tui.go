@@ -281,7 +281,7 @@ func agentOAuthLines(provider agentSubscriptionProvider, authorizationURL string
 	lines = append(lines, agentURLLines(authorizationURL, width)...)
 	return append(lines,
 		"",
-		"  Paste the code Anthropic shows after you approve:",
+		"  Paste the code "+provider.vendor+" shows after you approve:",
 		agentCursor(true)+codeInputDisplay(value, width),
 		agentHintLine("enter submit", "ctrl+c cancel"),
 	)
@@ -342,7 +342,7 @@ func runAgentDeviceCodeTUI(
 		lines = append(lines, agentURLLines(authorizationURL, session.width)...)
 		session.render(append(lines,
 			"",
-			"  Enter this code at OpenAI:  "+ansiCoral+ansiBold+userCode+ansiReset,
+			"  Enter this code at "+provider.vendor+":  "+ansiCoral+ansiBold+userCode+ansiReset,
 			status,
 		))
 		n, readErr := session.file.Read(buf)

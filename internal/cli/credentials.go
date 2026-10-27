@@ -260,6 +260,7 @@ func newCredentialsListCmd(gf *globalFlags) *cobra.Command {
 var subscriptionProviders = map[string]agentSubscriptionProvider{
 	"claude-code": claudeSubscription,
 	"codex":       codexSubscription,
+	"muse-code":   museSubscription,
 }
 
 type subscriptionCredential struct {
@@ -279,7 +280,7 @@ type subscriptionCredential struct {
 func newSubscriptionCredentialsCmd(gf *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "subscription",
-		Short: "Manage your personal Claude Code and ChatGPT subscriptions",
+		Short: "Manage your personal Claude Code, ChatGPT, and Muse Code subscriptions",
 		Long: "Connect one or more personal subscriptions per provider. Routing uses the active one " +
 			"until it reaches its usage limit, then holds it until its reset and switches to the next " +
 			"one in connection order.",
@@ -335,7 +336,7 @@ func newSubscriptionConnectCmd(gf *globalFlags) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			provider, ok := subscriptionProviders[strings.ToLower(strings.TrimSpace(args[0]))]
 			if !ok {
-				return fmt.Errorf("unknown subscription %q: expected claude-code or codex", args[0])
+				return fmt.Errorf("unknown subscription %q: expected claude-code, codex, or muse-code", args[0])
 			}
 			client, err := subscriptionClient(gf)
 			if err != nil {

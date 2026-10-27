@@ -146,7 +146,7 @@ func TestDefaultAgentSubscriptionDeclineAndEOF(t *testing.T) {
 					}
 				}
 				access := agentRoutingAccess{apiURL: server.URL, scope: "test"}
-				err := ensureDefaultAgentSubscription(context.Background(), agent, access, api.New(server.URL), agentRouter{}, strings.NewReader(input), io.Discard)
+				_, err := ensureDefaultAgentSubscription(context.Background(), agent, access, api.New(server.URL), agentRouter{}, strings.NewReader(input), io.Discard)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -158,7 +158,7 @@ func TestDefaultAgentSubscriptionDeclineAndEOF(t *testing.T) {
 					t.Fatalf("opted out = %v", optedOut)
 				}
 				var output strings.Builder
-				err = ensureDefaultAgentSubscription(context.Background(), agent, access, api.New(server.URL), agentRouter{}, strings.NewReader(""), &output)
+				_, err = ensureDefaultAgentSubscription(context.Background(), agent, access, api.New(server.URL), agentRouter{}, strings.NewReader(""), &output)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -203,7 +203,7 @@ func TestDefaultAgentSubscriptionDoesNotEnableRouterWhenAlreadyConnected(t *test
 				IsDefault:     true,
 				EnabledModels: []string{"openai/test"},
 			}
-			err := ensureDefaultAgentSubscription(context.Background(), tc.agent, access, api.New(server.URL), router, strings.NewReader(""), io.Discard)
+			_, err := ensureDefaultAgentSubscription(context.Background(), tc.agent, access, api.New(server.URL), router, strings.NewReader(""), io.Discard)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -247,6 +247,44 @@ func TestCodexDeviceCodeSubscriptionUsesCodeAndEmptyCompletion(t *testing.T) {
 	}
 }
 
+func TestMuseCodeSubscriptionRetriesWhileMetaApprovalIsPending(t *testing.T) {
+	useTestAPIKey(t)
+	completions := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "POST /v1/organizations/current/credentials/oauth/sessions":
+			_ = json.NewEncoder(w).Encode(agentSubscriptionOAuthStart{SessionToken: "session", AuthorizationURL: "https://auth.meta.com/oauth/device/?code=BLXG-CHNZ", UserCode: "BLXG-CHNZ"})
+		case "POST /v1/organizations/current/credentials/oauth/sessions/complete":
+			completions++
+			if completions == 1 {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{"detail": "Meta approval is still pending. Enter the code at Meta, finish approval, then try again."})
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	var output strings.Builder
+	original := openAgentBrowser
+	openAgentBrowser = func(string) bool { return false }
+	t.Cleanup(func() { openAgentBrowser = original })
+	err := connectAgentPersonalSubscription(context.Background(), museSubscription, api.New(server.URL), strings.NewReader("\n\n"), &output, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completions != 2 {
+		t.Fatalf("completions = %d, want 2", completions)
+	}
+	for _, want := range []string{"Enter this code at Meta: BLXG-CHNZ", "Meta approval is still pending.", "Muse Code subscription connected"} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("output missing %q: %s", want, output.String())
+		}
+	}
+}
+
 func TestAgentSubscriptionLinesListInRoutingOrder(t *testing.T) {
 	label := "Work"
 	lines := agentSubscriptionLines(personalSubscriptions([]subscriptionCredential{
@@ -254,9 +292,10 @@ func TestAgentSubscriptionLinesListInRoutingOrder(t *testing.T) {
 		{Name: "CODEX", OAuthProvider: codexSubscription.id, CredentialScope: "user", CreatedAt: "2026-01", SubscriptionActive: true, SafeMetadata: map[string]string{"account_email": "me@example.test"}},
 		{Name: "CLAUDE", OAuthProvider: claudeSubscription.id, CredentialScope: "user", CreatedAt: "2026-01"},
 		{Name: "TEAM", OAuthProvider: codexSubscription.id, CredentialScope: "organization"},
+		{Name: "MUSE", OAuthProvider: museSubscription.id, CredentialScope: "user", CreatedAt: "2026-03"},
 	}), true)
 	got := stripANSI(strings.Join(lines, "\n"))
-	want := "  Claude Code  CLAUDE           standby\n  Claude Code  Work             standby\n  ChatGPT      me@example.test  active\n"
+	want := "  Claude Code  CLAUDE           standby\n  Claude Code  Work             standby\n  Muse Code    MUSE             standby\n  ChatGPT      me@example.test  active\n"
 	if got != want {
 		t.Fatalf("lines:\n%q\nwant:\n%q", got, want)
 	}

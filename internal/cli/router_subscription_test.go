@@ -73,6 +73,7 @@ func TestRouterUpdateSubscriptionFlagsKeepOrClear(t *testing.T) {
 	}{
 		{name: "omitted keeps both", args: []string{"--name", "Renamed"}},
 		{name: "replaces providers", args: []string{"--subscription", "anthropic"}, providers: []any{"anthropic"}},
+		{name: "takes a Muse Code subscription", args: []string{"--subscription", "Meta"}, providers: []any{"meta"}},
 		{name: "empty clears", args: []string{"--subscription", "", "--api-fallback", ""}, providers: []any{}, fallbacks: []any{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -101,7 +102,7 @@ func TestRouterSubscriptionFlagRejectsProvidersWithoutSubscriptions(t *testing.T
 	cmd.SetArgs([]string{"router", "create", "Bad", "--model", "xai/grok-4.7", "--managed-key", "xai", "--subscription", "xai"})
 	cmd.SetErr(io.Discard)
 	err := captureStdout(t, func() error { return cmd.Execute() })
-	if err == nil || !strings.Contains(err.Error(), "openai or anthropic") {
+	if err == nil || !strings.Contains(err.Error(), "openai, anthropic, or meta") {
 		t.Fatalf("err = %v, want a subscription provider error", err)
 	}
 }
