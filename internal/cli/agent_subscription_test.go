@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -30,7 +29,7 @@ func TestLoggedInAgentConnectsMissingSubscription(t *testing.T) {
 			t.Setenv("DARI_API_KEY", "")
 			t.Setenv(agents.RoutingAPIKeyEnv, "")
 			var connected, updated bool
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := newAgentTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "Bearer dari_org" {
 					t.Errorf("unexpected auth")
 				}
@@ -85,9 +84,6 @@ func TestLoggedInAgentConnectsMissingSubscription(t *testing.T) {
 				t.Fatal(err)
 			}
 			scope := server.URL + "|org:org"
-			if err := state.SaveAgentRouterID(scope+"|agent:"+tc.agent, "cached"); err != nil {
-				t.Fatal(err)
-			}
 			if _, _, err := state.EnsureRoutingKey(scope, func() (string, error) { return "dari_route", nil }); err != nil {
 				t.Fatal(err)
 			}
@@ -129,7 +125,7 @@ func TestDefaultAgentSubscriptionDeclineAndEOF(t *testing.T) {
 		for _, answer := range []string{"", "decline"} {
 			t.Run(agent+"/"+answer, func(t *testing.T) {
 				useTestAPIKey(t)
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				server := newAgentTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.Method != http.MethodGet || r.URL.Path != "/v1/organizations/current/credentials" {
 						t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 						http.NotFound(w, r)
@@ -150,7 +146,7 @@ func TestDefaultAgentSubscriptionDeclineAndEOF(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				optedOut, err := state.AgentSubscriptionOptedOut("test|agent:" + agent)
+				optedOut, err := agentSubscriptionOptedOut(context.Background(), api.New(server.URL), agent)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -181,7 +177,7 @@ func TestDefaultAgentSubscriptionDoesNotEnableRouterWhenAlreadyConnected(t *test
 		t.Run(tc.agent+"/"+tc.provider, func(t *testing.T) {
 			useTestAPIKey(t)
 			var putRequests int
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := newAgentTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.Method + " " + r.URL.Path {
 				case "GET /v1/organizations/current/credentials":
 					_ = json.NewEncoder(w).Encode(map[string]any{
@@ -217,7 +213,7 @@ func TestDefaultAgentSubscriptionDoesNotEnableRouterWhenAlreadyConnected(t *test
 func TestCodexDeviceCodeSubscriptionUsesCodeAndEmptyCompletion(t *testing.T) {
 	useTestAPIKey(t)
 	var completed map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newAgentTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method + " " + r.URL.Path {
 		case "POST /v1/organizations/current/credentials/oauth/sessions":
 			_ = json.NewEncoder(w).Encode(agentSubscriptionOAuthStart{SessionToken: "session", AuthorizationURL: "https://auth.openai.com/codex/device", UserCode: "ABCD-EFGH"})
@@ -250,7 +246,7 @@ func TestCodexDeviceCodeSubscriptionUsesCodeAndEmptyCompletion(t *testing.T) {
 func TestMuseCodeSubscriptionRetriesWhileMetaApprovalIsPending(t *testing.T) {
 	useTestAPIKey(t)
 	completions := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newAgentTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method + " " + r.URL.Path {
 		case "POST /v1/organizations/current/credentials/oauth/sessions":
 			_ = json.NewEncoder(w).Encode(agentSubscriptionOAuthStart{SessionToken: "session", AuthorizationURL: "https://auth.meta.com/oauth/device/?code=BLXG-CHNZ", UserCode: "BLXG-CHNZ"})
@@ -327,7 +323,7 @@ func TestAgentSubscriptionProvidersMatchTheAgent(t *testing.T) {
 func TestAgentSubscriptionAddsSurviveAnErrorOnTheAccountsPage(t *testing.T) {
 	useTestAPIKey(t)
 	var puts int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newAgentTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
@@ -339,26 +335,24 @@ func TestAgentSubscriptionAddsSurviveAnErrorOnTheAccountsPage(t *testing.T) {
 	defer server.Close()
 	client := api.New(server.URL)
 	router := agentRouter{ID: "rtr_default", Name: "Default", EnabledModels: []string{"openai/gpt-5.6-sol"}, ModelProviders: map[string]string{"openai/gpt-5.6-sol": "openai"}}
-	scope := "test-org|agent:pi"
 	pageErr := errors.New("agent onboarding canceled")
 
 	// One account was connected before Esc: it is stored, so routing must use it.
-	if err := recordAgentSubscriptionAdds(context.Background(), client, router, agentSubscriptionProviders("pi"), scope, 1, pageErr); err != pageErr {
+	if err := recordAgentSubscriptionAdds(context.Background(), client, router, agentSubscriptionProviders("pi"), "pi", 1, pageErr); err != pageErr {
 		t.Fatalf("error = %v, want the page error", err)
 	}
 	if puts != 1 {
 		t.Fatalf("router updates = %d, want the router routed through the account", puts)
 	}
-	if optedOut, err := state.AgentSubscriptionOptedOut(scope); err != nil || optedOut {
+	if optedOut, err := agentSubscriptionOptedOut(context.Background(), client, "pi"); err != nil || optedOut {
 		t.Fatalf("opted out = %v, err = %v; want subscriptions on", optedOut, err)
 	}
 
 	// Nothing connected and the page failed: no preference is recorded.
-	otherScope := "test-org|agent:codex"
-	if err := recordAgentSubscriptionAdds(context.Background(), client, router, agentSubscriptionProviders("codex"), otherScope, 0, pageErr); err != pageErr {
+	if err := recordAgentSubscriptionAdds(context.Background(), client, router, agentSubscriptionProviders("codex"), "codex", 0, pageErr); err != pageErr {
 		t.Fatalf("error = %v, want the page error", err)
 	}
-	if optedOut, err := state.AgentSubscriptionOptedOut(otherScope); err != nil || optedOut {
+	if optedOut, err := agentSubscriptionOptedOut(context.Background(), client, "codex"); err != nil || optedOut {
 		t.Fatalf("opted out = %v, err = %v; want no preference recorded", optedOut, err)
 	}
 	if puts != 1 {

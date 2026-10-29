@@ -11,7 +11,6 @@ import (
 
 	"github.com/mupt-ai/dari-cli/internal/api"
 	"github.com/mupt-ai/dari-cli/internal/auth"
-	"github.com/mupt-ai/dari-cli/internal/state"
 )
 
 // routerProvider is the router provider whose models the subscription serves,
@@ -34,11 +33,7 @@ var (
 // cached router or login. It reports whether the Muse plan is enabled for this
 // launch, so the router serves it once the model picker adds Meta models.
 func ensureDefaultAgentSubscription(ctx context.Context, agent string, access agentRoutingAccess, client *api.Client, router agentRouter, stdin io.Reader, stderr io.Writer) (bool, error) {
-	scope, err := agentSubscriptionPreferenceScope(access.scope, agent)
-	if err != nil {
-		return false, err
-	}
-	optedOut, err := state.AgentSubscriptionOptedOut(scope)
+	optedOut, err := agentSubscriptionOptedOut(ctx, client, agent)
 	if err != nil {
 		return false, err
 	}
@@ -46,7 +41,7 @@ func ensureDefaultAgentSubscription(ctx context.Context, agent string, access ag
 		// Only Muse Code can use a Muse subscription, so the launch asks for it.
 		resolution, resolveErr := resolveAgentPersonalSubscription(ctx, museSubscription, client, stdin, stderr, optedOut)
 		if resolution.preferenceChanged {
-			if err := state.SaveAgentSubscriptionOptOut(scope, !resolution.enabled); err != nil {
+			if err := saveAgentSubscriptionOptOut(ctx, client, agent, !resolution.enabled); err != nil {
 				return false, err
 			}
 		}
@@ -59,11 +54,11 @@ func ensureDefaultAgentSubscription(ctx context.Context, agent string, access ag
 		}
 		return resolution.enabled, resolveErr
 	}
-	err = ensureCodexAgentSubscription(ctx, agent, scope, optedOut, client, router, stdin, stderr)
+	err = ensureCodexAgentSubscription(ctx, agent, optedOut, client, router, stdin, stderr)
 	return false, err
 }
 
-func ensureCodexAgentSubscription(ctx context.Context, agent, scope string, optedOut bool, client *api.Client, router agentRouter, stdin io.Reader, stderr io.Writer) error {
+func ensureCodexAgentSubscription(ctx context.Context, agent string, optedOut bool, client *api.Client, router agentRouter, stdin io.Reader, stderr io.Writer) error {
 	provider := codexSubscription
 	if agent == "opencode" || agent == "pi" {
 		// Reuse either supported subscription before asking which one to connect.
@@ -85,7 +80,7 @@ func ensureCodexAgentSubscription(ctx context.Context, agent, scope string, opte
 		if agentInputIsTerminal(stdin) {
 			providers := agentSubscriptionProviders(agent)
 			added, manageErr := manageAgentSubscriptions(ctx, client, providers, stdin, stderr)
-			return recordAgentSubscriptionAdds(ctx, client, router, providers, scope, added, manageErr)
+			return recordAgentSubscriptionAdds(ctx, client, router, providers, agent, added, manageErr)
 		}
 		choice := 0
 		fmt.Fprint(stderr, "Connect a subscription: [1] ChatGPT [2] Claude Code [3] Dari managed billing: ")
@@ -107,7 +102,7 @@ func ensureCodexAgentSubscription(ctx context.Context, agent, scope string, opte
 			return fmt.Errorf("expected 1, 2, or 3")
 		}
 		if choice == 2 {
-			return state.SaveAgentSubscriptionOptOut(scope, true)
+			return saveAgentSubscriptionOptOut(ctx, client, agent, true)
 		}
 		if choice == 1 {
 			provider = claudeSubscription
@@ -115,14 +110,14 @@ func ensureCodexAgentSubscription(ctx context.Context, agent, scope string, opte
 		if err := connectAgentPersonalSubscription(ctx, provider, client, stdin, stderr, ""); err != nil {
 			return err
 		}
-		if err := state.SaveAgentSubscriptionOptOut(scope, false); err != nil {
+		if err := saveAgentSubscriptionOptOut(ctx, client, agent, false); err != nil {
 			return err
 		}
 		return setAgentRouterSubscription(ctx, client, router, agentSubscriptionProviders(agent), true)
 	}
 	resolution, resolveErr := resolveAgentPersonalSubscription(ctx, provider, client, stdin, stderr, optedOut)
 	if resolution.preferenceChanged {
-		if err := state.SaveAgentSubscriptionOptOut(scope, !resolution.enabled); err != nil {
+		if err := saveAgentSubscriptionOptOut(ctx, client, agent, !resolution.enabled); err != nil {
 			return err
 		}
 	}
@@ -153,11 +148,7 @@ func connectAgentSubscriptionsOnRequest(ctx context.Context, agent string, acces
 	if added == 0 {
 		return manageErr
 	}
-	scope, err := agentSubscriptionPreferenceScope(access.scope, agent)
-	if err != nil {
-		return err
-	}
-	if err := state.SaveAgentSubscriptionOptOut(scope, false); err != nil {
+	if err := saveAgentSubscriptionOptOut(ctx, client, agent, false); err != nil {
 		return err
 	}
 	// Claude Code picks its subscription router during setup; the others share
@@ -198,14 +189,14 @@ func agentSubscriptionProviders(agent string) []agentSubscriptionProvider {
 // Connected accounts stay stored, and later launches skip setup, so the router
 // must be routed through them now. With none connected, managed billing is
 // recorded unless the page failed.
-func recordAgentSubscriptionAdds(ctx context.Context, client *api.Client, router agentRouter, subscriptions []agentSubscriptionProvider, scope string, added int, manageErr error) error {
+func recordAgentSubscriptionAdds(ctx context.Context, client *api.Client, router agentRouter, subscriptions []agentSubscriptionProvider, agent string, added int, manageErr error) error {
 	if added == 0 {
 		if manageErr != nil {
 			return manageErr
 		}
-		return state.SaveAgentSubscriptionOptOut(scope, true)
+		return saveAgentSubscriptionOptOut(ctx, client, agent, true)
 	}
-	if err := state.SaveAgentSubscriptionOptOut(scope, false); err != nil {
+	if err := saveAgentSubscriptionOptOut(ctx, client, agent, false); err != nil {
 		return err
 	}
 	if err := setAgentRouterSubscription(ctx, client, router, subscriptions, true); err != nil {

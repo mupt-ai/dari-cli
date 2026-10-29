@@ -15,7 +15,6 @@ import (
 
 	"github.com/mupt-ai/dari-cli/internal/api"
 	"github.com/mupt-ai/dari-cli/internal/auth"
-	"github.com/mupt-ai/dari-cli/internal/state"
 )
 
 const (
@@ -148,12 +147,6 @@ func ensureAgentRouter(
 		return "default", nil
 	}
 
-	scope := access.scope + "|agent:" + agent
-	cachedRouterID, err := state.AgentRouterID(scope)
-	if err != nil {
-		return "", err
-	}
-
 	client, err := auth.OrgKeyClient(access.apiURL)
 	if err != nil {
 		return "", err
@@ -175,7 +168,11 @@ func ensureAgentRouter(
 		if err != nil {
 			return "", err
 		}
-		if agent == "opencode" || cachedRouterID != "" {
+		// Reuse server configuration unless a connected Muse plan still needs
+		// a directly served Meta model. That is incomplete setup, not a local
+		// cache miss; once configured, other computers skip the picker too.
+		museNeedsModels := museEnabled && !slices.Contains(slices.Collect(maps.Values(defaultRouter.ModelProviders)), museSubscription.routerProvider)
+		if len(defaultRouter.EnabledModels) > 0 && !museNeedsModels {
 			return defaultRouter.ID, nil
 		}
 	}
@@ -183,11 +180,7 @@ func ensureAgentRouter(
 	usePersonalSubscription := false
 	claudeClientKey := ""
 	if agent == "claude" {
-		preferenceScope, err := agentSubscriptionPreferenceScope(access.scope, agent)
-		if err != nil {
-			return "", err
-		}
-		previouslyOptedOut, err := state.AgentSubscriptionOptedOut(preferenceScope)
+		previouslyOptedOut, err := agentSubscriptionOptedOut(ctx, client, agent)
 		if err != nil {
 			return "", err
 		}
@@ -203,11 +196,6 @@ func ensureAgentRouter(
 			return "", err
 		}
 		if !resolution.decided {
-			if cached, found := findAgentRouter(routers, func(router agentRouter) bool {
-				return router.ID == cachedRouterID && router.ClientKey == claudeManagedRouterClientKey
-			}); found {
-				return cached.ID, nil
-			}
 			if existing, found := findAgentRouter(routers, func(router agentRouter) bool {
 				return router.ClientKey == claudeManagedRouterClientKey
 			}); found {
@@ -217,7 +205,7 @@ func ensureAgentRouter(
 		}
 		usePersonalSubscription = resolution.enabled
 		if resolution.preferenceChanged {
-			if err := state.SaveAgentSubscriptionOptOut(preferenceScope, !usePersonalSubscription); err != nil {
+			if err := saveAgentSubscriptionOptOut(ctx, client, agent, !usePersonalSubscription); err != nil {
 				return "", err
 			}
 		}
@@ -230,9 +218,6 @@ func ensureAgentRouter(
 		})
 		if found {
 			if err := setAgentRouterSubscription(ctx, client, existing, agentSubscriptionProviders(agent), usePersonalSubscription); err != nil {
-				return "", err
-			}
-			if err := state.SaveAgentRouterID(scope, existing.ID); err != nil {
 				return "", err
 			}
 			return existing.ID, nil
@@ -248,6 +233,9 @@ func ensureAgentRouter(
 		title = "Choose models for Claude Code"
 	case "pi":
 		title = "Choose models for Pi"
+		suggestionID = "default"
+	case "opencode":
+		title = "Choose models for OpenCode"
 		suggestionID = "default"
 	case "muse":
 		title = "Choose models for Muse Code"
@@ -267,6 +255,18 @@ func ensureAgentRouter(
 	if agent != "claude" {
 		models = includeCurrentAgentModels(models, defaultRouter)
 	}
+	var currentLevels map[string][]string
+	if agent == "muse" && museEnabled {
+		// Add the plan's models without preselecting an unrelated shared
+		// preset over the organization's existing models or thinking levels.
+		defaultIDs = slices.Clone(defaultRouter.EnabledModels)
+		currentLevels = defaultRouter.ModelThinkingLevels
+		for _, model := range models {
+			if model.Provider == museSubscription.routerProvider && !slices.Contains(defaultIDs, model.ID) {
+				defaultIDs = append(defaultIDs, model.ID)
+			}
+		}
+	}
 	var choices []agentModelChoice
 	for {
 		routing, err := autoroutingAllowed(ctx, client)
@@ -281,7 +281,7 @@ func ensureAgentRouter(
 			}
 			note = []string{"The checked models are recommended. Switch between them with /model.", offer}
 		}
-		choices, err = selectAgentModels(stdin, stderr, title, note, !routing, models, defaultIDs, nil, recommendedLevels)
+		choices, err = selectAgentModels(stdin, stderr, title, note, !routing, models, defaultIDs, currentLevels, recommendedLevels)
 		if !errors.Is(err, errAgentWantsAutorouting) {
 			if err != nil {
 				return "", err
@@ -294,8 +294,11 @@ func ensureAgentRouter(
 	}
 	routerID := defaultRouter.ID
 	if agent != "claude" {
+		body := agentRouterUpdateBody(defaultRouter, models, choices)
+		if museEnabled && !slices.Contains(slices.Collect(maps.Values(body.ModelProviders)), museSubscription.routerProvider) {
+			return "", errors.New("a Muse Code subscription needs at least one selected model served directly by Meta")
+		}
 		if agentRouterNeedsUpdate(defaultRouter, choices) {
-			body := agentRouterUpdateBody(defaultRouter, models, choices)
 			path := "/v1/organizations/current/routers/" + url.PathEscape(defaultRouter.ID)
 			// Decode into a fresh router: JSON decoding merges into existing maps,
 			// so a model the update removed would keep its old provider entry.
@@ -316,6 +319,8 @@ func ensureAgentRouter(
 		switch agent {
 		case "pi":
 			name = "Pi"
+		case "opencode":
+			name = "OpenCode"
 		case "muse":
 			name = "Muse Code"
 		}
@@ -351,25 +356,7 @@ func ensureAgentRouter(
 			return "", api.HumanError(createErr)
 		}
 	}
-	if err := state.SaveAgentRouterID(scope, routerID); err != nil {
-		return "", err
-	}
 	return routerID, nil
-}
-
-func agentSubscriptionPreferenceScope(accessScope, agent string) (string, error) {
-	scope := accessScope + "|agent:" + agent
-	if !strings.Contains(accessScope, "|org:") {
-		return scope, nil
-	}
-	current, err := state.Load()
-	if err != nil {
-		return "", err
-	}
-	if current.SupabaseSession == nil || strings.TrimSpace(current.SupabaseSession.UserID) == "" {
-		return scope, nil
-	}
-	return scope + "|user:" + current.SupabaseSession.UserID, nil
 }
 
 func resolveAgentPersonalSubscription(
