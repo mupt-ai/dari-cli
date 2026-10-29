@@ -270,8 +270,7 @@ func agentKeyScope(ctx context.Context, apiURL string, stdin io.Reader, stderr i
 		return "", err
 	}
 	if !api.URLsMatch(s.APIURL, apiURL) || s.CurrentOrg() == nil {
-		fmt.Fprintln(stderr, "Sign in to create a Routing key for your coding agents.")
-		s, err = auth.LoginWithOptions(ctx, apiURL, auth.LoginOptions{Stdin: stdin})
+		s, err = loginWithBrowser(ctx, apiURL, stdin, stderr, "Sign in to set up your coding agents")
 		if err != nil {
 			return "", err
 		}

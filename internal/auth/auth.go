@@ -55,7 +55,16 @@ func EnvOrgIDValue() string {
 // LoginOptions customizes the interactive browser login flow.
 type LoginOptions struct {
 	Stdin io.Reader
+	// Wait shows the browser login page and blocks until the login callback
+	// arrives. When nil, LoginWithOptions prints plain text to stderr and reads
+	// a pasted callback URL from Stdin.
+	Wait WaitFunc
 }
+
+// WaitFunc renders the browser login wait. opened reports whether a browser
+// was launched. await delivers the callback from the local listener; a pasted
+// callback URL parsed with ParseCallbackURL may be returned instead.
+type WaitFunc func(ctx context.Context, loginURL string, opened bool, await func(context.Context) (CallbackResult, error)) (CallbackResult, error)
 
 // Status is what `dari auth status` prints.
 type Status struct {
@@ -101,13 +110,20 @@ func LoginWithOptions(ctx context.Context, apiURL string, opts LoginOptions) (*s
 	if err != nil {
 		return nil, err
 	}
-	if OpenBrowser(loginURL) {
-		fmt.Fprintf(os.Stderr, "Waiting for browser login. If it doesn't complete automatically, open this URL:\n  %s\n\nAfter signing in, paste the localhost callback URL below.\n", loginURL)
+	opened := OpenBrowser(loginURL)
+	var cb CallbackResult
+	if opts.Wait != nil {
+		cb, err = opts.Wait(ctx, loginURL, opened, func(waitCtx context.Context) (CallbackResult, error) {
+			return server.Wait(waitCtx, loginTimeout)
+		})
 	} else {
-		fmt.Fprintf(os.Stderr, "Open this URL in a browser to continue login:\n  %s\n\nAfter signing in, paste the localhost callback URL below.\n", loginURL)
+		if opened {
+			fmt.Fprintf(os.Stderr, "Waiting for browser login. If it doesn't complete automatically, open this URL:\n  %s\n\nAfter signing in, paste the localhost callback URL below.\n", loginURL)
+		} else {
+			fmt.Fprintf(os.Stderr, "Open this URL in a browser to continue login:\n  %s\n\nAfter signing in, paste the localhost callback URL below.\n", loginURL)
+		}
+		cb, err = server.WaitOrInput(ctx, opts.Stdin, loginTimeout)
 	}
-
-	cb, err := server.WaitOrInput(ctx, opts.Stdin, loginTimeout)
 	if err != nil {
 		return nil, err
 	}

@@ -92,12 +92,16 @@ func (session *agentTUISession) Close() {
 	fmt.Fprint(session.stderr, "\033[?25h\033[?1049l")
 }
 
-// agentPageHeader is the welcome box at the top of every page, centered in
-// width.
+// agentPageHeader is the welcome box at the top of every onboarding page.
 func agentPageHeader(width int) []string {
+	return pageHeader(width, "Setting up your coding agent")
+}
+
+// pageHeader is the welcome box at the top of a page, centered in width.
+func pageHeader(width int, subtitle string) []string {
 	title := ansiCoral + "⑂" + ansiReset + " " + ansiBold + "dari.dev" + ansiReset
-	subtitle := ansiGray + "Setting up your coding agent" + ansiReset
-	inner := max(ansiVisibleWidth(title), ansiVisibleWidth(subtitle)) + 4
+	subtitleLine := ansiGray + subtitle + ansiReset
+	inner := max(ansiVisibleWidth(title), ansiVisibleWidth(subtitleLine)) + 4
 	row := func(text string) string {
 		pad := inner - ansiVisibleWidth(text)
 		return ansiGray + "│" + ansiReset + strings.Repeat(" ", pad/2) + text + strings.Repeat(" ", pad-pad/2) + ansiGray + "│" + ansiReset
@@ -106,7 +110,7 @@ func agentPageHeader(width int) []string {
 	return []string{
 		indent + ansiGray + "╭" + strings.Repeat("─", inner) + "╮" + ansiReset,
 		indent + row(title),
-		indent + row(subtitle),
+		indent + row(subtitleLine),
 		indent + ansiGray + "╰" + strings.Repeat("─", inner) + "╯" + ansiReset,
 		"",
 	}
@@ -115,13 +119,32 @@ func agentPageHeader(width int) []string {
 // render draws a page from the top of the screen. Raw mode disables output
 // post-processing, so lines end in \r\n.
 func (session *agentTUISession) render(lines []string) {
+	session.renderPage(agentPageHeader(session.width), lines)
+}
+
+func (session *agentTUISession) renderPage(header, lines []string) {
 	var frame strings.Builder
 	frame.WriteString("\033[H\033[K\r\n")
-	for _, line := range append(agentPageHeader(session.width), lines...) {
+	for _, line := range append(header, lines...) {
 		frame.WriteString(agentPageMargin + line + ansiReset + "\033[K\r\n")
 	}
 	frame.WriteString("\033[J")
 	_, _ = session.stderr.Write([]byte(frame.String()))
+}
+
+// clipText shortens plain text to width cells, marking the cut with an
+// ellipsis.
+func clipText(text string, width int) string {
+	if width < 1 {
+		return ""
+	}
+	if len(text) <= width {
+		return text
+	}
+	if width == 1 {
+		return "…"
+	}
+	return text[:width-1] + "…"
 }
 
 // ansiVisibleWidth counts printable cells, skipping CSI sequences and OSC
@@ -259,8 +282,9 @@ func agentOpenedLine(provider agentSubscriptionProvider, opened bool) string {
 	return "  " + ansiGray + "Open this URL to sign in to " + provider.name + ":" + ansiReset
 }
 
-// agentURLLines wraps a URL inside the prompt's indent. Each piece links to
-// the whole URL, so it stays clickable across the breaks.
+// agentURLLines wraps a URL inside the prompt's indent, preferring to break
+// between query parameters. Each piece links to the whole URL, so it stays
+// clickable across the breaks.
 func agentURLLines(url string, width int) []string {
 	const indent = "  "
 	per := width - len(indent) - 1
@@ -268,12 +292,29 @@ func agentURLLines(url string, width int) []string {
 		per = len(url)
 	}
 	lines := []string{}
-	for rest := url; rest != ""; {
-		piece := rest[:min(per, len(rest))]
-		rest = rest[len(piece):]
+	for _, piece := range wrapURL(url, per) {
 		lines = append(lines, indent+"\033]8;;"+url+"\033\\"+ansiCyan+piece+ansiReset+"\033]8;;\033\\")
 	}
 	return lines
+}
+
+// wrapURL splits url into pieces of at most per bytes, starting a new piece at
+// a query separator whenever one is in reach.
+func wrapURL(url string, per int) []string {
+	pieces := []string{}
+	for rest := url; rest != ""; {
+		if len(rest) <= per {
+			pieces = append(pieces, rest)
+			break
+		}
+		cut := strings.LastIndexByte(rest[:per+1], '&')
+		if cut <= 0 {
+			cut = per
+		}
+		pieces = append(pieces, rest[:cut])
+		rest = rest[cut:]
+	}
+	return pieces
 }
 
 func agentOAuthLines(provider agentSubscriptionProvider, authorizationURL string, opened bool, value string, width int) []string {
@@ -282,7 +323,7 @@ func agentOAuthLines(provider agentSubscriptionProvider, authorizationURL string
 	return append(lines,
 		"",
 		"  Paste the code "+provider.vendor+" shows after you approve:",
-		agentCursor(true)+codeInputDisplay(value, width),
+		agentCursor(true)+inputDisplay(value, width, "code#state"),
 		agentHintLine("enter submit", "ctrl+c cancel"),
 	)
 }
@@ -413,9 +454,12 @@ func isTerminalEscapeFinal(value byte) bool {
 	return (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z') || value == '~'
 }
 
-func codeInputDisplay(input string, width int) string {
+func inputDisplay(input string, width int, placeholder string) string {
 	if input == "" {
-		return ansiDim + "code#state" + ansiReset
+		if width > 0 {
+			placeholder = clipText(placeholder, width-6)
+		}
+		return ansiDim + placeholder + ansiReset
 	}
 	available := width - 6
 	if available <= 0 || len(input) <= available {

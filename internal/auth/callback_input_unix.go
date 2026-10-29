@@ -18,7 +18,7 @@ const supportsCallbackPolling = true
 // Poll in the calling goroutine so returning from browser login leaves no
 // blocked stdin reader behind. Read a byte at a time to preserve input for the
 // next prompt or coding agent, including bytes after a pasted callback URL.
-func (cb *callbackServer) waitFileInput(ctx context.Context, file *os.File, timeout time.Duration) (callbackResult, error) {
+func (cb *callbackServer) waitFileInput(ctx context.Context, file *os.File, timeout time.Duration) (CallbackResult, error) {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	var line []byte
@@ -26,14 +26,11 @@ func (cb *callbackServer) waitFileInput(ctx context.Context, file *os.File, time
 	for {
 		select {
 		case res := <-cb.result:
-			if res.Code == "" && res.Error == "" {
-				return res, errors.New("browser callback did not include a code")
-			}
-			return res, nil
+			return res.check()
 		case <-ctx.Done():
-			return callbackResult{}, ctx.Err()
+			return CallbackResult{}, ctx.Err()
 		case <-deadline.C:
-			return callbackResult{}, errors.New("timed out waiting for browser login to complete")
+			return CallbackResult{}, errors.New("timed out waiting for browser login to complete")
 		default:
 		}
 		fds := []unix.PollFd{{Fd: int32(file.Fd()), Events: unix.POLLIN}}
@@ -45,13 +42,13 @@ func (cb *callbackServer) waitFileInput(ctx context.Context, file *os.File, time
 			continue
 		}
 		if err != nil {
-			return callbackResult{}, fmt.Errorf("poll callback input: %w", err)
+			return CallbackResult{}, fmt.Errorf("poll callback input: %w", err)
 		}
 		if n == 0 {
 			continue
 		}
 		if fds[0].Revents&unix.POLLNVAL != 0 {
-			return callbackResult{}, errors.New("callback input is closed")
+			return CallbackResult{}, errors.New("callback input is closed")
 		}
 		var b [1]byte
 		n, err = unix.Read(int(file.Fd()), b[:])
@@ -59,11 +56,11 @@ func (cb *callbackServer) waitFileInput(ctx context.Context, file *os.File, time
 			continue
 		}
 		if err != nil {
-			return callbackResult{}, fmt.Errorf("read callback URL: %w", err)
+			return CallbackResult{}, fmt.Errorf("read callback URL: %w", err)
 		}
 		if n == 0 {
 			if len(line) > 0 {
-				return parseManualCallback(string(line))
+				return ParseCallbackURL(string(line))
 			}
 			eof = true
 			continue
@@ -73,11 +70,11 @@ func (cb *callbackServer) waitFileInput(ctx context.Context, file *os.File, time
 				line = line[:0]
 				continue
 			}
-			return parseManualCallback(string(line))
+			return ParseCallbackURL(string(line))
 		}
 		line = append(line, b[0])
 		if len(line) > 64*1024 {
-			return callbackResult{}, errors.New("callback URL is too long")
+			return CallbackResult{}, errors.New("callback URL is too long")
 		}
 	}
 }

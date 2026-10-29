@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+
 	"github.com/spf13/cobra"
 
 	"github.com/mupt-ai/dari-cli/internal/auth"
@@ -32,11 +34,14 @@ func newAuthLoginCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := auth.LoginWithOptions(cmd.Context(), apiURL, auth.LoginOptions{
-				Stdin: cmd.InOrStdin(),
-			})
+			s, err := loginWithBrowser(cmd.Context(), apiURL, cmd.InOrStdin(), cmd.ErrOrStderr(), "Sign in to the Dari CLI")
 			if err != nil {
 				return err
+			}
+			// The login page already reported the account on a terminal; a
+			// piped stdout still gets the machine-readable summary.
+			if agentInputIsTerminal(os.Stdout) {
+				return nil
 			}
 			return printJSON(authLoginOutput(s))
 		},

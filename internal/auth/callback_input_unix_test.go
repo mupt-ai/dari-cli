@@ -19,7 +19,7 @@ func TestCallbackInputPreservesAgentInput(t *testing.T) {
 			}
 			defer r.Close()
 			defer w.Close()
-			cb := &callbackServer{result: make(chan callbackResult, 1)}
+			cb := &callbackServer{result: make(chan CallbackResult, 1)}
 			done := make(chan error, 1)
 			go func() {
 				got, err := cb.WaitOrInput(context.Background(), r, time.Second)
@@ -33,7 +33,7 @@ func TestCallbackInputPreservesAgentInput(t *testing.T) {
 					t.Fatal(err)
 				}
 				time.Sleep(50 * time.Millisecond)
-				cb.result <- callbackResult{Code: "abc", State: "state"}
+				cb.result <- CallbackResult{Code: "abc", State: "state"}
 				if err := <-done; err != nil {
 					t.Fatal(err)
 				}
@@ -67,7 +67,7 @@ func TestCallbackInputCancellation(t *testing.T) {
 	}
 	defer r.Close()
 	defer w.Close()
-	cb := &callbackServer{result: make(chan callbackResult, 1)}
+	cb := &callbackServer{result: make(chan CallbackResult, 1)}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := cb.WaitOrInput(ctx, r, time.Second); err != context.Canceled {
